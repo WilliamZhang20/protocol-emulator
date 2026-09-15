@@ -73,6 +73,14 @@
     "program_memory.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
+  "// PDN_CFG": "Expose a Metal4-only grid and abut aligned stripes to the SRAM's Metal4 rails",
+  "PDN_CFG": "dir::pdn_cfg.tcl",
+  "PDN_VERTICAL_LAYER": "Metal4",
+  "FP_MACRO_HORIZONTAL_HALO": 0,
+  "FP_MACRO_VERTICAL_HALO": 0,
+  "PDN_HORIZONTAL_HALO": 0,
+  "PDN_VERTICAL_HALO": 0,
+
   "//": "The SRAM has no prBoundary shape; stream its full GDS during integration",
   "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
 
@@ -111,12 +119,14 @@
 
   "PDN_VPITCH": 50.0,
   "PDN_VWIDTH": 2.1,
+  "PDN_VOFFSET": 10.0,
+  "PDN_VSPACING": 2.0,
 
   "//": "Clock",
   "RUN_CTS": 1,
 
-  "//": "Use Metal4 and TopMetal1 so the Metal4 SRAM rails can join the top-level grid",
-  "PDN_MULTILAYER": 1,
+  "//": "Tiny Tapeout SG13CMOS5L user blocks must use a Metal4-only power grid",
+  "PDN_MULTILAYER": 0,
 
   "//": "MAGIC_DEF_LABELS may cause issues with LVS",
   "MAGIC_DEF_LABELS": 0,

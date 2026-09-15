@@ -75,6 +75,7 @@ module protocol_emulator_core (
   wire [7:0] gpio_rising;
   wire [7:0] gpio_falling;
   wire gpio_compare_match;
+  wire shifter_serial_out;
   wire [7:0] selected_pin_mask = 8'b1 << immediate[2:0];
   wire execute_gpio_write = state == STATE_EXECUTE && opcode == 4'h2;
   wire execute_oe_write = state == STATE_EXECUTE && opcode == 4'h3;
@@ -116,7 +117,6 @@ module protocol_emulator_core (
   wire execute_shift_clear = state == STATE_EXECUTE && opcode == 4'ha;
   wire shifter_load = execute_tx_load || execute_shift_clear;
   wire shifter_shift = execute_shift_out || execute_shift_in;
-  wire shifter_serial_out;
   wire [15:0] shifter_parallel;
   wire shifter_done;
 

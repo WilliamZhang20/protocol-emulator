@@ -2,6 +2,7 @@
 """Static preflight for the SRAM macro's LibreLane physical configuration."""
 
 import json
+import struct
 from pathlib import Path
 
 
@@ -10,6 +11,27 @@ CONFIG_PATH = ROOT / "src" / "config.json"
 MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 INSTANCE_NAME = "program_memory.sram"
 MACRO_DIR = ROOT / "macro" / MACRO_NAME
+PDN_CONFIG_PATH = ROOT / "src" / "pdn_cfg.tcl"
+
+
+def gds_layer_pairs(path: Path) -> set[tuple[int, int]]:
+    """Return layer/purpose pairs from simple GDSII element records."""
+    data = path.read_bytes()
+    result = set()
+    offset = 0
+    layer = None
+    while offset < len(data):
+        require(offset + 4 <= len(data), f"truncated GDS record in {path}")
+        length, record_type, _ = struct.unpack(">HBB", data[offset : offset + 4])
+        require(length >= 4 and offset + length <= len(data), f"invalid GDS record in {path}")
+        payload = data[offset + 4 : offset + length]
+        if record_type == 0x0D:
+            layer = struct.unpack(">h", payload[:2])[0]
+        elif record_type in (0x0E, 0x16, 0x2A, 0x2E) and layer is not None:
+            result.add((layer, struct.unpack(">h", payload[:2])[0]))
+            layer = None
+        offset += length
+    return result
 
 
 def require(condition: bool, message: str) -> None:
@@ -29,7 +51,7 @@ def main() -> None:
     placement = macro["instances"][INSTANCE_NAME]
     require(
         placement.get("orientation") == "R0",
-        "SRAM must use R0 so its Metal4 supply rails cross the TopMetal1 PDN",
+        "SRAM must use R0 to align its vertical Metal4 rails with the PDN",
     )
 
     expected_views = {
@@ -46,6 +68,9 @@ def main() -> None:
         require(f"PIN {pin}" in lef, f"SRAM LEF has no {pin} pin")
         require(f"USE {use} ;" in lef, f"SRAM LEF has no {use} pin declaration")
     require("LAYER Metal4 ;" in lef, "SRAM power geometry is not exposed on Metal4")
+    macro_layers = gds_layer_pairs(expected_views["gds"])
+    require((16, 0) not in macro_layers, "SRAM GDS retains forbidden DigiBnd.drawing")
+    require((25, 0) not in macro_layers, "SRAM GDS retains forbidden SRAM.drawing")
 
     hooks = set(config.get("PDN_MACRO_CONNECTIONS", []))
     for hook in (
@@ -59,9 +84,24 @@ def main() -> None:
         "Magic must use the DEF/LEF view instead of rechecking foundry SRAM internals",
     )
     require(
-        config.get("PDN_MULTILAYER") in (1, True),
-        "PDN_MULTILAYER must connect SRAM Metal4 rails to the TopMetal1 grid",
+        config.get("PDN_MULTILAYER") in (0, False),
+        "PDN_MULTILAYER must be disabled for the Metal4-only grid",
     )
+    require(config.get("PDN_CFG") == "dir::pdn_cfg.tcl", "custom PDN_CFG is not selected")
+    require(config.get("PDN_VERTICAL_LAYER") == "Metal4", "power pins must use Metal4")
+    for halo in (
+        "FP_MACRO_HORIZONTAL_HALO",
+        "FP_MACRO_VERTICAL_HALO",
+        "PDN_HORIZONTAL_HALO",
+        "PDN_VERTICAL_HALO",
+    ):
+        require(config.get(halo) == 0, f"{halo} must be zero for same-layer SRAM abutment")
+    require(config.get("PDN_VPITCH") == 50.0, "PDN pitch no longer aligns with SRAM rails")
+    require(config.get("PDN_VOFFSET") == 10.0, "PDN offset no longer aligns with SRAM rails")
+    pdn_config = PDN_CONFIG_PATH.read_text(encoding="utf-8")
+    require("-pins Metal4" in pdn_config, "PDN does not export Metal4-only power pins")
+    require("TopMetal1" not in pdn_config, "custom PDN still routes on forbidden TopMetal1")
+    require("Metal3" not in pdn_config, "custom PDN must not cross the SRAM's Metal3 obstruction")
     for deprecated in ("FP_PDN_MULTILAYER", "FP_PDN_VPITCH", "FP_PDN_VWIDTH"):
         require(deprecated not in config, f"deprecated setting remains: {deprecated}")
 

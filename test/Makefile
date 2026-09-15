@@ -1,6 +1,8 @@
 # Cocotb RTL and gate-level regression
 
-SIM ?= verilator
+# Tiny Tapeout's gate-level action installs Icarus. The repository-level
+# Makefile still selects Verilator explicitly for the local regression.
+SIM ?= icarus
 FST ?= -fst
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(CURDIR)/../src

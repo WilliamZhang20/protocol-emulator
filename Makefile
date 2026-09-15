@@ -44,7 +44,7 @@ lint:
 		--top-module tb test/tb.v $(RTL_SOURCES) $(SRAM_MODELS)
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_wzhang20_protocol_emulator; proc; flatten; check -assert; select -assert-count 1 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_wzhang20_protocol_emulator/program_memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 1 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/program_memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py

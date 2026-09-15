@@ -9,6 +9,11 @@ IHP SG13G2 foundry-provided 1024x8 single-port SRAM macro with BIST.
   ("SRAM cells layout: fixed PG pins Metal1.txt and Metal4.txt layers (#239)")
 - **Path**: `ihp-sg13g2/libs.ref/sg13g2_sram/`
 
+The checked-in GDS omits the non-mask `DigiBnd.drawing` (16/0) and
+`SRAM.drawing` (25/0) marker elements. Tiny Tapeout's SG13CMOS5L user-block
+precheck forbids these metadata layers. All fabrication geometry is unchanged.
+The filtering is reproducible with `tools/filter_gds_layers.py`.
+
 ## License
 
 These files are part of IHP-Open-PDK and are licensed under the Apache License 2.0.
