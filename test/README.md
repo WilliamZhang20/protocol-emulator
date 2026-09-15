@@ -9,6 +9,7 @@ the Tiny Tapeout gate-level flow continues to use this directory as well.
 From the repository root:
 
 ```sh
+make verify
 make sim
 make memory-test
 make lint
@@ -21,7 +22,7 @@ make -C test clean
 make -C test
 ```
 
-Set `SIM=verilator` to use Verilator instead of the default Icarus simulator.
+Verilator is the default; set `SIM=icarus` to run the RTL regression with Icarus.
 Gate-level simulation remains available through `make -C test GATES=yes` after
 the hardened netlist has been copied into `test/gate_level_netlist.v`.
 
@@ -39,3 +40,6 @@ can be reused for UART, SPI, I2C, and arbitrary instruction sequences.
 The standalone `program_memory_tb.sv` verifies the delivered foundry SRAM model,
 including masked writes. Formal verification uses a separate logical SRAM model
 under `formal/models/`; neither model is synthesized into the ASIC.
+
+`test_uart.py` loads distinct TX and RX bytecode images through the real host
+interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins.

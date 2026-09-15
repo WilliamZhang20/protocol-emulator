@@ -14,6 +14,20 @@ module register_file (
     input  wire [1:0]  write_address,
     input  wire [15:0] write_data
 );
+  reg [15:0] registers [0:3];
+  integer index;
+
+  assign read_data_a = registers[read_address_a];
+  assign read_data_b = registers[read_address_b];
+
+  always @(posedge clk) begin
+    if (!rst_n) begin
+      for (index = 0; index < 4; index = index + 1)
+        registers[index] <= 16'b0;
+    end else if (write_enable) begin
+      registers[write_address] <= write_data;
+    end
+  end
 endmodule
 
 `default_nettype wire

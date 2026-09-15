@@ -8,7 +8,7 @@ from cocotb_tests.common import reset_top, start_clock
 
 @cocotb.test()
 async def test_safe_inactive_outputs(dut):
-    """The interface-only skeleton must leave protocol pins undriven."""
+    """A reset engine must leave protocol pins undriven."""
     await start_clock(dut)
     await reset_top(dut)
 

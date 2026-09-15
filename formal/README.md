@@ -16,9 +16,21 @@ Run an individual target with:
 
 ```sh
 make -C formal program_memory
+make -C formal uart_tx
+make -C formal uart_rx
 ```
 
 Results and counterexample traces are written beneath `build/formal/`.
+
+The SRAM target runs bounded checks, an unbounded induction proof, and a cover
+trace. Its formal macro is a tracked arbitrary-address abstraction, which proves
+masked write and synchronous read behavior without expanding all 8192 storage
+bits into the solver.
+
+Each UART target exhaustively checks 300 formal steps for every possible
+8-bit payload and produces a reachable complete-frame cover trace. TX assertions
+check FIFO consumption, output enable, start/data/stop levels, and idle recovery;
+RX assertions check one correctly reconstructed FIFO byte.
 
 ## Adding a block
 
@@ -32,6 +44,7 @@ Use simple clocked `assume`, `assert`, `$past`, and `cover` constructs supported
 by the open-source Yosys frontend. Prefer properties at module interfaces over
 assertions coupled to private implementation state.
 
-The foundry SRAM is replaced during formal runs by a cycle-accurate logical
-model. Physical views and timing are validated by the ASIC flow, while cocotb
-and the standalone Verilator test exercise the delivered behavioral model.
+The foundry SRAM is replaced only during formal runs by the sound tracked-address
+abstraction. Physical views and timing are validated by the ASIC flow, while
+cocotb and the standalone Verilator test compile and exercise the delivered
+behavioral model.

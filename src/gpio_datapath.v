@@ -24,6 +24,52 @@ module gpio_datapath (
     output wire [7:0] falling_edges,
     output wire       compare_match
 );
+  reg [7:0] logical_output;
+  reg [7:0] logical_oe;
+  reg [2:0] pin_map [0:7];
+  reg [7:0] previous_sample;
+  reg [7:0] physical_output;
+  reg [7:0] physical_oe;
+  reg [7:0] logical_sample;
+  integer index;
+
+  always @(*) begin
+    physical_output = 8'b0;
+    physical_oe = 8'b0;
+    logical_sample = 8'b0;
+    for (index = 0; index < 8; index = index + 1) begin
+      physical_output[pin_map[index]] = logical_output[index];
+      physical_oe[pin_map[index]] = logical_oe[index];
+      logical_sample[index] = pin_in[pin_map[index]];
+    end
+  end
+
+  assign pin_out = physical_output;
+  assign pin_oe = physical_oe;
+  assign sampled_value = logical_sample;
+  assign rising_edges = logical_sample & ~previous_sample;
+  assign falling_edges = ~logical_sample & previous_sample;
+  assign compare_match = (logical_sample & compare_mask) ==
+                         (compare_value & compare_mask);
+
+  always @(posedge clk) begin
+    if (!rst_n) begin
+      logical_output <= 8'b0;
+      logical_oe <= 8'b0;
+      previous_sample <= 8'b0;
+      for (index = 0; index < 8; index = index + 1)
+        pin_map[index] <= index[2:0];
+    end else begin
+      previous_sample <= logical_sample;
+      if (map_write)
+        pin_map[logical_pin] <= physical_pin;
+      if (output_write) begin
+        logical_output <= (logical_output & ~output_mask) |
+                          (output_value & output_mask);
+        logical_oe <= (logical_oe & ~oe_mask) | (oe_value & oe_mask);
+      end
+    end
+  end
 endmodule
 
 `default_nettype wire

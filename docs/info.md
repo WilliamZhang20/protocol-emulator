@@ -13,13 +13,14 @@ The project is an SRAM-programmed deterministic protocol engine. Programs use
 shared timing, shifting, FIFO, and configurable GPIO resources to implement
 protocols without dedicated UART, SPI, or I2C state machines.
 
-See the [high-level architecture plan](architecture.md) for the component
-structure, reprogrammability model, initial demonstrations, and growth path.
+See the [architecture and programming reference](architecture.md) for the host
+commands, bytecode, component structure, and reprogrammability model.
 
 ## How to test
 
-The first milestone will load protocol programs through the host interface and
-demonstrate UART, SPI, and I2C through loopback or paired endpoints.
+Run `make verify` for lint, foundry SRAM compilation/testing, cocotb, and formal
+checks. The UART tests load separate TX and RX programs through `ui_in`, execute
+them from SRAM, and observe an 8-N-1 frame through `uio[0]`.
 
 ## External hardware
 

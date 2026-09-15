@@ -1,5 +1,10 @@
 BUILD_DIR ?= build
+VENV_BIN := $(CURDIR)/.venv/bin
+EDA_BIN := $(CURDIR)/.tools/oss-cad-suite/bin
+export PATH := $(VENV_BIN):$(EDA_BIN):$(PATH)
 VERILATOR ?= verilator
+unexport VERILATOR_ROOT
+SIM ?= verilator
 
 RTL_SOURCES := \
 	src/project.v \
@@ -34,7 +39,7 @@ lint:
 
 sim:
 	$(MAKE) -C test clean
-	$(MAKE) -C test
+	$(MAKE) -C test SIM=$(SIM)
 
 memory-test:
 	mkdir -p $(BUILD_DIR)/verilator/program_memory

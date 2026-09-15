@@ -1,0 +1,30 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 300
+multiclock on
+
+[engines]
+bmc: abc bmc3
+cover: smtbmc boolector
+
+[script]
+read -formal -sv instruction_decoder.v
+read -formal -sv timer_counter.v
+read -formal -sv serial_shifter.v
+read -formal -sv gpio_datapath.v
+read -formal -sv protocol_emulator_core.v
+read -formal -sv uart_rx_properties.sv
+prep -top uart_rx_properties
+
+[files]
+../../src/instruction_decoder.v
+../../src/timer_counter.v
+../../src/serial_shifter.v
+../../src/gpio_datapath.v
+../../src/protocol_emulator_core.v
+uart_rx_properties.sv

@@ -57,9 +57,25 @@ The host interface is the control boundary of the chip. It provides access to
 program loading, execution control, status, and queued payload data. Host
 transactions are deliberately kept out of the exact-cycle execution path.
 
-The initial pin-level host protocol will be selected alongside the programming
-model. Its internal responsibilities remain the same if a future version uses a
-different external transport.
+The implemented host link accepts one command byte on `ui_in` for one clock,
+followed by `8'h00`. The upper nibble is the command and the lower nibble is
+data:
+
+| Command | Operation |
+| --- | --- |
+| `1`, `2`, `3` | Set address bits 3:0, 7:4, and 9:8 |
+| `4` | Stage the low program-data nibble |
+| `5` | Stage the high nibble, write SRAM, and increment the address |
+| `6` | Stage the low TX-data nibble |
+| `7` | Stage the high nibble and push the TX FIFO |
+| `8` | Bit 0 starts and bit 1 stops the engine |
+| `9` | Pop one RX byte to `uo_out` |
+| `A` | Read engine/FIFO status on `uo_out` |
+| `B` | Read SRAM at the current address to `uo_out` |
+
+Program reads and writes are rejected while the engine runs. This keeps host
+traffic from perturbing instruction timing. Status is
+`{running, halted, tx_full, rx_empty, 4'b0}`.
 
 ### Program memory
 
@@ -78,9 +94,25 @@ state needed while a program runs. It coordinates shared execution resources
 and advances only when the current operation's timing and flow-control
 conditions are satisfied.
 
-The instruction set will remain intentionally small. It needs to express
-precise delays, conditional control flow, pin operations, serial shifts, and
-FIFO transfers without embedding protocol-specific states in the decoder.
+The bytecode is intentionally small and embeds a logical pin number in bits 2:0
+where applicable:
+
+| Encoding | Operation |
+| --- | --- |
+| `00`, `01` | NOP, HALT |
+| `10 ll hh` | WAIT16, little-endian cycle count |
+| `2vppp`, `3vppp` | Write logical GPIO, write its output enable |
+| `40` | Load a byte from TX FIFO; stall while empty |
+| `5p`, `6p` | Shift one bit out or in, LSB first |
+| `70` | Push the received byte; stall while RX FIFO is full |
+| `80 ll hh` | Jump to a 10-bit SRAM address |
+| `9vppp` | Wait until a logical input pin equals `v` |
+| `A0` | Clear the serial shifter |
+| `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
+
+The synchronous SRAM path has deterministic instruction overhead. In the
+supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
+50 MHz, a wait operand of 423 yields approximately 115,207 baud.
 
 ### Register and state storage
 

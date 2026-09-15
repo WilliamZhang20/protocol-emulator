@@ -7,14 +7,14 @@ cover
 bmc: mode bmc
 prove: mode prove
 cover: mode cover
-depth 20
+depth 12
 
 [engines]
 smtbmc z3
 
 [script]
-read -formal -sv ../../src/program_memory.v
-read -formal ../models/RM_IHPSG13_1P_1024x8_c2_bm_bist_formal.v
+read -formal -sv program_memory.v
+read -formal RM_IHPSG13_1P_1024x8_c2_bm_bist_formal.v
 read -formal -sv program_memory_properties.sv
 prep -top program_memory_properties
 

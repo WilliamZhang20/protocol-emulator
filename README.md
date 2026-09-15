@@ -1,42 +1,43 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+# SRAM-Programmed Protocol Emulator
 
-- [Read the documentation for project](docs/info.md)
+This Tiny Tapeout design is a deterministic, reprogrammable bit-level protocol
+engine. A host loads bytecode into the on-chip foundry SRAM, exchanges payload
+bytes through TX/RX FIFOs, and starts the engine. Timing, shifting, GPIO output
+and output-enable control, pin mapping, waits, and branches are protocol-neutral;
+UART behavior is supplied entirely by the SRAM image.
 
-## What is Tiny Tapeout?
+The current milestone includes working UART TX and RX programs, a synchronous
+nibble-command host interface, configurable GPIO, FIFOs, timer, serial shifter,
+and the complete SRAM-backed fetch/execute path.
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
+## Local verification
 
-To learn more and get started, visit https://tinytapeout.com.
+Python dependencies are isolated in `.venv`; RTL/formal tools can be supplied by
+the YosysHQ OSS CAD Suite under `.tools/oss-cad-suite` or through `PATH`.
 
-## Set up your Verilog project
+```sh
+uv venv --python 3.12
+uv pip install --python .venv/bin/python -r test/requirements.txt pytest
+export PATH="$PWD/.tools/oss-cad-suite/bin:$PWD/.venv/bin:$PATH"
+make verify
+```
 
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
+`make verify` runs:
 
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
+- full-hierarchy Verilator lint;
+- a standalone compile/test of the delivered foundry SRAM model;
+- cocotb smoke and end-to-end UART TX/RX tests through the top-level pins; and
+- formal SRAM checks plus exhaustive 300-step UART TX/RX safety checks and
+  complete-frame cover traces.
 
-## Enable GitHub actions to build the results page
+Individual commands are `make lint`, `make memory-test`, `make sim`, and
+`make formal`.
 
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
+## Documentation
 
-## Resources
-
-- [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
-- [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
-
-## What next?
-
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+- [Architecture, ISA, and host protocol](docs/architecture.md)
+- [Dynamic verification](test/README.md)
+- [Formal verification](formal/README.md)
+- [Tiny Tapeout datasheet text](docs/info.md)

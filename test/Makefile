@@ -1,12 +1,11 @@
-# Makefile
-# See https://docs.cocotb.org/en/stable/quickstart.html for more info
+# Cocotb RTL and gate-level regression
 
-# defaults
-SIM ?= icarus
-FST ?= -fst # Use more efficient FST format
+SIM ?= verilator
+FST ?= -fst
 TOPLEVEL_LANG ?= verilog
-SRC_DIR = $(PWD)/../src
-export PYTHONPATH := $(PWD):$(PYTHONPATH)
+SRC_DIR = $(CURDIR)/../src
+COCOTB_CONFIG := $(if $(wildcard $(CURDIR)/../.venv/bin/cocotb-config),$(CURDIR)/../.venv/bin/cocotb-config,cocotb-config)
+export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal
@@ -14,39 +13,21 @@ endif
 PROJECT_SOURCES = project.v protocol_emulator_core.v instruction_decoder.v program_memory.v register_file.v timer_counter.v serial_shifter.v gpio_datapath.v byte_fifo.v host_interface.v
 
 ifneq ($(GATES),yes)
-
-# RTL simulation:
-SIM_BUILD				= sim_build/rtl
-COMPILE_ARGS    += -DFUNCTIONAL
+SIM_BUILD = sim_build/rtl
+COMPILE_ARGS += -DFUNCTIONAL
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
-
 else
-
-# Gate level simulation:
-SIM_BUILD				= sim_build/gl
-COMPILE_ARGS    += -DGL_TEST
-COMPILE_ARGS    += -DFUNCTIONAL
-COMPILE_ARGS    += -DSIM
+SIM_BUILD = sim_build/gl
+COMPILE_ARGS += -DGL_TEST -DFUNCTIONAL -DSIM
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_io/verilog/sg13cmos5l_io.v
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_stdcell.v
-
-# this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
-
 endif
 
-# Foundry SRAM model used by both RTL and gate-level simulations:
 VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
-
-# Allow sharing configuration between design and testbench via `include`:
-COMPILE_ARGS 		+= -I$(SRC_DIR)
-
-# Include the testbench sources:
-VERILOG_SOURCES += $(PWD)/tb.v
+COMPILE_ARGS += -I$(SRC_DIR)
+VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
+COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_uart
 
-# List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = cocotb_tests.test_top
-
-# include cocotb's make rules to take care of the simulator setup
-include $(shell cocotb-config --makefiles)/Makefile.sim
+include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
