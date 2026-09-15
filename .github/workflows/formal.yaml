@@ -1,0 +1,31 @@
+name: formal
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  formal:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install OSS CAD Suite
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run formal suite
+        run: make formal
+
+      - name: Upload formal results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: formal-results
+          path: build/formal/

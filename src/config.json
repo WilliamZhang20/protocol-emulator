@@ -31,6 +31,54 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
+  "//": "IHP 1024x8 single-port SRAM macro integration",
+  "MACROS": {
+    "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
+      "instances": {
+        "program_memory.sram": {
+          "location": [42, 80],
+          "orientation": "R90"
+        }
+      },
+      "gds": [
+        "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.gds"
+      ],
+      "lef": [
+        "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
+      ],
+      "lib": {
+        "nom_*": [
+          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
+        ],
+        "min_*": [
+          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
+        ],
+        "max_*": [
+          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
+        ],
+        "*": [
+          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
+        ]
+      },
+      "nl": [
+        "dir::./RM_IHPSG13_1P_1024x8_c2_bm_bist.v"
+      ],
+      "spice": [
+        "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.cdl"
+      ]
+    }
+  },
+  "PDN_MACRO_CONNECTIONS": [
+    "program_memory.sram VPWR VGND VDD! VSS!",
+    "program_memory.sram VPWR VGND VDDARRAY! VSS!"
+  ],
+
+  "//": "The SRAM has no prBoundary shape; stream its full GDS during integration",
+  "MAGIC_MACRO_STD_CELL_SOURCE": "PDK",
+
+  "//": "Keep the SRAM boundary abstract during extraction",
+  "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",

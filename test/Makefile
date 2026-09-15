@@ -6,12 +6,18 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v
+export PYTHONPATH := $(PWD):$(PYTHONPATH)
+
+ifeq ($(SIM),verilator)
+COMPILE_ARGS += --timing -Wno-fatal
+endif
+PROJECT_SOURCES = project.v protocol_emulator_core.v instruction_decoder.v program_memory.v register_file.v timer_counter.v serial_shifter.v gpio_datapath.v byte_fifo.v host_interface.v
 
 ifneq ($(GATES),yes)
 
 # RTL simulation:
 SIM_BUILD				= sim_build/rtl
+COMPILE_ARGS    += -DFUNCTIONAL
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
 
 else
@@ -29,6 +35,9 @@ VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
 
 endif
 
+# Foundry SRAM model used by both RTL and gate-level simulations:
+VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
+
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
 
@@ -37,7 +46,7 @@ VERILOG_SOURCES += $(PWD)/tb.v
 TOPLEVEL = tb
 
 # List test modules to run, separated by commas and without the .py suffix:
-COCOTB_TEST_MODULES = test
+COCOTB_TEST_MODULES = cocotb_tests.test_top
 
 # include cocotb's make rules to take care of the simulator setup
 include $(shell cocotb-config --makefiles)/Makefile.sim

@@ -9,12 +9,19 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-Explain how your project works
+The project is an SRAM-programmed deterministic protocol engine. Programs use
+shared timing, shifting, FIFO, and configurable GPIO resources to implement
+protocols without dedicated UART, SPI, or I2C state machines.
+
+See the [high-level architecture plan](architecture.md) for the component
+structure, reprogrammability model, initial demonstrations, and growth path.
 
 ## How to test
 
-Explain how to use your project
+The first milestone will load protocol programs through the host interface and
+demonstrate UART, SPI, and I2C through loopback or paired endpoints.
 
 ## External hardware
 
-List external hardware used in your project (e.g. PMOD, LED display, etc), if any
+The basic loopback demonstrations require only suitable pin connections. Paired
+endpoint tests may use a microcontroller, FPGA, or protocol analyzer.
