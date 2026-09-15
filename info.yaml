@@ -27,7 +27,6 @@ project:
     - "gpio_datapath.v"
     - "byte_fifo.v"
     - "host_interface.v"
-    - "RM_IHPSG13_1P_1024x8_c2_bm_bist.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).

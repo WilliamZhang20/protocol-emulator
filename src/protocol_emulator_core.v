@@ -242,7 +242,7 @@ module protocol_emulator_core (
 
   wire _unused = &{decoder_branch, decoder_delay, decoder_gpio, decoder_shift,
                    timer_count, gpio_rising, gpio_falling, gpio_compare_match,
-                   shifter_done, 1'b0};
+                   shifter_parallel[7:0], shifter_done, 1'b0};
 endmodule
 
 `default_nettype wire

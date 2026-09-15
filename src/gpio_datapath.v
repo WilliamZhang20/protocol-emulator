@@ -31,16 +31,17 @@ module gpio_datapath (
   reg [7:0] physical_output;
   reg [7:0] physical_oe;
   reg [7:0] logical_sample;
-  integer index;
+  integer map_index;
+  integer reset_index;
 
   always @(*) begin
     physical_output = 8'b0;
     physical_oe = 8'b0;
     logical_sample = 8'b0;
-    for (index = 0; index < 8; index = index + 1) begin
-      physical_output[pin_map[index]] = logical_output[index];
-      physical_oe[pin_map[index]] = logical_oe[index];
-      logical_sample[index] = pin_in[pin_map[index]];
+    for (map_index = 0; map_index < 8; map_index = map_index + 1) begin
+      physical_output[pin_map[map_index]] = logical_output[map_index];
+      physical_oe[pin_map[map_index]] = logical_oe[map_index];
+      logical_sample[map_index] = pin_in[pin_map[map_index]];
     end
   end
 
@@ -57,8 +58,8 @@ module gpio_datapath (
       logical_output <= 8'b0;
       logical_oe <= 8'b0;
       previous_sample <= 8'b0;
-      for (index = 0; index < 8; index = index + 1)
-        pin_map[index] <= index[2:0];
+      for (reset_index = 0; reset_index < 8; reset_index = reset_index + 1)
+        pin_map[reset_index] <= reset_index[2:0];
     end else begin
       previous_sample <= logical_sample;
       if (map_write)
