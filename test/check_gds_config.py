@@ -26,6 +26,12 @@ def main() -> None:
         f"macro placement for {INSTANCE_NAME} is missing",
     )
 
+    placement = macro["instances"][INSTANCE_NAME]
+    require(
+        placement.get("orientation") == "R0",
+        "SRAM must use R0 so its Metal4 supply rails cross the TopMetal1 PDN",
+    )
+
     expected_views = {
         "gds": MACRO_DIR / f"{MACRO_NAME}.gds",
         "lef": MACRO_DIR / f"{MACRO_NAME}.lef",
