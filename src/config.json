@@ -79,6 +79,9 @@
   "//": "Keep the SRAM boundary abstract during extraction",
   "MAGIC_EXT_ABSTRACT_CELLS": ["RM_IHPSG13_.*"],
 
+  "// MAGIC_DRC_USE_GDS": "The foundry SRAM is already hardened; DRC its top-level DEF/LEF integration view",
+  "MAGIC_DRC_USE_GDS": 0,
+
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",

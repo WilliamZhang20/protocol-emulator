@@ -55,6 +55,10 @@ def main() -> None:
         require(hook in hooks, f"missing supply hook: {hook}")
 
     require(
+        config.get("MAGIC_DRC_USE_GDS") in (0, False),
+        "Magic must use the DEF/LEF view instead of rechecking foundry SRAM internals",
+    )
+    require(
         config.get("PDN_MULTILAYER") in (1, True),
         "PDN_MULTILAYER must connect SRAM Metal4 rails to the TopMetal1 grid",
     )
