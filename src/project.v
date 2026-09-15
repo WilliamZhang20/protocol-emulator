@@ -76,7 +76,7 @@ module tt_um_wzhang20_protocol_emulator (
   wire [9:0] memory_address = memory_owned_by_engine ? instruction_address :
                                                       host_program_address;
 
-  (* keep_hierarchy *) program_memory program_memory (
+  program_memory program_memory (
       .clk(clk),
       .enable(memory_enable),
       .write_enable(memory_write),
