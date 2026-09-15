@@ -106,14 +106,14 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "FP_PDN_VPITCH": 50.0,
-  "FP_PDN_VWIDTH": 2.1,
+  "PDN_VPITCH": 50.0,
+  "PDN_VWIDTH": 2.1,
 
   "//": "Clock",
   "RUN_CTS": 1,
 
-  "//": "Don't generate power rings",
-  "FP_PDN_MULTILAYER": 0,
+  "//": "Use Metal4 and TopMetal1 so the Metal4 SRAM rails can join the top-level grid",
+  "PDN_MULTILAYER": 1,
 
   "//": "MAGIC_DEF_LABELS may cause issues with LVS",
   "MAGIC_DEF_LABELS": 0,

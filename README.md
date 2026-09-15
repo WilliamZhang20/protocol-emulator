@@ -31,11 +31,13 @@ make verify
 - a flattened-synthesis check that requires the LibreLane-visible SRAM instance
   to be named `program_memory.sram`;
 - cocotb smoke and end-to-end UART TX/RX tests through the top-level pins; and
+- a GDS configuration preflight for the SRAM views, placement, supply hooks,
+  and required Metal4/TopMetal1 PDN;
 - formal SRAM checks plus exhaustive 300-step UART TX/RX safety checks and
   complete-frame cover traces.
 
 Individual commands include `make lint`, `make synth-check`,
-`make memory-test`, `make sim`, and `make formal`.
+`make gds-config-check`, `make memory-test`, `make sim`, and `make formal`.
 
 ## Documentation
 
