@@ -9,6 +9,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install Verilator
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+          verilator --version
+          
       - name: Install iverilog
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y iverilog
