@@ -24,6 +24,9 @@ jobs:
     steps:
       - name: Run Tiny Tapeout Precheck
         uses: TinyTapeout/tt-gds-action/precheck@ihp-cmos5l
+        with:
+          tools-repo: WilliamZhang20/tt-support-tools
+          tools-ref: ihp-sg13cmos5l
 
   gl_test:
     needs: gds
