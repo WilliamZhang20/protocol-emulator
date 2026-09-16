@@ -36,7 +36,7 @@
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
         "program_memory.sram": {
-          "location": [42, 80],
+          "location": [42, 81],
           "orientation": "R0"
         }
       },
@@ -113,6 +113,7 @@
   "FP_SIZING": "absolute",
 
   "GRT_ALLOW_CONGESTION": 1,
+  "GRT_MACRO_EXTENSION": 2,
 
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,

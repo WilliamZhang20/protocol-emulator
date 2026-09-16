@@ -63,3 +63,23 @@ if { $::env(PDN_ENABLE_RAILS) == 1 } {
         -grid stdcell_grid \
         -layers "$::env(PDN_RAIL_LAYER) Metal4"
 }
+
+# PDNGen leaves a 0.48 um placement-row clearance around the SRAM. The SRAM
+# exposes vertical Metal4 supplies, so bridge the three deliberately retained
+# LEF access points across that clearance to the aligned top-level stripes.
+# Wrap pdngen so these shapes are added after grid generation but before
+# LibreLane's check_power_grid calls.
+rename pdngen pdngen_without_sram_bridges
+proc pdngen {args} {
+    pdngen_without_sram_bridges {*}$args
+
+    set block [ord::get_db_block]
+    set metal4 [[ord::get_db_tech] findLayer Metal4]
+
+    set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
+    odb::dbSBox_create $vpwr_swire $metal4 111830 79520 113930 81000 STRIPE
+    odb::dbSBox_create $vpwr_swire $metal4 159330 417460 163930 419580 STRIPE
+
+    set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
+    odb::dbSBox_create $vgnd_swire $metal4 64400 79520 68030 81000 STRIPE
+}
