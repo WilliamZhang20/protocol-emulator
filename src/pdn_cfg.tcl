@@ -64,22 +64,73 @@ if { $::env(PDN_ENABLE_RAILS) == 1 } {
         -layers "$::env(PDN_RAIL_LAYER) Metal4"
 }
 
-# PDNGen leaves a 0.48 um placement-row clearance around the SRAM. The SRAM
-# exposes vertical Metal4 supplies, so bridge the three deliberately retained
-# LEF access points across that clearance to the aligned top-level stripes.
-# Wrap pdngen so these shapes are added after grid generation but before
-# LibreLane's check_power_grid calls.
+# Replace automatically-created fragmented power pins with one clean
+# full-height Metal4 pin for each power net.
+proc replace_power_pin {block metal4 net_name sig_type x1 y1 x2 y2} {
+    set net [$block findNet $net_name]
+    set bterm [$block findBTerm $net_name]
+
+    if {$bterm == "NULL"} {
+        set bterm [odb::dbBTerm_create $net $net_name]
+    }
+
+    $bterm setSigType $sig_type
+
+    # Delete all PDNGen-generated pin shapes.
+    foreach bpin [$bterm getBPins] {
+        odb::dbBPin_destroy $bpin
+    }
+
+    # Create exactly one exported pin shape.
+    set bpin [odb::dbBPin_create $bterm]
+    odb::dbBox_create $bpin $metal4 $x1 $y1 $x2 $y2
+    $bpin setPlacementStatus FIXED
+}
+
+
+# Wrap pdngen so we can:
+#   1. connect SRAM power rails
+#   2. clean up exported VPWR/VGND pins
 rename pdngen pdngen_without_sram_bridges
+
 proc pdngen {args} {
     pdngen_without_sram_bridges {*}$args
 
     set block [ord::get_db_block]
     set metal4 [[ord::get_db_tech] findLayer Metal4]
 
+    # ------------------------------------------------------------
+    # SRAM power connections
+    # ------------------------------------------------------------
+
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
-    odb::dbSBox_create $vpwr_swire $metal4 111830 79520 113930 81000 STRIPE
-    odb::dbSBox_create $vpwr_swire $metal4 159330 417460 163930 419580 STRIPE
+
+    # SRAM VDD
+    odb::dbSBox_create $vpwr_swire $metal4 \
+        111830 79520 113930 81000 STRIPE
+
+    # SRAM VDDARRAY
+    odb::dbSBox_create $vpwr_swire $metal4 \
+        159330 417460 163930 419580 STRIPE
 
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
-    odb::dbSBox_create $vgnd_swire $metal4 64400 79520 68030 81000 STRIPE
+
+    # SRAM VSS
+    odb::dbSBox_create $vgnd_swire $metal4 \
+        64400 79520 68030 81000 STRIPE
+
+    # ------------------------------------------------------------
+    # Export clean Tiny Tapeout power pins
+    #
+    # Use a stripe to the RIGHT of the SRAM, where the stripe is
+    # uninterrupted from bottom to top.
+    # ------------------------------------------------------------
+
+    replace_power_pin \
+        $block $metal4 VPWR POWER \
+        211830 3560 213930 707080
+
+    replace_power_pin \
+        $block $metal4 VGND GROUND \
+        215930 3560 218030 707080
 }
