@@ -76,10 +76,21 @@ proc pdngen {args} {
     set block [ord::get_db_block]
     set metal4 [[ord::get_db_tech] findLayer Metal4]
 
+    # VPWR
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
-    odb::dbSBox_create $vpwr_swire $metal4 111830 79520 113930 81000 STRIPE
-    odb::dbSBox_create $vpwr_swire $metal4 159330 417460 163930 419580 STRIPE
 
+    # SRAM VDD -> nearest vertical VPWR strap
+    odb::dbSBox_create $vpwr_swire $metal4 \
+        111830 79520 213930 81000 STRIPE
+
+    # SRAM VDDARRAY -> nearest vertical VPWR strap
+    odb::dbSBox_create $vpwr_swire $metal4 \
+        159330 417460 213930 419580 STRIPE
+
+    # VGND
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
-    odb::dbSBox_create $vgnd_swire $metal4 64400 79520 68030 81000 STRIPE
+
+    # SRAM VSS -> nearest vertical VGND strap
+    odb::dbSBox_create $vgnd_swire $metal4 \
+        64400 79520 218030 81000 STRIPE
 }
