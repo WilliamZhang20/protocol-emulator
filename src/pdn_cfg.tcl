@@ -84,7 +84,7 @@ proc replace_power_pin {block metal4 net_name sig_type x1 y1 x2 y2} {
     # Create exactly one exported pin shape.
     set bpin [odb::dbBPin_create $bterm]
     odb::dbBox_create $bpin $metal4 $x1 $y1 $x2 $y2
-    $bpin setPlacementStatus FIXED
+    $bpin setPlacementStatus FIRM
 }
 
 
