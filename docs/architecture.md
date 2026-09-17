@@ -35,8 +35,8 @@ programming model.
                     +---------------------+
                        |       |       |
                   +--------+ +-----+ +--------+
-                  | timers | |shift| | GPIO   |
-                  |counts  | |unit | | fabric |
+                  | timers | |bit  | | GPIO   |
+                  |counts  | |xfer | | fabric |
                   +--------+ +-----+ +--------+
                                           |
                                    Physical protocol pins
@@ -107,8 +107,34 @@ where applicable:
 | `70` | Push the received byte; stall while RX FIFO is full |
 | `80 ll hh` | Jump to a 10-bit SRAM address |
 | `9vppp` | Wait until a logical input pin equals `v` |
-| `A0` | Clear the serial shifter |
+| `A0` | Clear the bit-transfer shift register |
 | `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
+| `Cppp cfg pins half` | Configure and start autonomous bit transfer; stall until done |
+
+`BIT_XFER` (`Cppp cfg pins half`) runs a multi-bit clocked transfer without the
+VM touching every edge. Immediate `ppp` selects the clock pin. Operands are:
+
+| Byte | Fields |
+| --- | --- |
+| `cfg` | `{tx_od, sample_phase, clk_idle, msb_first, bit_count_m1[3:0]}` |
+| `pins` | `{wait_clk_high, clk_od, rx_pin[2:0], tx_pin[2:0]}` |
+| `half` | half-period in engine clocks (`0` means `1`) |
+
+`bit_count_m1` is transfer length minus one (`0`..`15` → `1`..`16` bits).
+`clk_idle` is CPOL; `sample_phase` `0` samples on the first (active) edge and
+`1` on the second (return-to-idle) edge. Open-drain modes release the line for
+a `1` (`OE=0`) and drive `0` for a `0`. `wait_clk_high` holds in the active
+clock phase until the clock pin reads high, covering I²C clock stretching.
+
+Load payload with `TX_LOAD` before `BIT_XFER`. After completion, an 8-bit
+MSB-first result is left-aligned for `RX_PUSH`. Framing such as SPI chip-select
+or I²C START/STOP/ACK stays in ordinary GPIO/VM instructions.
+
+Example splits:
+
+- SPI: CS low → `BIT_XFER` → CS high (`tx_od=clk_od=0`, `wait_clk_high=0`)
+- I²C byte: START → `BIT_XFER` 8 bits → ACK sample → STOP
+  (`tx_od=clk_od=1`, `wait_clk_high=1`)
 
 The synchronous SRAM path has deterministic instruction overhead. In the
 supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
@@ -127,12 +153,17 @@ Timers provide exact-cycle delays and bounded counting. They allow programs to
 describe baud periods, clock high and low times, setup and hold intervals,
 timeouts, and repeated transfers using the same resource.
 
-### Serial shift unit
+### Bit-transfer engine
 
-The shift unit moves data between parallel working values and serial pins. It
-supports both input and output directions and is intended to cover UART bits,
-SPI words, I2C bytes, and other serial formats without knowing their framing
-rules.
+The bit-transfer engine replaces the earlier serial-only shifter. It still
+supports VM-driven single-bit shift in/out for UART-style timing, and adds an
+autonomous FSM for repetitive clocked transfers:
+
+`IDLE → DRIVE_DATA → CLOCK_ACTIVE → SAMPLE → CLOCK_IDLE → … → DONE`
+
+The same resource covers SPI (push-pull clock/data, optional CPOL/CPHA) and I²C
+data bytes (open-drain plus clock-stretch wait). Protocol framing remains in
+bytecode.
 
 ### Configurable GPIO fabric
 

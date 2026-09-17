@@ -43,3 +43,6 @@ under `formal/models/`; neither model is synthesized into the ASIC.
 
 `test_uart.py` loads distinct TX and RX bytecode images through the real host
 interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins.
+
+`test_bit_xfer.py` exercises the shared autonomous bit-transfer engine with SPI
+mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching case.

@@ -9,8 +9,8 @@ and output-enable control, pin mapping, waits, and branches are protocol-neutral
 UART behavior is supplied entirely by the SRAM image.
 
 The current milestone includes working UART TX and RX programs, a synchronous
-nibble-command host interface, configurable GPIO, FIFOs, timer, serial shifter,
-and the complete SRAM-backed fetch/execute path.
+nibble-command host interface, configurable GPIO, FIFOs, timer, bit-transfer
+engine, and the complete SRAM-backed fetch/execute path.
 
 ## Local verification
 
@@ -30,7 +30,8 @@ make verify
 - a standalone compile/test of the delivered foundry SRAM model;
 - a flattened-synthesis check that requires the LibreLane-visible SRAM instance
   to be named `program_memory.sram`;
-- cocotb smoke and end-to-end UART TX/RX tests through the top-level pins; and
+- cocotb smoke, UART TX/RX, and bit-transfer (SPI/I²C) tests through the
+  top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   and required Metal4/TopMetal1 PDN;
 - formal SRAM checks plus exhaustive 300-step UART TX/RX safety checks and

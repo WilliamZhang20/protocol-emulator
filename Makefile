@@ -15,7 +15,7 @@ RTL_SOURCES := \
 	src/program_memory.v \
 	src/register_file.v \
 	src/timer_counter.v \
-	src/serial_shifter.v \
+	src/bit_transfer_engine.v \
 	src/gpio_datapath.v \
 	src/byte_fifo.v \
 	src/host_interface.v

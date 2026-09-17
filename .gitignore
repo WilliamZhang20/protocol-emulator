@@ -12,6 +12,8 @@ test/__pycache__/
 **/__pycache__/
 test/results.xml
 test/gate_level_netlist.v
+test/core.*
+core.*
 build/
 .venv/
 .tools/

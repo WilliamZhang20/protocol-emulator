@@ -20,7 +20,9 @@ commands, bytecode, component structure, and reprogrammability model.
 
 Run `make verify` for lint, foundry SRAM compilation/testing, cocotb, and formal
 checks. The UART tests load separate TX and RX programs through `ui_in`, execute
-them from SRAM, and observe an 8-N-1 frame through `uio[0]`.
+them from SRAM, and observe an 8-N-1 frame through `uio[0]`. The bit-transfer
+tests exercise the same autonomous engine for SPI mode 0/3 and I²C write/ACK
+with clock stretching.
 
 ## External hardware
 

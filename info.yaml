@@ -23,7 +23,7 @@ project:
     - "program_memory.v"
     - "register_file.v"
     - "timer_counter.v"
-    - "serial_shifter.v"
+    - "bit_transfer_engine.v"
     - "gpio_datapath.v"
     - "byte_fifo.v"
     - "host_interface.v"

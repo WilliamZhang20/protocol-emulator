@@ -15,7 +15,7 @@ cover: smtbmc boolector
 [script]
 read -formal -sv instruction_decoder.v
 read -formal -sv timer_counter.v
-read -formal -sv serial_shifter.v
+read -formal -sv bit_transfer_engine.v
 read -formal -sv gpio_datapath.v
 read -formal -sv protocol_emulator_core.v
 read -formal -sv uart_tx_properties.sv
@@ -24,7 +24,7 @@ prep -top uart_tx_properties
 [files]
 ../../src/instruction_decoder.v
 ../../src/timer_counter.v
-../../src/serial_shifter.v
+../../src/bit_transfer_engine.v
 ../../src/gpio_datapath.v
 ../../src/protocol_emulator_core.v
 uart_tx_properties.sv
