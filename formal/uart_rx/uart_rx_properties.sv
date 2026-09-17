@@ -55,8 +55,22 @@ module uart_rx_properties;
   reg source_active = 1'b0;
   reg [3:0] source_bit = 4'b0;
   reg [4:0] source_phase = 5'b0;
-  wire source_level = source_bit == 0 ? 1'b0 :
-                      source_bit <= 8 ? payload[source_bit - 1'b1] : 1'b1;
+  // Avoid variable bit-selects (they can leave X in the AIGER netlist).
+  reg source_level;
+  always @(*) begin
+    case (source_bit)
+      4'd0: source_level = 1'b0;  // start
+      4'd1: source_level = payload[0];
+      4'd2: source_level = payload[1];
+      4'd3: source_level = payload[2];
+      4'd4: source_level = payload[3];
+      4'd5: source_level = payload[4];
+      4'd6: source_level = payload[5];
+      4'd7: source_level = payload[6];
+      4'd8: source_level = payload[7];
+      default: source_level = 1'b1;  // stop
+    endcase
+  end
 
   always @(*) begin
     gpio_in = 8'hff;

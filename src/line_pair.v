@@ -82,8 +82,10 @@ module line_pair (
     end
   endfunction
 
-  assign sample_comb =
-      decode(pin_sampled[pin_a_r], pin_sampled[pin_b_r], jk_swap_r);
+  // Mask isolate — avoids pin_sampled[idx] variable bit-select (formal X).
+  wire a_level = |(pin_sampled & mask_a);
+  wire b_level = |(pin_sampled & mask_b);
+  assign sample_comb = decode(a_level, b_level, jk_swap_r);
 
   always @(posedge clk) begin
     if (!rst_n) begin

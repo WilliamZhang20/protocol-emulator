@@ -2,6 +2,7 @@
 
 // Programmable CRC datapath (protocol-neutral). Width 1..16, poly/init,
 // reflect-in on feed, reflect-out/xor applied only when `finalize` pulses.
+// Uses shifts/masks (no variable bit-selects) so formal AIGER stays X-free.
 module crc_engine (
     input  wire        clk,
     input  wire        rst_n,
@@ -17,12 +18,9 @@ module crc_engine (
   // cfg: {init_ones, xor_ones, refout, refin, width_m1[3:0]}
   wire [3:0] width_m1 = cfg[3:0];
   wire       refin = cfg[4];
-  wire       refout = cfg[5];
-  wire       xor_ones = cfg[6];
   wire       init_ones = cfg[7];
   wire [4:0] width = {1'b0, width_m1} + 5'd1;
-  wire [15:0] width_mask = (width == 5'd16) ? 16'hFFFF :
-                           (16'hFFFF >> (5'd16 - width));
+  wire [15:0] width_mask = (16'hFFFF >> (5'd16 - width));
 
   assign busy = 1'b0;
 
@@ -42,7 +40,7 @@ module crc_engine (
       wi = {27'd0, w};
       for (i = 0; i < 16; i = i + 1)
         if (i < wi)
-          rev_w[i] = v[wi - 1 - i];
+          rev_w[i] = |( (v >> (wi - 1 - i)) & 16'h0001 );
     end
   endfunction
 
@@ -73,7 +71,8 @@ module crc_engine (
         c = state;
         b = cfg_r[4] ? rev8(feed_byte) : feed_byte;
         for (i = 0; i < 8; i = i + 1) begin
-          top = c[cfg_r[3:0]] ^ b[7 - i];
+          top = |( (c >> cfg_r[3:0]) & 16'h0001 )
+              ^ |( ( {8'h00, b} >> (7 - i) ) & 16'h0001 );
           c = ({c[14:0], 1'b0}) & width_mask_r;
           if (top)
             c = (c ^ poly_r) & width_mask_r;

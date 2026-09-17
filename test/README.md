@@ -55,8 +55,9 @@ mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching ca
 `test_orchestrate.py` checks nonblocking `START_XFER` / `WAIT_EVENT`, overlapped
 timer joins, edge wakeups, and GPIO ownership while a transfer runs.
 
-`test_fuzz.py` runs a mutational orchestration campaign (double START, OR-joins,
-edge wake, ownership) with a hang watchdog and scoreboard invariants.
+`test_fuzz.py` runs a mutational orchestration campaign (96 trials: double START,
+OR-joins, edge wake, ownership, CRC pipelines, line_pair, CRC-then-XFER) with a
+hang watchdog, RX scoreboarding, and directed CRC poly stress.
 
 `test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, the
 `line_pair` helper, and a soft LS ACK line-pattern TX demo (GL-safe).

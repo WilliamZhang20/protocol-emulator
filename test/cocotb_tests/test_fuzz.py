@@ -2,7 +2,7 @@
 
 Gate-level safe: observes host status and `uio_*` only. Generates completable
 programs by construction; stresses double START_XFER, OR-waits, edge arming,
-and GPIO on free pins.
+GPIO ownership, CRC feeds, and line_pair drive/sample.
 """
 
 from __future__ import annotations
@@ -27,11 +27,23 @@ from cocotb_tests.reference.programs import (
     EV_TIMER_DONE,
     EV_XFER_DONE,
     HALT,
+    LINE_J,
+    LINE_K,
+    LINE_SE0,
     NOP,
     TX_LOAD,
     arm_edges,
+    crc_finalize,
+    crc_feed,
+    crc_push_result,
+    crc_setup,
+    crc_usb16_setup,
     gpio_oe,
     gpio_write,
+    line_cfg,
+    line_drive,
+    line_release,
+    line_sample,
     start_timer,
     start_xfer,
     wait,
@@ -41,6 +53,8 @@ from cocotb_tests.reference.programs import (
 MOSI, MISO, SCLK = 0, 1, 2
 FREE_PIN = 5  # never claimed by XFER in this fuzzer
 EDGE_PIN = 6
+# line_pair demo pins — keep clear of MOSI/SCLK/FREE/EDGE
+LP_A, LP_B = 3, 4
 
 
 async def load_program(dut, program: list[int]) -> None:
@@ -56,6 +70,11 @@ async def push_tx(dut, byte: int) -> None:
     await host_command(dut, 0x7, byte >> 4)
 
 
+async def pop_rx(dut) -> int:
+    await host_command(dut, 0x9)
+    return int(dut.uo_out.value)
+
+
 @dataclass
 class FuzzPlan:
     program: list[int]
@@ -64,8 +83,8 @@ class FuzzPlan:
     edge_rise: bool = True
     xfer_starts: int = 0
     timer_starts: int = 0
-    # Minimum SCLK edges expected when xfer_starts > 0 (black-box busy proxy).
     min_sclk_edges: int = 0
+    expect_rx: list[int] | None = None
     labels: set[str] = field(default_factory=set)
 
 
@@ -83,7 +102,7 @@ def _xfer_kwargs(rng: random.Random) -> dict:
 
 
 def _nops(rng: random.Random) -> list[int]:
-    return [NOP for _ in range(rng.randint(0, 2))]
+    return [NOP for _ in range(rng.randint(0, 3))]
 
 
 def _lead() -> list[int]:
@@ -96,11 +115,40 @@ def _lead() -> list[int]:
     ]
 
 
+def _sw_crc16_usb(data: list[int]) -> int:
+    """Match crc_engine USB-CRC16 configuration used by fuzz plans."""
+    width, poly = 16, 0x8005
+    width_mask = (1 << width) - 1
+    crc = width_mask
+    for byte in data:
+        b = int(f"{byte:08b}"[::-1], 2)
+        for i in range(8):
+            bit = (b >> (7 - i)) & 1
+            top = ((crc >> (width - 1)) & 1) ^ bit
+            crc = (crc << 1) & width_mask
+            if top:
+                crc ^= poly & width_mask
+    rev = 0
+    for i in range(width):
+        if (crc >> i) & 1:
+            rev |= 1 << (width - 1 - i)
+    return (rev ^ width_mask) & width_mask
+
+
 def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
     """Build a program that must reach HALT if the DUT is correct."""
     kind = rng.choices(
-        ["paired", "double_xfer", "or_join", "edge_wake", "busy_gpio"],
-        weights=[40, 20, 15, 15, 10],
+        [
+            "paired",
+            "double_xfer",
+            "or_join",
+            "edge_wake",
+            "busy_gpio",
+            "crc_pipe",
+            "line_pair",
+            "crc_then_xfer",
+        ],
+        weights=[22, 14, 12, 12, 10, 12, 10, 8],
         k=1,
     )[0]
     labels = {kind}
@@ -144,6 +192,7 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
         body = [
             TX_LOAD,
             *start_xfer(**first),
+            *_nops(rng),
             TX_LOAD,
             *start_xfer(**second),
             *wait_event(EV_XFER_DONE),
@@ -196,6 +245,69 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             labels=labels,
         )
 
+    if kind == "crc_pipe":
+        labels.add("crc")
+        n = rng.randint(1, 4)
+        data = [rng.randint(0, 255) for _ in range(n)]
+        expect = _sw_crc16_usb(data)
+        body = [*crc_usb16_setup()]
+        for b in data:
+            body += crc_feed(b)
+            body += _nops(rng)
+        body += [crc_finalize(), *crc_push_result(), HALT]
+        return FuzzPlan(
+            body,
+            tx_bytes=[],
+            expect_rx=[expect & 0xFF, (expect >> 8) & 0xFF],
+            labels=labels,
+        )
+
+    if kind == "line_pair":
+        labels.add("line")
+        seq = [LINE_J, LINE_K, LINE_SE0, LINE_J]
+        if rng.random() < 0.5:
+            mid = [LINE_K, LINE_SE0]
+            rng.shuffle(mid)
+            seq = [LINE_J] + mid + [LINE_J]
+        body = [*line_cfg(LP_A, LP_B)]
+        for st in seq:
+            body += [*line_drive(st), *wait(rng.randint(2, 6))]
+        body += [line_release(), line_sample(), HALT]
+        return FuzzPlan(
+            body,
+            tx_bytes=[],
+            expect_rx=[LINE_J],
+            labels=labels,
+        )
+
+    if kind == "crc_then_xfer":
+        labels.update({"crc", "paired"})
+        tx_bytes = [rng.randint(0, 255)]
+        data = [rng.randint(0, 255)]
+        expect = _sw_crc16_usb(data)
+        xfer_kw = _xfer_kwargs(rng)
+        xfer_kw["bit_count"] = rng.choice([4, 8])
+        body = [
+            *_lead(),
+            *crc_usb16_setup(),
+            *crc_feed(data[0]),
+            *_nops(rng),
+            crc_finalize(),
+            *crc_push_result(),
+            TX_LOAD,
+            *start_xfer(**xfer_kw),
+            *wait_event(EV_XFER_DONE),
+            HALT,
+        ]
+        return FuzzPlan(
+            body,
+            tx_bytes,
+            xfer_starts=1,
+            min_sclk_edges=xfer_kw["bit_count"],
+            expect_rx=[expect & 0xFF, (expect >> 8) & 0xFF],
+            labels=labels,
+        )
+
     # busy_gpio — VM wiggles a free pin while XFER owns MOSI/SCLK
     labels.add("ownership")
     tx_bytes = [rng.randint(0, 255)]
@@ -221,11 +333,15 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
     for byte in plan.tx_bytes:
         await push_tx(dut, byte)
 
-    dut.uio_in.value = 0 if plan.edge_rise else (1 << EDGE_PIN)
+    # Idle J on line_pair pins for SAMPLE-after-release plans.
+    idle = 0 if plan.edge_rise else (1 << EDGE_PIN)
+    idle |= (0 << LP_A) | (1 << LP_B)
+    dut.uio_in.value = idle
     await host_command(dut, 0x8, 1)
 
     saw_sclk_edges = 0
     saw_free_pin_high_during_xfer = 0
+    saw_line_activity = 0
     edge_fired = False
     prev_sclk = driven_level(dut, SCLK)
     last_pin_key = None
@@ -239,7 +355,9 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
         cycle += 1
 
         if plan.needs_edge and not edge_fired and cycle > 50:
-            dut.uio_in.value = (1 << EDGE_PIN) if plan.edge_rise else 0
+            dut.uio_in.value = ((1 << EDGE_PIN) if plan.edge_rise else 0) | (
+                (0 << LP_A) | (1 << LP_B)
+            )
             edge_fired = True
 
         sclk = driven_level(dut, SCLK)
@@ -256,6 +374,11 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
         if free_oe and free_out and xfer_recent:
             saw_free_pin_high_during_xfer += 1
 
+        la = driven_level(dut, LP_A)
+        lb = driven_level(dut, LP_B)
+        if la is not None and lb is not None:
+            saw_line_activity += 1
+
         pin_key = (
             int(dut.uio_out.value),
             int(dut.uio_oe.value),
@@ -268,13 +391,11 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
             stalled = 0
             last_pin_key = pin_key
 
-        # After HALT the host clears enable (running bit). Poll infrequently.
         if cycle % 64 == 0:
             if not status_running(await read_status(dut)):
                 finished = True
                 break
 
-        # Only treat pin-idle as a hang while the engine still claims to be running.
         if stalled > 4000:
             st = await read_status(dut)
             if not status_running(st):
@@ -291,7 +412,6 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
 
     assert finished
 
-    # OR-join may HALT while XFER still finishes; wait for SCLK to go quiet.
     if "or" in plan.labels:
         quiet = 0
         prev = driven_level(dut, SCLK)
@@ -315,8 +435,6 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
     if plan.xfer_starts:
         assert saw_sclk_edges > 0, f"trial {trial}: expected SCLK activity"
     if plan.min_sclk_edges:
-        # Each transferred bit produces one SCLK period (≥1 level change pair);
-        # require a conservative fraction so CPOL/idle edges do not flake.
         need = max(1, plan.min_sclk_edges)
         assert saw_sclk_edges >= need, (
             f"trial {trial}: sclk_edges {saw_sclk_edges} < {need} "
@@ -326,6 +444,16 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
         assert saw_free_pin_high_during_xfer > 0, (
             f"trial {trial}: free pin never high during xfer"
         )
+    if "line" in plan.labels:
+        assert saw_line_activity > 0, f"trial {trial}: line_pair never drove"
+
+    if plan.expect_rx is not None:
+        for i, want in enumerate(plan.expect_rx):
+            got = await pop_rx(dut)
+            assert got == want, (
+                f"trial {trial}: RX[{i}] got {got:#x} want {want:#x} "
+                f"labels={plan.labels}"
+            )
 
     return {
         "labels": set(plan.labels),
@@ -340,7 +468,7 @@ async def test_fuzz_orchestrate_campaign(dut):
     await start_clock(dut)
 
     coverage: set[str] = set()
-    for trial in range(48):
+    for trial in range(96):
         await reset_top(dut)
         plan = build_fuzz_plan(rng)
         await load_program(dut, plan.program)
@@ -359,6 +487,8 @@ async def test_fuzz_orchestrate_campaign(dut):
         "or",
         "ownership",
         "edge",
+        "crc",
+        "line",
     }
     missing = required - coverage
     assert not missing, f"fuzz campaign missed shapes: {missing}"
@@ -421,3 +551,32 @@ async def test_fuzz_double_start_serialization(dut):
     )
     await load_program(dut, plan.program)
     await run_plan(dut, plan, trial=-2, hang_limit=6000)
+
+
+@cocotb.test()
+async def test_fuzz_crc_random_polys(dut):
+    """Adversarial CRC: random width/poly still finalizes and pushes."""
+    await start_clock(dut)
+    rng = random.Random(0xC2C)
+    for trial in range(8):
+        await reset_top(dut)
+        width = rng.choice([5, 8, 16])
+        poly = rng.randint(1, (1 << width) - 1) | 1  # odd poly
+        data = [rng.randint(0, 255) for _ in range(rng.randint(1, 3))]
+        program = [
+            *crc_setup(width=width, poly=poly),
+            *[b for byte in data for b in crc_feed(byte)],
+            crc_finalize(),
+            *crc_push_result(),
+            HALT,
+        ]
+        await load_program(dut, program)
+        await run_plan(
+            dut,
+            FuzzPlan(program, [], labels={"crc", "crc_rand"}),
+            trial=-(100 + trial),
+            hang_limit=3000,
+        )
+        # Just ensure two RX bytes pop without hanging.
+        _ = await pop_rx(dut)
+        _ = await pop_rx(dut)

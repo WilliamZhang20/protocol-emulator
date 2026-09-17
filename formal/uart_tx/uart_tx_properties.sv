@@ -66,9 +66,34 @@ module uart_tx_properties;
   reg completed = 1'b0;
   reg [3:0] frame_bit = 4'b0;
   reg [4:0] phase = 5'b0;
-  wire expected_level = frame_bit == 0 ? 1'b0 :
-                        frame_bit <= 8 ? payload[frame_bit - 1'b1] : 1'b1;
-  wire next_level = frame_bit < 8 ? payload[frame_bit] : 1'b1;
+  // Avoid variable bit-selects (they can leave X in the AIGER netlist).
+  reg expected_level;
+  reg next_level;
+  always @(*) begin
+    case (frame_bit)
+      4'd0: expected_level = 1'b0;
+      4'd1: expected_level = payload[0];
+      4'd2: expected_level = payload[1];
+      4'd3: expected_level = payload[2];
+      4'd4: expected_level = payload[3];
+      4'd5: expected_level = payload[4];
+      4'd6: expected_level = payload[5];
+      4'd7: expected_level = payload[6];
+      4'd8: expected_level = payload[7];
+      default: expected_level = 1'b1;
+    endcase
+    case (frame_bit)
+      4'd0: next_level = payload[0];
+      4'd1: next_level = payload[1];
+      4'd2: next_level = payload[2];
+      4'd3: next_level = payload[3];
+      4'd4: next_level = payload[4];
+      4'd5: next_level = payload[5];
+      4'd6: next_level = payload[6];
+      4'd7: next_level = payload[7];
+      default: next_level = 1'b1;
+    endcase
+  end
 
   always @(posedge clk) begin
     if (reset_cycles != 2'd3)
