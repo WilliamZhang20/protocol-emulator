@@ -52,6 +52,8 @@ module bit_transfer_engine (
 
   reg [2:0]  state;
   reg [15:0] shift_register;
+  reg [15:0] preload;
+  reg        preload_valid;
   reg [4:0]  bits_remaining;
   reg [4:0]  bits_total;
   reg        msb_first;
@@ -85,7 +87,8 @@ module bit_transfer_engine (
   assign serial_out = shift_right ? shift_register[0] : shift_register[15];
   assign parallel_out = shift_register;
   assign shift_done = bits_remaining == 5'b0 && state == ST_IDLE;
-  assign busy = state != ST_IDLE && state != ST_DONE;
+  // Stay busy through DONE so a waiting START cannot race the idle transition.
+  assign busy = state != ST_IDLE;
   assign done = done_pulse;
   assign drive_enable = state != ST_IDLE && state != ST_DONE;
   assign drive_out_mask = drive_enable ? (tx_mask | clk_mask) : 8'b0;
@@ -98,12 +101,15 @@ module bit_transfer_engine (
   wire current_tx_bit = msb_first ? shift_register[15] : shift_register[0];
   wire [4:0] start_bits = {1'b0, cfg_bit_count_m1} + 5'd1;
   wire [4:0] align_shift = 5'd16 - start_bits;
-  wire [15:0] aligned_tx = shift_register << align_shift;
+  wire [15:0] start_payload = preload_valid ? preload : shift_register;
+  wire [15:0] aligned_tx = start_payload << align_shift;
 
   always @(posedge clk) begin
     if (!rst_n) begin
       state <= ST_IDLE;
       shift_register <= 16'b0;
+      preload <= 16'b0;
+      preload_valid <= 1'b0;
       bits_remaining <= 5'b0;
       bits_total <= 5'b0;
       msb_first <= 1'b0;
@@ -124,9 +130,16 @@ module bit_transfer_engine (
     end else begin
       done_pulse <= 1'b0;
 
-      if (state == ST_IDLE && load) begin
-        shift_register <= parallel_in;
-        bits_remaining <= bit_count;
+      if (load) begin
+        if (state == ST_IDLE) begin
+          shift_register <= parallel_in;
+          bits_remaining <= bit_count;
+          preload_valid <= 1'b0;
+        end else begin
+          // Accept TX_LOAD while a transfer runs; applied on the next start.
+          preload <= parallel_in;
+          preload_valid <= 1'b1;
+        end
       end else if (state == ST_IDLE && shift_enable && bits_remaining != 5'b0) begin
         if (shift_right)
           shift_register <= {serial_in, shift_register[15:1]};
@@ -151,11 +164,14 @@ module bit_transfer_engine (
             bits_total <= start_bits;
             bits_remaining <= start_bits;
             clk_level <= cfg_clk_idle;
+            preload_valid <= 1'b0;
             if (cfg_msb_first) begin
               shift_register <= aligned_tx;
               tx_bit <= aligned_tx[15];
-            end else
-              tx_bit <= shift_register[0];
+            end else begin
+              shift_register <= start_payload;
+              tx_bit <= start_payload[0];
+            end
             phase_counter <= (cfg_half_period == 8'b0) ? 8'd0 :
                              (cfg_half_period - 8'd1);
             active_sampled <= 1'b0;

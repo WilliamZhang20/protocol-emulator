@@ -10,7 +10,8 @@ UART behavior is supplied entirely by the SRAM image.
 
 The current milestone includes working UART TX and RX programs, a synchronous
 nibble-command host interface, configurable GPIO, FIFOs, timer, bit-transfer
-engine, and the complete SRAM-backed fetch/execute path.
+engine, event scoreboard with nonblocking START/WAIT_EVENT orchestration, and
+the complete SRAM-backed fetch/execute path.
 
 ## Local verification
 
@@ -30,7 +31,7 @@ make verify
 - a standalone compile/test of the delivered foundry SRAM model;
 - a flattened-synthesis check that requires the LibreLane-visible SRAM instance
   to be named `program_memory.sram`;
-- cocotb smoke, UART TX/RX, and bit-transfer (SPI/I²C) tests through the
+- cocotb smoke, UART, bit-transfer, orchestration, and fuzz tests through the
   top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   and required Metal4/TopMetal1 PDN;

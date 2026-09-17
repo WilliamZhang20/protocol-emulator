@@ -6,11 +6,37 @@ TX_LOAD = 0x40
 RX_PUSH = 0x70
 SHIFT_CLEAR = 0xA0
 
+# Event mask bits (WAIT_EVENT / OR)
+EV_XFER_DONE = 1 << 0
+EV_TIMER_DONE = 1 << 1
+EV_PIN_RISE = 1 << 2
+EV_PIN_FALL = 1 << 3
+EV_COMPARE = 1 << 4
+
 
 def wait(cycles: int) -> list[int]:
     if not 0 <= cycles <= 0xFFFF:
         raise ValueError("wait duration must fit in 16 bits")
     return [0x10, cycles & 0xFF, cycles >> 8]
+
+
+def start_timer(cycles: int) -> list[int]:
+    """Nonblocking timer: sets EV_TIMER_DONE on expiry."""
+    if not 0 <= cycles <= 0xFFFF:
+        raise ValueError("timer duration must fit in 16 bits")
+    return [0xE0, cycles & 0xFF, cycles >> 8]
+
+
+def wait_event(mask: int) -> list[int]:
+    """Stall until any pending event in mask is set; clears matched bits."""
+    if not 0 <= mask <= 0xFF:
+        raise ValueError("event mask must fit in 8 bits")
+    return [0xD0, mask & 0xFF]
+
+
+def arm_edges(rise_mask: int, fall_mask: int, compare: bool = False) -> list[int]:
+    """Arm pin-edge / compare events for WAIT_EVENT."""
+    return [0xF0 | (1 if compare else 0), rise_mask & 0xFF, fall_mask & 0xFF]
 
 
 def gpio_write(pin: int, value: int) -> int:
@@ -41,7 +67,7 @@ def map_pin(logical_pin: int, physical_pin: int) -> list[int]:
     return [0xB0 | (logical_pin & 7), physical_pin & 7]
 
 
-def bit_xfer(
+def start_xfer(
     *,
     clk_pin: int,
     tx_pin: int,
@@ -55,7 +81,7 @@ def bit_xfer(
     clk_open_drain: bool = False,
     wait_clk_high: bool = False,
 ) -> list[int]:
-    """Encode configure+start for the autonomous bit-transfer engine."""
+    """Configure and launch the bit-transfer engine without waiting."""
     if not 1 <= bit_count <= 16:
         raise ValueError("bit_count must be 1..16")
     if not 0 <= half_period <= 0xFF:
@@ -74,6 +100,11 @@ def bit_xfer(
         | ((1 if wait_clk_high else 0) << 7)
     )
     return [0xC0 | (clk_pin & 7), cfg, pins, half_period & 0xFF]
+
+
+def bit_xfer(**kwargs) -> list[int]:
+    """Backward-compatible blocking transfer: START_XFER + WAIT_EVENT XFER_DONE."""
+    return start_xfer(**kwargs) + wait_event(EV_XFER_DONE)
 
 
 def uart_tx_program(wait_cycles: int, pin: int = 0) -> list[int]:
@@ -108,7 +139,7 @@ def spi_master_program(
     sclk: int = 2,
     cs: int = 3,
 ) -> list[int]:
-    """One SPI master transfer: CS low, BIT_XFER, CS high, push RX, halt."""
+    """One SPI master transfer via nonblocking START_XFER + WAIT_EVENT."""
     if mode not in (0, 1, 2, 3):
         raise ValueError("SPI mode must be 0..3")
     clk_idle = 1 if mode in (2, 3) else 0
@@ -122,7 +153,7 @@ def spi_master_program(
         gpio_oe(miso, 0),
         TX_LOAD,
         gpio_write(cs, 0),
-        *bit_xfer(
+        *start_xfer(
             clk_pin=sclk,
             tx_pin=mosi,
             rx_pin=miso,
@@ -131,12 +162,44 @@ def spi_master_program(
             msb_first=True,
             clk_idle=clk_idle,
             sample_phase=sample_phase,
-            tx_open_drain=False,
-            clk_open_drain=False,
-            wait_clk_high=False,
         ),
+        *wait_event(EV_XFER_DONE),
         RX_PUSH,
         gpio_write(cs, 1),
+        HALT,
+    ]
+
+
+def overlap_xfer_timer_program(
+    *,
+    half_period: int = 2,
+    timer_cycles: int = 80,
+    mosi: int = 0,
+    miso: int = 1,
+    sclk: int = 2,
+    flag_pin: int = 4,
+) -> list[int]:
+    """Prove VM freedom: START_XFER, toggle a flag, wait XFER_DONE|TIMER_DONE."""
+    return [
+        gpio_oe(mosi, 1),
+        gpio_oe(sclk, 1),
+        gpio_oe(flag_pin, 1),
+        gpio_write(sclk, 0),
+        gpio_write(flag_pin, 0),
+        TX_LOAD,
+        *start_xfer(
+            clk_pin=sclk,
+            tx_pin=mosi,
+            rx_pin=miso,
+            bit_count=8,
+            half_period=half_period,
+        ),
+        *start_timer(timer_cycles),
+        gpio_write(flag_pin, 1),
+        *wait_event(EV_XFER_DONE),
+        *wait_event(EV_TIMER_DONE),
+        RX_PUSH,
+        gpio_write(flag_pin, 0),
         HALT,
     ]
 
@@ -148,18 +211,13 @@ def i2c_write_byte_program(
     half_period: int = 2,
     with_ack_xfer: bool = True,
 ) -> list[int]:
-    """I2C master: START, 8-bit write via BIT_XFER, optional ACK bit, STOP.
-
-    When with_ack_xfer is set, the TX FIFO must supply a second byte whose low
-    bit is 1 so the ACK slot releases SDA (open-drain).
-    """
+    """I2C master: START, 8-bit write via BIT_XFER, optional ACK bit, STOP."""
     program = [
         gpio_oe(sda, 1),
         gpio_write(sda, 1),
         gpio_oe(scl, 1),
         gpio_write(scl, 1),
         TX_LOAD,
-        # START: SDA falls while SCL high
         gpio_write(sda, 0),
         *wait(half_period),
         gpio_write(scl, 0),
@@ -195,7 +253,6 @@ def i2c_write_byte_program(
             ),
             RX_PUSH,
         ]
-    # STOP: drive SDA low, raise SCL, release SDA
     program += [
         gpio_oe(sda, 1),
         gpio_write(sda, 0),

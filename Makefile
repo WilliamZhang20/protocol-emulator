@@ -16,6 +16,9 @@ RTL_SOURCES := \
 	src/register_file.v \
 	src/timer_counter.v \
 	src/bit_transfer_engine.v \
+	src/event_engine.v \
+	src/vm_sequencer.v \
+	src/gpio_arbiter.v \
 	src/gpio_datapath.v \
 	src/byte_fifo.v \
 	src/host_interface.v

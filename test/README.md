@@ -46,3 +46,9 @@ interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins
 
 `test_bit_xfer.py` exercises the shared autonomous bit-transfer engine with SPI
 mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching case.
+
+`test_orchestrate.py` checks nonblocking `START_XFER` / `WAIT_EVENT`, overlapped
+timer joins, edge wakeups, and GPIO ownership while a transfer runs.
+
+`test_fuzz.py` runs a mutational orchestration campaign (double START, OR-joins,
+edge wake, ownership) with a hang watchdog and scoreboard invariants.

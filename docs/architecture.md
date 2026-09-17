@@ -89,9 +89,9 @@ model in simulation and formal verification.
 
 ### Protocol engine
 
-The protocol engine owns instruction sequencing and the small amount of local
-state needed while a program runs. It coordinates shared execution resources
-and advances only when the current operation's timing and flow-control
+The protocol engine owns instruction sequencing (`vm_sequencer`) and
+coordinates shared resources. Pin claim/merge lives in `gpio_arbiter`. The
+engine advances only when the current operation's timing and flow-control
 conditions are satisfied.
 
 The bytecode is intentionally small and embeds a logical pin number in bits 2:0
@@ -100,7 +100,7 @@ where applicable:
 | Encoding | Operation |
 | --- | --- |
 | `00`, `01` | NOP, HALT |
-| `10 ll hh` | WAIT16, little-endian cycle count |
+| `10 ll hh` | WAIT16, blocking little-endian cycle count |
 | `2vppp`, `3vppp` | Write logical GPIO, write its output enable |
 | `40` | Load a byte from TX FIFO; stall while empty |
 | `5p`, `6p` | Shift one bit out or in, LSB first |
@@ -109,32 +109,52 @@ where applicable:
 | `9vppp` | Wait until a logical input pin equals `v` |
 | `A0` | Clear the bit-transfer shift register |
 | `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
-| `Cppp cfg pins half` | Configure and start autonomous bit transfer; stall until done |
+| `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer (nonblocking) |
+| `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
+| `E0 ll hh` | `START_TIMER`: nonblocking timer; sets `EV_TIMER_DONE` on expiry |
+| `F0 rise fall` | `ARM_EDGE`: arm rise/fall masks (`imm0` also arms compare) |
 
-`BIT_XFER` (`Cppp cfg pins half`) runs a multi-bit clocked transfer without the
-VM touching every edge. Immediate `ppp` selects the clock pin. Operands are:
+### Orchestration model
+
+Resources run concurrently with the VM. Launch is nonblocking; joining uses
+events:
+
+```text
+TX_LOAD
+START_XFER
+START_TIMER        ; VM is free — both resources run
+WAIT_EVENT XFER_DONE
+WAIT_EVENT TIMER_DONE
+RX_PUSH
+```
+
+`WAIT_EVENT` ORs its mask against a sticky pending vector. `XFER_DONE` and
+`TIMER_DONE` are **token-counted** (so back-to-back completions are not lost);
+edge/compare sources are level-sticky. Typical bits:
+
+| Bit | Name | Source |
+| --- | --- | --- |
+| 0 | `EV_XFER_DONE` | bit-transfer engine done pulse |
+| 1 | `EV_TIMER_DONE` | async timer expiry |
+| 2 | `EV_PIN_RISE` | armed rising edges |
+| 3 | `EV_PIN_FALL` | armed falling edges |
+| 4 | `EV_COMPARE` | armed GPIO compare match |
+
+`WAIT_EVENT(XFER_DONE \| TIMER_DONE)` wakes on the first of the two (timeout-or-
+complete). To require both, issue two waits with single-bit masks (events are
+sticky).
+
+`START_XFER` claims the TX and CLK pins for the duration of the transfer; VM
+GPIO writes to claimed pins are ignored so two drivers cannot fight. Blocking
+`WAIT16` remains for UART-style bit bang.
+
+`Cppp cfg pins half` operand layout is unchanged from the bit-transfer engine:
 
 | Byte | Fields |
 | --- | --- |
 | `cfg` | `{tx_od, sample_phase, clk_idle, msb_first, bit_count_m1[3:0]}` |
 | `pins` | `{wait_clk_high, clk_od, rx_pin[2:0], tx_pin[2:0]}` |
 | `half` | half-period in engine clocks (`0` means `1`) |
-
-`bit_count_m1` is transfer length minus one (`0`..`15` → `1`..`16` bits).
-`clk_idle` is CPOL; `sample_phase` `0` samples on the first (active) edge and
-`1` on the second (return-to-idle) edge. Open-drain modes release the line for
-a `1` (`OE=0`) and drive `0` for a `0`. `wait_clk_high` holds in the active
-clock phase until the clock pin reads high, covering I²C clock stretching.
-
-Load payload with `TX_LOAD` before `BIT_XFER`. After completion, an 8-bit
-MSB-first result is left-aligned for `RX_PUSH`. Framing such as SPI chip-select
-or I²C START/STOP/ACK stays in ordinary GPIO/VM instructions.
-
-Example splits:
-
-- SPI: CS low → `BIT_XFER` → CS high (`tx_od=clk_od=0`, `wait_clk_high=0`)
-- I²C byte: START → `BIT_XFER` 8 bits → ACK sample → STOP
-  (`tx_od=clk_od=1`, `wait_clk_high=1`)
 
 The synchronous SRAM path has deterministic instruction overhead. In the
 supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
@@ -147,23 +167,26 @@ temporary protocol data. Dedicated counters and shift storage handle operations
 that would otherwise require long software sequences while remaining reusable
 across protocols.
 
-### Timers and counters
-
-Timers provide exact-cycle delays and bounded counting. They allow programs to
-describe baud periods, clock high and low times, setup and hold intervals,
-timeouts, and repeated transfers using the same resource.
-
 ### Bit-transfer engine
 
-The bit-transfer engine replaces the earlier serial-only shifter. It still
-supports VM-driven single-bit shift in/out for UART-style timing, and adds an
-autonomous FSM for repetitive clocked transfers:
+Autonomous FSM for repetitive clocked transfers:
 
 `IDLE → DRIVE_DATA → CLOCK_ACTIVE → SAMPLE → CLOCK_IDLE → … → DONE`
 
-The same resource covers SPI (push-pull clock/data, optional CPOL/CPHA) and I²C
-data bytes (open-drain plus clock-stretch wait). Protocol framing remains in
-bytecode.
+Launched with `START_XFER` (nonblocking). Completion is observed through
+`EV_XFER_DONE` and `WAIT_EVENT`. The same resource covers SPI and I²C data
+bytes; framing stays in bytecode.
+
+### Event engine
+
+Sticky pending bits from resources and pin activity. `WAIT_EVENT` is the join
+primitive that turns the VM into an orchestrator. Edge and compare sources are
+armed with `ARM_EDGE`.
+
+### Timers and counters
+
+`WAIT16` remains a blocking delay. `START_TIMER` runs the same counter
+autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts.
 
 ### Configurable GPIO fabric
 
@@ -229,3 +252,10 @@ The component boundaries allow later versions to add capabilities incrementally:
 
 New hardware operations should accelerate patterns useful to several protocols.
 Protocol-specific state machines remain outside the architectural direction.
+
+Near-term orchestration growth already sketched in the ISA:
+
+- richer resource scoreboard (multi-XFER IDs, ready/busy);
+- second timer / capture;
+- compact register-file ALU for lengths and protocol state;
+- stronger GPIO arbitration across concurrent owners.
