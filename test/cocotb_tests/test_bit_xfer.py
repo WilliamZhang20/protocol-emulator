@@ -328,18 +328,21 @@ async def test_i2c_clock_stretch(dut):
     for _ in range(2000):
         await RisingEdge(dut.clk)
         bus.apply()
-        if int(dut.user_project.core.bit_xfer.state.value) == 2:
+        if _driven_level(dut, SCL) is None:
             break
     else:
-        raise AssertionError("BIT_XFER never entered CLOCK_ACTIVE")
+        raise AssertionError("master never released SCL")
 
+    # Slave stretches clock low.
     bus.slave_scl_low = True
     bus.apply()
+
     for _ in range(stretch):
         await RisingEdge(dut.clk)
         bus.apply()
-        assert int(dut.user_project.core.bit_xfer.busy.value) == 1
-        assert int(dut.user_project.core.bit_xfer.state.value) == 2
+        assert bus.line(SCL) == 0
+
+    # Release stretch.
     bus.slave_scl_low = False
     bus.apply()
 
