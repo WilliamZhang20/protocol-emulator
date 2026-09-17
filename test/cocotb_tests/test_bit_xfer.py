@@ -3,7 +3,7 @@
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from cocotb_tests.common import reset_top, start_clock
+from cocotb_tests.common import reset_top, start_clock, wait_until_halted
 from cocotb_tests.reference.programs import (
     i2c_write_byte_program,
     spi_master_program,
@@ -346,13 +346,14 @@ async def test_i2c_clock_stretch(dut):
     bus.slave_scl_low = False
     bus.apply()
 
-    for _ in range(5000):
-        await RisingEdge(dut.clk)
-        bus.apply()
-        if int(dut.user_project.core.state.value) == 9:
-            break
-    else:
-        raise AssertionError("engine did not halt after clock stretch")
+    # Keep the open-drain model alive until the program finishes (status halt).
+    async def _bus_until_done():
+        while True:
+            await RisingEdge(dut.clk)
+            bus.apply()
+
+    cocotb.start_soon(_bus_until_done())
+    await wait_until_halted(dut, timeout_cycles=5000, poll_every=32)
 
     ack_byte = await pop_rx(dut)
     # Stretch coverage is the busy-hold above; ACK may be NACK if the

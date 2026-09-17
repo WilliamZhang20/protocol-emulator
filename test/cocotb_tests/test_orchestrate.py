@@ -1,9 +1,19 @@
-"""Orchestration tests: nonblocking START_XFER, WAIT_EVENT, overlapped timer."""
+"""Orchestration tests: nonblocking START_XFER, WAIT_EVENT, overlapped timer.
+
+Black-box only — observes host status and `uio_*` pins (GL-safe).
+"""
 
 import cocotb
 from cocotb.triggers import RisingEdge
 
-from cocotb_tests.common import reset_top, start_clock
+from cocotb_tests.common import (
+    driven_level,
+    host_command,
+    read_status,
+    reset_top,
+    start_clock,
+    status_running,
+)
 from cocotb_tests.reference.programs import (
     EV_PIN_RISE,
     EV_TIMER_DONE,
@@ -23,13 +33,6 @@ FLAG = 4
 MOSI, MISO, SCLK = 0, 1, 2
 
 
-async def host_command(dut, command: int, payload: int = 0) -> None:
-    dut.ui_in.value = ((command & 0xF) << 4) | (payload & 0xF)
-    await RisingEdge(dut.clk)
-    dut.ui_in.value = 0
-    await RisingEdge(dut.clk)
-
-
 async def load_program(dut, program: list[int]) -> None:
     for cmd, payload in [(0x1, 0), (0x2, 0), (0x3, 0)]:
         await host_command(dut, cmd, payload)
@@ -47,17 +50,22 @@ async def start_engine(dut) -> None:
     await host_command(dut, 0x8, 1)
 
 
-async def pop_rx(dut) -> int:
-    await host_command(dut, 0x9)
-    return int(dut.uo_out.value)
-
-
-def _driven(dut, pin: int) -> int | None:
-    oe = int(dut.uio_oe.value)
-    out = int(dut.uio_out.value)
-    if (oe >> pin) & 1:
-        return (out >> pin) & 1
-    return None
+async def run_until_halt(
+    dut,
+    *,
+    timeout: int = 3000,
+    poll_every: int = 48,
+    on_cycle=None,
+) -> None:
+    """Advance the clock, optionally sample pins, until running clears."""
+    for cycle in range(timeout):
+        await RisingEdge(dut.clk)
+        if on_cycle is not None:
+            on_cycle(cycle)
+        if cycle % poll_every == poll_every - 1:
+            if not status_running(await read_status(dut)):
+                return
+    raise AssertionError(f"engine did not finish within {timeout} cycles")
 
 
 @cocotb.test()
@@ -71,16 +79,21 @@ async def test_nonblocking_xfer_vm_overlap(dut):
     await start_engine(dut)
 
     saw_flag_high_during_xfer = False
-    for _ in range(2000):
-        await RisingEdge(dut.clk)
-        busy = int(dut.user_project.core.bit_xfer.busy.value)
-        flag = _driven(dut, FLAG)
-        if busy and flag == 1:
+    prev_sclk = driven_level(dut, SCLK)
+
+    def on_cycle(_cycle: int) -> None:
+        nonlocal saw_flag_high_during_xfer, prev_sclk
+        sclk = driven_level(dut, SCLK)
+        flag = driven_level(dut, FLAG)
+        sclk_edge = (
+            sclk is not None and prev_sclk is not None and sclk != prev_sclk
+        )
+        if sclk_edge and flag == 1:
             saw_flag_high_during_xfer = True
-        if int(dut.user_project.core.state.value) == 9:
-            break
-    assert saw_flag_high_during_xfer, "VM did not run while XFER was busy"
-    assert int(dut.user_project.core.events.pending.value) == 0
+        prev_sclk = sclk if sclk is not None else prev_sclk
+
+    await run_until_halt(dut, timeout=2000, on_cycle=on_cycle)
+    assert saw_flag_high_during_xfer, "VM did not run while XFER was clocking"
 
 
 @cocotb.test()
@@ -105,15 +118,21 @@ async def test_wait_event_or_timeout(dut):
     await start_engine(dut)
 
     saw_marker_before_xfer_done = False
-    for _ in range(3000):
-        await RisingEdge(dut.clk)
-        busy = int(dut.user_project.core.bit_xfer.busy.value)
-        marker = _driven(dut, MOSI)
-        # After OR wait, program drives MOSI high while xfer may still be busy
-        if busy and marker == 1:
+    prev_sclk = driven_level(dut, SCLK)
+
+    def on_cycle(_cycle: int) -> None:
+        nonlocal saw_marker_before_xfer_done, prev_sclk
+        sclk = driven_level(dut, SCLK)
+        marker = driven_level(dut, MOSI)
+        sclk_edge = (
+            sclk is not None and prev_sclk is not None and sclk != prev_sclk
+        )
+        # After OR wait, program drives MOSI high while xfer may still be clocking.
+        if sclk_edge and marker == 1:
             saw_marker_before_xfer_done = True
-        if int(dut.user_project.core.state.value) == 9:
-            break
+        prev_sclk = sclk if sclk is not None else prev_sclk
+
+    await run_until_halt(dut, timeout=3000, on_cycle=on_cycle)
     assert saw_marker_before_xfer_done
 
 
@@ -135,11 +154,7 @@ async def test_edge_event_wake(dut):
     for _ in range(100):
         await RisingEdge(dut.clk)
     dut.uio_in.value = 1
-    for _ in range(200):
-        await RisingEdge(dut.clk)
-        if int(dut.user_project.core.state.value) == 9:
-            return
-    raise AssertionError("WAIT_EVENT did not wake on rising edge")
+    await run_until_halt(dut, timeout=1000, poll_every=16)
 
 
 @cocotb.test()
@@ -164,11 +179,17 @@ async def test_gpio_ownership_blocks_vm(dut):
     await start_engine(dut)
 
     saw_engine_drive_low = False
-    for _ in range(2000):
-        await RisingEdge(dut.clk)
-        if int(dut.user_project.core.bit_xfer.busy.value):
-            if _driven(dut, MOSI) == 0:
-                saw_engine_drive_low = True
-        if int(dut.user_project.core.state.value) == 9:
-            break
+    prev_sclk = driven_level(dut, SCLK)
+
+    def on_cycle(_cycle: int) -> None:
+        nonlocal saw_engine_drive_low, prev_sclk
+        sclk = driven_level(dut, SCLK)
+        sclk_edge = (
+            sclk is not None and prev_sclk is not None and sclk != prev_sclk
+        )
+        if sclk_edge and driven_level(dut, MOSI) == 0:
+            saw_engine_drive_low = True
+        prev_sclk = sclk if sclk is not None else prev_sclk
+
+    await run_until_halt(dut, timeout=2000, on_cycle=on_cycle)
     assert saw_engine_drive_low

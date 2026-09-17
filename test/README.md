@@ -37,6 +37,11 @@ Keep drivers and monitors independent of individual tests. Compare externally
 observable events through the common trace vocabulary so the same scoreboards
 can be reused for UART, SPI, I2C, and arbitrary instruction sequences.
 
+**Gate-level rule:** every module in `COCOTB_TEST_MODULES` must be GL-safe.
+Do not reach below `dut.user_project` (no `core`, `bit_xfer`, etc.). Use host
+commands and `uio_*` / `uo_out` only — see `AGENTS.md` and
+`cocotb_tests/common.py`.
+
 The standalone `program_memory_tb.sv` verifies the delivered foundry SRAM model,
 including masked writes. Formal verification uses a separate logical SRAM model
 under `formal/models/`; neither model is synthesized into the ASIC.

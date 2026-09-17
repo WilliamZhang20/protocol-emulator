@@ -1,8 +1,8 @@
 """Mutational orchestration fuzzer with hang watchdog and hard invariants.
 
-Generates completable programs by construction, stresses double START_XFER,
-OR-waits, edge arming, and GPIO on free pins. Fails fast on deadlocks or
-scoreboard/ownership violations.
+Gate-level safe: observes host status and `uio_*` only. Generates completable
+programs by construction; stresses double START_XFER, OR-waits, edge arming,
+and GPIO on free pins.
 """
 
 from __future__ import annotations
@@ -13,7 +13,14 @@ from dataclasses import dataclass, field
 import cocotb
 from cocotb.triggers import RisingEdge
 
-from cocotb_tests.common import reset_top, start_clock
+from cocotb_tests.common import (
+    driven_level,
+    host_command,
+    read_status,
+    reset_top,
+    start_clock,
+    status_running,
+)
 from cocotb_tests.reference.programs import (
     EV_PIN_FALL,
     EV_PIN_RISE,
@@ -34,17 +41,6 @@ from cocotb_tests.reference.programs import (
 MOSI, MISO, SCLK = 0, 1, 2
 FREE_PIN = 5  # never claimed by XFER in this fuzzer
 EDGE_PIN = 6
-
-ST_EVENT_WAIT = 12
-ST_HALTED = 9
-ST_EXT_WAIT = 11
-
-
-async def host_command(dut, command: int, payload: int = 0) -> None:
-    dut.ui_in.value = ((command & 0xF) << 4) | (payload & 0xF)
-    await RisingEdge(dut.clk)
-    dut.ui_in.value = 0
-    await RisingEdge(dut.clk)
 
 
 async def load_program(dut, program: list[int]) -> None:
@@ -68,6 +64,8 @@ class FuzzPlan:
     edge_rise: bool = True
     xfer_starts: int = 0
     timer_starts: int = 0
+    # Minimum SCLK edges expected when xfer_starts > 0 (black-box busy proxy).
+    min_sclk_edges: int = 0
     labels: set[str] = field(default_factory=set)
 
 
@@ -109,12 +107,13 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
 
     if kind == "paired":
         tx_bytes = [rng.randint(0, 255)]
+        xfer_kw = _xfer_kwargs(rng)
         body: list[int] = [TX_LOAD, *_nops(rng)]
         ops = ["xfer", "timer"]
         rng.shuffle(ops)
         for op in ops:
             if op == "xfer":
-                body += start_xfer(**_xfer_kwargs(rng))
+                body += start_xfer(**xfer_kw)
             else:
                 body += start_timer(rng.randint(4, 48))
             body += _nops(rng)
@@ -127,21 +126,26 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             flat += w
         program = _lead() + body + flat + [HALT]
         return FuzzPlan(
-            program, tx_bytes, xfer_starts=1, timer_starts=1, labels=labels
+            program,
+            tx_bytes,
+            xfer_starts=1,
+            timer_starts=1,
+            min_sclk_edges=xfer_kw["bit_count"],
+            labels=labels,
         )
 
     if kind == "double_xfer":
         labels.add("serialize")
         tx_bytes = [rng.randint(0, 255), rng.randint(0, 255)]
-        # First transfer must still be busy when the 2nd START arrives.
         first = _xfer_kwargs(rng)
         first["bit_count"] = rng.choice([8, 16])
         first["half_period"] = rng.randint(2, 4)
+        second = _xfer_kwargs(rng)
         body = [
             TX_LOAD,
             *start_xfer(**first),
             TX_LOAD,
-            *start_xfer(**_xfer_kwargs(rng)),
+            *start_xfer(**second),
             *wait_event(EV_XFER_DONE),
             *wait_event(EV_XFER_DONE),
         ]
@@ -149,15 +153,17 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             _lead() + body + [HALT],
             tx_bytes,
             xfer_starts=2,
+            min_sclk_edges=first["bit_count"] + second["bit_count"],
             labels=labels,
         )
 
     if kind == "or_join":
         labels.add("or")
         tx_bytes = [rng.randint(0, 255)]
+        xfer_kw = _xfer_kwargs(rng)
         body = [
             TX_LOAD,
-            *start_xfer(**_xfer_kwargs(rng)),
+            *start_xfer(**xfer_kw),
             *start_timer(rng.randint(3, 24)),
             *_nops(rng),
             *wait_event(EV_XFER_DONE | EV_TIMER_DONE),
@@ -167,6 +173,7 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             tx_bytes,
             xfer_starts=1,
             timer_starts=1,
+            min_sclk_edges=xfer_kw["bit_count"],
             labels=labels,
         )
 
@@ -192,9 +199,10 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
     # busy_gpio — VM wiggles a free pin while XFER owns MOSI/SCLK
     labels.add("ownership")
     tx_bytes = [rng.randint(0, 255)]
+    xfer_kw = _xfer_kwargs(rng)
     body = [
         TX_LOAD,
-        *start_xfer(**_xfer_kwargs(rng)),
+        *start_xfer(**xfer_kw),
         gpio_write(FREE_PIN, 1),
         gpio_write(FREE_PIN, 0),
         gpio_write(FREE_PIN, 1),
@@ -204,6 +212,7 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
         _lead() + body + [HALT],
         tx_bytes,
         xfer_starts=1,
+        min_sclk_edges=xfer_kw["bit_count"],
         labels=labels,
     )
 
@@ -215,106 +224,108 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
     dut.uio_in.value = 0 if plan.edge_rise else (1 << EDGE_PIN)
     await host_command(dut, 0x8, 1)
 
-    core = dut.user_project.core
-    saw_busy = 0
-    saw_ext_stall = 0
-    saw_free_pin_high = 0
+    saw_sclk_edges = 0
+    saw_free_pin_high_during_xfer = 0
     edge_fired = False
-    last_key = None
+    prev_sclk = driven_level(dut, SCLK)
+    last_pin_key = None
     stalled = 0
-    idle_claim_cycles = 0
+    xfer_recent = 0
+    finished = False
 
-    for cycle in range(hang_limit):
+    cycle = 0
+    while cycle < hang_limit:
         await RisingEdge(dut.clk)
+        cycle += 1
 
         if plan.needs_edge and not edge_fired and cycle > 50:
             dut.uio_in.value = (1 << EDGE_PIN) if plan.edge_rise else 0
             edge_fired = True
 
-        busy = int(core.bit_xfer.busy.value)
-        claim = int(core.xfer_pin_claim.value)
-        state = int(core.state.value)
-        pending = int(core.events.pending.value)
-        drive_en = int(core.bit_xfer.drive_enable.value)
-        drive_mask = int(core.bit_xfer.drive_out_mask.value)
-
-        if busy:
-            saw_busy += 1
-            idle_claim_cycles = 0
-        if state == ST_EXT_WAIT and busy:
-            saw_ext_stall += 1
+        sclk = driven_level(dut, SCLK)
+        if sclk is not None and prev_sclk is not None and sclk != prev_sclk:
+            saw_sclk_edges += 1
+            xfer_recent = 32
+        elif xfer_recent:
+            xfer_recent -= 1
+        if sclk is not None:
+            prev_sclk = sclk
 
         free_oe = (int(dut.uio_oe.value) >> FREE_PIN) & 1
         free_out = (int(dut.uio_out.value) >> FREE_PIN) & 1
-        if free_oe and free_out:
-            saw_free_pin_high += 1
+        if free_oe and free_out and xfer_recent:
+            saw_free_pin_high_during_xfer += 1
 
-        assert pending & ~0x1F == 0, f"trial {trial}: bad pending {pending:#x}"
-
-        if busy:
-            assert claim != 0, f"trial {trial}: busy without pin claim"
-            if drive_en:
-                assert drive_mask & ~claim == 0, (
-                    f"trial {trial}: drive_mask {drive_mask:#x} outside claim {claim:#x}"
-                )
-            expect = (1 << MOSI) | (1 << SCLK)
-            assert claim & expect == expect, (
-                f"trial {trial}: claim {claim:#x} missing xfer pins"
-            )
-        else:
-            if claim != 0:
-                idle_claim_cycles += 1
-                if idle_claim_cycles > 2:
-                    raise AssertionError(
-                        f"trial {trial}: claim {claim:#x} stuck while idle"
-                    )
-            else:
-                idle_claim_cycles = 0
-
-        key = (state, busy, pending, claim)
-        if key == last_key:
+        pin_key = (
+            int(dut.uio_out.value),
+            int(dut.uio_oe.value),
+            int(dut.uio_in.value),
+            xfer_recent > 0,
+        )
+        if pin_key == last_pin_key:
             stalled += 1
         else:
             stalled = 0
-            last_key = key
+            last_pin_key = pin_key
 
-        if state == ST_EVENT_WAIT and stalled > 2500:
-            raise AssertionError(
-                f"trial {trial}: EVENT_WAIT hang pending={pending:#x} busy={busy} "
-                f"labels={plan.labels}"
-            )
+        # After HALT the host clears enable (running bit). Poll infrequently.
+        if cycle % 64 == 0:
+            if not status_running(await read_status(dut)):
+                finished = True
+                break
+
+        # Only treat pin-idle as a hang while the engine still claims to be running.
         if stalled > 4000:
+            st = await read_status(dut)
+            if not status_running(st):
+                finished = True
+                break
             raise AssertionError(
-                f"trial {trial}: hang state={state} pending={pending:#x} "
-                f"busy={busy} labels={plan.labels}"
+                f"trial {trial}: hang (pins idle) labels={plan.labels} "
+                f"sclk_edges={saw_sclk_edges}"
             )
-
-        if state == ST_HALTED:
-            break
     else:
         raise AssertionError(
             f"trial {trial}: no halt in {hang_limit} cycles labels={plan.labels}"
         )
 
-    assert int(core.state.value) == ST_HALTED
-    # OR-join may HALT while XFER/timer still finish; drain ownership.
+    assert finished
+
+    # OR-join may HALT while XFER still finishes; wait for SCLK to go quiet.
     if "or" in plan.labels:
+        quiet = 0
+        prev = driven_level(dut, SCLK)
         for _ in range(2000):
             await RisingEdge(dut.clk)
-            if int(core.bit_xfer.busy.value) == 0 and int(core.xfer_pin_claim.value) == 0:
+            cur = driven_level(dut, SCLK)
+            if cur is not None and prev is not None and cur != prev:
+                saw_sclk_edges += 1
+                quiet = 0
+            else:
+                quiet += 1
+            if cur is not None:
+                prev = cur
+            if quiet > 64:
                 break
         else:
-            raise AssertionError(f"trial {trial}: OR-join background xfer never released claim")
-    else:
-        assert int(core.bit_xfer.busy.value) == 0
-        assert int(core.xfer_pin_claim.value) == 0
+            raise AssertionError(
+                f"trial {trial}: OR-join background xfer never went quiet"
+            )
 
     if plan.xfer_starts:
-        assert saw_busy > 0, f"trial {trial}: expected xfer busy"
-    if "serialize" in plan.labels:
-        assert saw_ext_stall > 0, f"trial {trial}: expected EXT_WAIT on 2nd START"
+        assert saw_sclk_edges > 0, f"trial {trial}: expected SCLK activity"
+    if plan.min_sclk_edges:
+        # Each transferred bit produces one SCLK period (≥1 level change pair);
+        # require a conservative fraction so CPOL/idle edges do not flake.
+        need = max(1, plan.min_sclk_edges)
+        assert saw_sclk_edges >= need, (
+            f"trial {trial}: sclk_edges {saw_sclk_edges} < {need} "
+            f"labels={plan.labels}"
+        )
     if "ownership" in plan.labels:
-        assert saw_free_pin_high > 0, f"trial {trial}: free pin never high during xfer"
+        assert saw_free_pin_high_during_xfer > 0, (
+            f"trial {trial}: free pin never high during xfer"
+        )
 
     return {
         "labels": set(plan.labels),
@@ -374,6 +385,7 @@ async def test_fuzz_adversarial_or_then_halt(dut):
         tx_bytes=[0x5A],
         xfer_starts=1,
         timer_starts=1,
+        min_sclk_edges=8,
         labels={"or", "adversarial"},
     )
     await load_program(dut, plan.program)
@@ -382,7 +394,7 @@ async def test_fuzz_adversarial_or_then_halt(dut):
 
 @cocotb.test()
 async def test_fuzz_double_start_serialization(dut):
-    """Back-to-back START_XFER must serialize in EXT_WAIT and take two dones."""
+    """Back-to-back START_XFER must serialize and complete two transfers."""
     await start_clock(dut)
     await reset_top(dut)
     plan = FuzzPlan(
@@ -404,6 +416,7 @@ async def test_fuzz_double_start_serialization(dut):
         ],
         tx_bytes=[0x11, 0x22],
         xfer_starts=2,
+        min_sclk_edges=16,
         labels={"double_xfer", "serialize"},
     )
     await load_program(dut, plan.program)
