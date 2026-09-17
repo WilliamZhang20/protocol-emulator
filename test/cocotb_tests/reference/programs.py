@@ -6,12 +6,24 @@ TX_LOAD = 0x40
 RX_PUSH = 0x70
 SHIFT_CLEAR = 0xA0
 
+# Opcode 0xA immediate sub-ops (general CRC + line_pair)
+CRC_SETUP = 0xA1
+CRC_FEED = 0xA2
+CRC_FINALIZE = 0xA3
+CRC_PUSH_LO = 0xA4
+CRC_PUSH_HI = 0xA5
+LINE_CFG = 0xA6
+LINE_DRIVE = 0xA7
+LINE_RELEASE = 0xA8
+LINE_SAMPLE = 0xA9
+
 # Event mask bits (WAIT_EVENT / OR)
 EV_XFER_DONE = 1 << 0
 EV_TIMER_DONE = 1 << 1
 EV_PIN_RISE = 1 << 2
 EV_PIN_FALL = 1 << 3
 EV_COMPARE = 1 << 4
+EV_LINE_CHANGE = 1 << 5
 
 
 def wait(cycles: int) -> list[int]:
@@ -260,6 +272,175 @@ def i2c_write_byte_program(
         gpio_write(scl, 1),
         *wait(half_period),
         gpio_oe(sda, 0),
+        HALT,
+    ]
+    return program
+
+
+# Low-speed USB-ish line pins (logical): D+ / D− on uio[0]/uio[1] by default.
+DP_PIN = 0
+DM_PIN = 1
+
+# LS bit time at 50 MHz ≈ 33 cycles (1.5 Mb/s). Use a round value for smoke.
+LS_BIT_CYCLES = 33
+
+# Line-pair state codes (match line_pair RTL)
+LINE_SE0 = 0
+LINE_J = 1
+LINE_K = 2
+LINE_SE1 = 3
+
+
+def crc_setup(
+    *,
+    width: int,
+    poly: int,
+    refin: bool = True,
+    refout: bool = True,
+    xor_ones: bool = True,
+    init_ones: bool = True,
+) -> list[int]:
+    """Programmable CRC init: `A1 cfg poly_lo poly_hi`."""
+    if not 1 <= width <= 16:
+        raise ValueError("CRC width must be 1..16")
+    cfg = (
+        ((width - 1) & 0xF)
+        | ((1 if refin else 0) << 4)
+        | ((1 if refout else 0) << 5)
+        | ((1 if xor_ones else 0) << 6)
+        | ((1 if init_ones else 0) << 7)
+    )
+    return [CRC_SETUP, cfg, poly & 0xFF, (poly >> 8) & 0xFF]
+
+
+def crc_feed(byte: int) -> list[int]:
+    return [CRC_FEED, byte & 0xFF]
+
+
+def crc_finalize() -> int:
+    return CRC_FINALIZE
+
+
+def crc_push_result() -> list[int]:
+    return [CRC_PUSH_LO, CRC_PUSH_HI]
+
+
+def crc_usb5_setup() -> list[int]:
+    """USB token CRC5: poly x^5+x^2+1."""
+    return crc_setup(width=5, poly=0x05)
+
+
+def crc_usb16_setup() -> list[int]:
+    """USB data CRC16: poly x^16+x^15+x^2+1."""
+    return crc_setup(width=16, poly=0x8005)
+
+
+def line_cfg(pin_a: int = DP_PIN, pin_b: int = DM_PIN, jk_swap: bool = False) -> list[int]:
+    pins = (pin_a & 7) | ((pin_b & 7) << 3) | ((1 if jk_swap else 0) << 6)
+    return [LINE_CFG, pins]
+
+
+def line_drive(state: int) -> list[int]:
+    return [LINE_DRIVE, state & 3]
+
+
+def line_release() -> int:
+    return LINE_RELEASE
+
+
+def line_sample() -> int:
+    return LINE_SAMPLE
+
+
+def line_state_smoke_program(
+    *,
+    dp: int = DP_PIN,
+    dm: int = DM_PIN,
+    bit_cycles: int = LS_BIT_CYCLES,
+) -> list[int]:
+    """Phase-0 smoke: drive J / K / SE0 / J on a pin pair using only GPIO+WAIT16.
+
+    LS idle is J (D+ = 0, D− = 1) with a board pull-up on D−. No CRC or
+    line_pair resource — proves timing headroom before dedicated engines.
+    """
+    def drive(dp_v: int, dm_v: int) -> list[int]:
+        return [gpio_write(dp, dp_v), gpio_write(dm, dm_v), *wait(bit_cycles)]
+
+    return [
+        gpio_oe(dp, 1),
+        gpio_oe(dm, 1),
+        *drive(0, 1),
+        *drive(1, 0),
+        *drive(0, 0),
+        *drive(0, 1),
+        gpio_oe(dp, 0),
+        gpio_oe(dm, 0),
+        HALT,
+    ]
+
+
+def line_pair_smoke_program(
+    *,
+    dp: int = DP_PIN,
+    dm: int = DM_PIN,
+    bit_cycles: int = LS_BIT_CYCLES,
+) -> list[int]:
+    """Drive J/K/SE0/J via line_pair, sample final idle after release."""
+    return [
+        *line_cfg(dp, dm),
+        *line_drive(LINE_J),
+        *wait(bit_cycles),
+        *line_drive(LINE_K),
+        *wait(bit_cycles),
+        *line_drive(LINE_SE0),
+        *wait(bit_cycles),
+        *line_drive(LINE_J),
+        *wait(bit_cycles),
+        line_release(),
+        # Host/cocotb may drive idle J on uio_in while OE is released.
+        line_sample(),
+        HALT,
+    ]
+
+
+def crc_usb16_demo_program(data: list[int]) -> list[int]:
+    """Feed bytes through USB CRC16 and push the 16-bit result to RX."""
+    program = [*crc_usb16_setup()]
+    for b in data:
+        program += crc_feed(b)
+    program += [crc_finalize(), *crc_push_result(), HALT]
+    return program
+
+
+def ls_ack_packet_program(
+    *,
+    dp: int = DP_PIN,
+    dm: int = DM_PIN,
+    bit_cycles: int = LS_BIT_CYCLES,
+) -> list[int]:
+    """Soft LS device TX: SYNC + ACK PID (0xD2) as raw NRZI-ish line states.
+
+    Emits a fixed line-state sequence (not a full NRZI encoder): KJKJKJKK
+    SYNC pattern plus ACK PID bits as J/K toggles, then SE0 EOP and idle J.
+    Framing stays in bytecode — no USB FSM in RTL.
+    """
+    # Simplified: drive a recognizable J/K pattern then SE0 EOP.
+    # SYNC (LSB first NRZI from idle J): K J K J K J K K
+    sync = [LINE_K, LINE_J, LINE_K, LINE_J, LINE_K, LINE_J, LINE_K, LINE_K]
+    # ACK PID 0xD2 = 11010010 LSB-first bits; NRZI from last SYNC state (K):
+    # bit0=0 -> toggle to J, 1=J, 0=K, 0=J, 1=J, 0=K, 1=K, 1=K — approximate demo
+    ack = [LINE_J, LINE_J, LINE_K, LINE_J, LINE_J, LINE_K, LINE_K, LINE_K]
+    program = [*line_cfg(dp, dm), *line_drive(LINE_J), *wait(bit_cycles)]
+    for st in sync + ack:
+        program += [*line_drive(st), *wait(bit_cycles)]
+    # EOP: SE0 for two bit times, then J
+    program += [
+        *line_drive(LINE_SE0),
+        *wait(bit_cycles),
+        *wait(bit_cycles),
+        *line_drive(LINE_J),
+        *wait(bit_cycles),
+        line_release(),
         HALT,
     ]
     return program

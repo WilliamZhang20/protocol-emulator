@@ -20,6 +20,8 @@ RTL_SOURCES := \
 	src/vm_sequencer.v \
 	src/gpio_arbiter.v \
 	src/gpio_datapath.v \
+	src/crc_engine.v \
+	src/line_pair.v \
 	src/byte_fifo.v \
 	src/host_interface.v
 

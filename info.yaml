@@ -28,6 +28,8 @@ project:
     - "vm_sequencer.v"
     - "gpio_arbiter.v"
     - "gpio_datapath.v"
+    - "crc_engine.v"
+    - "line_pair.v"
     - "byte_fifo.v"
     - "host_interface.v"
 

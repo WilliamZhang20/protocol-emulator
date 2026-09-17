@@ -44,6 +44,15 @@ module protocol_emulator_core (
   wire [7:0] xfer_half_period;
   wire arm_edges;
   wire wait_event_clear;
+  wire crc_setup;
+  wire crc_feed;
+  wire crc_finalize;
+  wire crc_push_lo;
+  wire crc_push_hi;
+  wire line_cfg;
+  wire line_drive;
+  wire line_release;
+  wire line_sample;
 
   wire bit_xfer_busy;
   wire bit_xfer_done;
@@ -94,7 +103,16 @@ module protocol_emulator_core (
       .arm_edges(arm_edges),
       .wait_event_clear(wait_event_clear),
       .tx_pop(tx_pop),
-      .rx_push(rx_push)
+      .rx_push(rx_push),
+      .crc_setup(crc_setup),
+      .crc_feed(crc_feed),
+      .crc_finalize(crc_finalize),
+      .crc_push_lo(crc_push_lo),
+      .crc_push_hi(crc_push_hi),
+      .line_cfg(line_cfg),
+      .line_drive(line_drive),
+      .line_release(line_release),
+      .line_sample(line_sample)
   );
 
   wire [15:0] timer_count;
@@ -112,6 +130,60 @@ module protocol_emulator_core (
       .expired(timer_expired),
       .busy(timer_busy),
       .done_pulse(timer_done_pulse)
+  );
+
+  wire [15:0] crc_value;
+  wire crc_busy;
+  wire [7:0] crc_cfg = operand_low;
+  wire [15:0] crc_poly = {
+      (operand_ext_valid ? operand_ext : instruction_data),
+      operand_mid
+  };
+
+  crc_engine crc (
+      .clk(clk),
+      .rst_n(rst_n),
+      .setup(crc_setup),
+      .cfg(crc_cfg),
+      .poly(crc_poly),
+      .feed(crc_feed),
+      .feed_byte(instruction_data),
+      .finalize(crc_finalize),
+      .crc(crc_value),
+      .busy(crc_busy)
+  );
+
+  wire [7:0] line_claim;
+  wire line_drive_enable;
+  wire [7:0] line_out_value;
+  wire [7:0] line_out_mask;
+  wire [7:0] line_oe_value;
+  wire [7:0] line_oe_mask;
+  wire [1:0] line_sampled_state;
+  wire [1:0] line_sample_comb;
+  wire line_changed;
+
+  line_pair lines (
+      .clk(clk),
+      .rst_n(rst_n),
+      .cfg_write(line_cfg),
+      .pin_a(instruction_data[2:0]),
+      .pin_b(instruction_data[5:3]),
+      .jk_swap(instruction_data[6]),
+      .drive(line_drive),
+      .drive_state(instruction_data[1:0]),
+      .release_line(line_release),
+      .sample(line_sample),
+      .pin_sampled(gpio_sampled),
+      .claim(line_claim),
+      .drive_enable(line_drive_enable),
+      .drive_out_value(line_out_value),
+      .drive_out_mask(line_out_mask),
+      .drive_oe_value(line_oe_value),
+      .drive_oe_mask(line_oe_mask),
+      .sampled_state(line_sampled_state),
+      .sample_comb(line_sample_comb),
+      .state_changed(line_changed)
   );
 
   wire engine_drive_enable;
@@ -139,6 +211,12 @@ module protocol_emulator_core (
       .bit_xfer_start(bit_xfer_start),
       .bit_xfer_done(bit_xfer_done),
       .start_claim(start_claim),
+      .line_claim(line_claim),
+      .line_drive_enable(line_drive_enable),
+      .line_out_value(line_out_value),
+      .line_out_mask(line_out_mask),
+      .line_oe_value(line_oe_value),
+      .line_oe_mask(line_oe_mask),
       .selected_pin(immediate[2:0]),
       .gpio_bit_value(execute_shift_out ? shifter_serial_out : immediate[3]),
       .oe_bit_value(immediate[3]),
@@ -221,6 +299,7 @@ module protocol_emulator_core (
       .rst_n(rst_n),
       .xfer_done_pulse(bit_xfer_done),
       .timer_done_pulse(timer_done_pulse),
+      .line_changed_pulse(line_changed),
       .arm_edges(arm_edges),
       .rise_enable(operand_low),
       .fall_enable(instruction_data),
@@ -235,11 +314,16 @@ module protocol_emulator_core (
   );
 
   assign instruction_address = program_counter;
-  assign rx_data = shifter_parallel[15:8];
+  assign rx_data =
+      crc_push_lo ? crc_value[7:0] :
+      crc_push_hi ? crc_value[15:8] :
+      line_sample ? {6'b0, line_sample_comb} :
+      shifter_parallel[15:8];
 
   wire _unused = &{instruction, opcode, operand_ext, operand_ext_valid,
                    timer_count, timer_busy, gpio_compare_match,
-                   shifter_parallel[7:0], shifter_done, event_pending, 1'b0};
+                   shifter_parallel[7:0], shifter_done, event_pending,
+                   crc_busy, xfer_pin_claim, state, line_sampled_state, 1'b0};
 endmodule
 
 `default_nettype wire

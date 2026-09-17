@@ -20,6 +20,8 @@ read -formal -sv event_engine.v
 read -formal -sv vm_sequencer.v
 read -formal -sv gpio_arbiter.v
 read -formal -sv gpio_datapath.v
+read -formal -sv crc_engine.v
+read -formal -sv line_pair.v
 read -formal -sv protocol_emulator_core.v
 read -formal -sv uart_rx_properties.sv
 prep -top uart_rx_properties
@@ -32,5 +34,7 @@ prep -top uart_rx_properties
 ../../src/vm_sequencer.v
 ../../src/gpio_arbiter.v
 ../../src/gpio_datapath.v
+../../src/crc_engine.v
+../../src/line_pair.v
 ../../src/protocol_emulator_core.v
 uart_rx_properties.sv

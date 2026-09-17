@@ -57,3 +57,6 @@ timer joins, edge wakeups, and GPIO ownership while a transfer runs.
 
 `test_fuzz.py` runs a mutational orchestration campaign (double START, OR-joins,
 edge wake, ownership) with a hang watchdog and scoreboard invariants.
+
+`test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, the
+`line_pair` helper, and a soft LS ACK line-pattern TX demo (GL-safe).

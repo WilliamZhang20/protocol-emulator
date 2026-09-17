@@ -9,6 +9,7 @@ module event_engine (
     input  wire       rst_n,
     input  wire       xfer_done_pulse,
     input  wire       timer_done_pulse,
+    input  wire       line_changed_pulse,
     input  wire       arm_edges,
     input  wire [7:0] rise_enable,
     input  wire [7:0] fall_enable,
@@ -26,12 +27,14 @@ module event_engine (
   localparam BIT_RISE    = 2;
   localparam BIT_FALL    = 3;
   localparam BIT_COMPARE = 4;
+  localparam BIT_LINE    = 5;
 
   reg [2:0] xfer_tokens;
   reg [2:0] timer_tokens;
   reg       rise_sticky;
   reg       fall_sticky;
   reg       compare_sticky;
+  reg       line_sticky;
   reg [7:0] rise_mask;
   reg [7:0] fall_mask;
   reg       compare_enabled;
@@ -40,7 +43,8 @@ module event_engine (
   wire fall_hit = |(gpio_falling & fall_mask);
 
   wire [7:0] pending_reg = {
-      3'b0,
+      2'b0,
+      line_sticky,
       compare_sticky,
       fall_sticky,
       rise_sticky,
@@ -58,6 +62,7 @@ module event_engine (
       rise_sticky <= 1'b0;
       fall_sticky <= 1'b0;
       compare_sticky <= 1'b0;
+      line_sticky <= 1'b0;
       rise_mask <= 8'b0;
       fall_mask <= 8'b0;
       compare_enabled <= 1'b0;
@@ -69,6 +74,7 @@ module event_engine (
         rise_sticky <= 1'b0;
         fall_sticky <= 1'b0;
         compare_sticky <= 1'b0;
+        line_sticky <= 1'b0;
       end else begin
         if (rise_hit)
           rise_sticky <= 1'b1;
@@ -76,6 +82,8 @@ module event_engine (
           fall_sticky <= 1'b1;
         if (compare_enabled && compare_match)
           compare_sticky <= 1'b1;
+        if (line_changed_pulse)
+          line_sticky <= 1'b1;
       end
 
       // Produce/consume with a single next-state so same-cycle done+wait nets out.
@@ -105,6 +113,8 @@ module event_engine (
           fall_sticky <= 1'b0;
         if (wait_mask[BIT_COMPARE])
           compare_sticky <= 1'b0;
+        if (wait_mask[BIT_LINE])
+          line_sticky <= 1'b0;
       end
     end
   end

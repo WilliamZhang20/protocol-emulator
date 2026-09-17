@@ -28,3 +28,7 @@ with clock stretching.
 
 The basic loopback demonstrations require only suitable pin connections. Paired
 endpoint tests may use a microcontroller, FPGA, or protocol analyzer.
+
+Soft low-speed USB demos (non-compliant) use two `uio` pins as D+/D−. For an LS
+device idle-J, add a 1.5 kΩ pull-up from D− to 3.3 V and series resistors on
+both lines; do not expect USB-IF compliance without a real PHY.

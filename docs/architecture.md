@@ -108,6 +108,14 @@ where applicable:
 | `80 ll hh` | Jump to a 10-bit SRAM address |
 | `9vppp` | Wait until a logical input pin equals `v` |
 | `A0` | Clear the bit-transfer shift register |
+| `A1 cfg poly_lo poly_hi` | `CRC_SETUP`: width/ref/xor/init in `cfg`, 16-bit poly |
+| `A2 data` | `CRC_FEED`: absorb one byte |
+| `A3` | `CRC_FINALIZE`: apply refout/xorout to residue |
+| `A4` / `A5` | Push CRC low/high byte to RX FIFO |
+| `A6 pins` | `LINE_CFG`: `{jk_swap, pin_b[2:0], pin_a[2:0]}` |
+| `A7 state` | `LINE_DRIVE`: `state` in `{SE0,J,K,SE1}` |
+| `A8` | `LINE_RELEASE`: drop OE/claim on the pair |
+| `A9` | `LINE_SAMPLE`: push sampled state code to RX |
 | `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
 | `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer (nonblocking) |
 | `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
@@ -139,6 +147,7 @@ edge/compare sources are level-sticky. Typical bits:
 | 2 | `EV_PIN_RISE` | armed rising edges |
 | 3 | `EV_PIN_FALL` | armed falling edges |
 | 4 | `EV_COMPARE` | armed GPIO compare match |
+| 5 | `EV_LINE_CHANGE` | `line_pair` sampled state changed |
 
 `WAIT_EVENT(XFER_DONE \| TIMER_DONE)` wakes on the first of the two (timeout-or-
 complete). To require both, issue two waits with single-bit masks (events are
@@ -259,3 +268,22 @@ Near-term orchestration growth already sketched in the ISA:
 - second timer / capture;
 - compact register-file ALU for lengths and protocol state;
 - stronger GPIO arbitration across concurrent owners.
+
+### CRC engine
+
+Protocol-neutral residue datapath (`crc_engine`): programmable width 1..16,
+poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
+are configurations, not dedicated modes.
+
+### Line-pair helper
+
+`line_pair` drives or samples a two-pin state `{SE0, J, K, SE1}` with optional
+J/K polarity swap. Intended for differential-style soft buses (e.g. low-speed
+USB bitbang). Framing, NRZI, and PIDs stay in SRAM programs.
+
+### Soft low-speed USB (non-compliant demo)
+
+With GPIO/timers alone, or with `line_pair` + `crc_engine`, bytecode can emit
+LS line patterns at ~1.5 Mb/s on two `uio` pins. Board notes: wire D+/D− to
+`uio[0]`/`uio[1]`, 1.5 kΩ pull-up on D− for LS device idle J, series resistors
+as needed. Not USB-IF compliant — analyzer / cocotb host only.
