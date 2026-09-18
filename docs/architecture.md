@@ -201,15 +201,19 @@ programs are re-timed together.
 
 Baseline lock (Phase 0, pre-deterministic-core migration): this `+11`
 overhead, the single-port 1024x8 SRAM behind `program_memory.sram`, the
-nibble host commands `1`-`B`, and the sticky `event_engine` semantics are
-frozen. New ISA work is purely additive (unused `0xA` sub-ops `0xAA+`,
-`0x8n` branch immediates) until the explicit cutover phase. `make verify`
+nibble host commands `1`-`B` (later extended by level/peek reads `C`/`D`),
+and the sticky `event_engine` semantics are
+frozen. New ISA work is purely additive (previously-unused `0xA` sub-ops,
+`0x8n` branch immediates, `0xE1`-`0xE3`, side-set `0x02`-`0x0F`)
+until the explicit cutover phase. `make verify`
 must stay green after every phase.
 
 ### Register and state storage
 
-A compact register file holds working values, flags, loop state, addresses, and
-temporary protocol data. Dedicated counters and shift storage handle operations
+An 8x16 register file holds working values, flags, loop state, addresses, and
+temporary protocol data, driven by a tiny ALU (`SET`/`MOV`/`ADD`/`SUB`/`AND`/
+`OR`/`XOR`/`SHL`/`SHR`) with a zero flag feeding `JZ`/`JNZ`/`DJNZ` branches.
+Dedicated counters and shift storage handle operations
 that would otherwise require long software sequences while remaining reusable
 across protocols.
 
@@ -322,7 +326,8 @@ Near-term orchestration growth already sketched in the ISA:
 
 - richer resource scoreboard (multi-XFER IDs, ready/busy);
 - second timer / capture;
-- compact register-file ALU for lengths and protocol state;
+- compact register-file ALU for lengths and protocol state (done: 8x16 +
+  ALU + `JZ`/`JNZ`/`DJNZ`; still open: immediate-form ALU, pin-to-reg read);
 - stronger GPIO arbitration across concurrent owners.
 
 ### CRC engine

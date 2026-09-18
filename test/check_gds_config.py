@@ -193,7 +193,7 @@ def main() -> None:
         "PDN_HORIZONTAL_HALO",
         "PDN_VERTICAL_HALO",
     ):
-        require(config.get(halo) == 2, f"{halo} must be 2um so cells/PDN clear the SRAM boundary")
+        require(config.get(halo) == 0, f"{halo} must be zero for same-layer SRAM abutment")
     require(config.get("PDN_VPITCH") == 50.0, "PDN pitch no longer aligns with SRAM rails")
     require(config.get("PDN_VOFFSET") == 10.0, "PDN offset no longer aligns with SRAM rails")
     pdn_config = PDN_CONFIG_PATH.read_text(encoding="utf-8")
