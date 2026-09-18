@@ -140,7 +140,7 @@ module protocol_emulator_core (
       operand_mid
   };
 
-  crc_engine crc (
+  crc_engine u_crc (
       .clk(clk),
       .rst_n(rst_n),
       .setup(crc_setup),

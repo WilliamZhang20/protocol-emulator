@@ -17,7 +17,6 @@ module crc_engine (
 );
   // cfg: {init_ones, xor_ones, refout, refin, width_m1[3:0]}
   wire [3:0] width_m1 = cfg[3:0];
-  wire       refin = cfg[4];
   wire       init_ones = cfg[7];
   wire [4:0] width = {1'b0, width_m1} + 5'd1;
   wire [15:0] width_mask = (16'hFFFF >> (5'd16 - width));
@@ -45,7 +44,8 @@ module crc_engine (
   endfunction
 
   reg [15:0] poly_r;
-  reg [7:0]  cfg_r;
+  // Persistent cfg bits used after setup: {xor_ones, refout, refin, width_m1}
+  reg [6:0]  cfg_r;
   reg [15:0] width_mask_r;
   reg [15:0] state;
 
@@ -54,10 +54,10 @@ module crc_engine (
       crc <= 16'b0;
       state <= 16'b0;
       poly_r <= 16'b0;
-      cfg_r <= 8'b0;
+      cfg_r <= 7'b0;
       width_mask_r <= 16'b0;
     end else if (setup) begin
-      cfg_r <= cfg;
+      cfg_r <= cfg[6:0];
       width_mask_r <= width_mask;
       poly_r <= poly & width_mask;
       state <= init_ones ? width_mask : 16'b0;
