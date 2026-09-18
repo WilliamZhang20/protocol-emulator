@@ -50,8 +50,9 @@ module crc_engine (
   endfunction
 
   reg [31:0] poly_r;
-  // Persistent cfg bits used after setup: {xor_ones, refout, refin, width_m1}
-  reg [6:0]  cfg_r;
+  // Persistent cfg bits used after setup: {xor_ones, refout, refin}.
+  // width_m1 lives in width_r / width_mask_r, not here.
+  reg [2:0]  cfg_r;
   reg [5:0]  width_r;
   reg [31:0] width_mask_r;
   reg [31:0] state;
@@ -61,18 +62,18 @@ module crc_engine (
       crc <= 32'b0;
       state <= 32'b0;
       poly_r <= 32'b0;
-      cfg_r <= 7'b0;
+      cfg_r <= 3'b0;
       width_r <= 6'b0;
       width_mask_r <= 32'b0;
     end else if (setup) begin
-      cfg_r <= cfg[6:0];
+      cfg_r <= cfg[6:4];
       width_r <= {1'b0, width};
       width_mask_r <= {16'b0, width_mask};
       poly_r <= {16'b0, poly & width_mask};
       state <= init_ones ? {16'b0, width_mask} : 32'b0;
       crc <= init_ones ? {16'b0, width_mask} : 32'b0;
     end else if (setup32) begin
-      cfg_r <= 7'b1111111;
+      cfg_r <= 3'b111;
       width_r <= 6'd32;
       width_mask_r <= 32'hFFFFFFFF;
       poly_r <= CRC32_POLY;
@@ -87,7 +88,7 @@ module crc_engine (
         reg [5:0] top_shift;
         top_shift = width_r - 6'd1;
         c = state;
-        b = cfg_r[4] ? rev8(feed_byte) : feed_byte;
+        b = cfg_r[0] ? rev8(feed_byte) : feed_byte;
         for (i = 0; i < 8; i = i + 1) begin
           top = |( (c >> top_shift) & 32'h00000001 )
               ^ |( ( {24'h000000, b} >> (7 - i) ) & 32'h00000001 );
@@ -102,9 +103,9 @@ module crc_engine (
       begin : fin_block
         reg [31:0] out_v;
         out_v = state;
-        if (cfg_r[5])
+        if (cfg_r[1])
           out_v = rev_w(out_v, width_r);
-        if (cfg_r[6])
+        if (cfg_r[2])
           out_v = out_v ^ width_mask_r;
         crc <= out_v & width_mask_r;
       end

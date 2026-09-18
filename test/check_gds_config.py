@@ -25,9 +25,13 @@ def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
     offset = 0
     while offset < len(data):
         require(offset + 4 <= len(data), f"truncated GDS record in {path}")
-        length, record_type, _ = struct.unpack(">HBB", data[offset : offset + 4])
-        require(length >= 4 and offset + length <= len(data), f"invalid GDS record in {path}")
-        recs.append((record_type, data[offset + 4 : offset + length]))
+        header = data[offset:offset + 4]
+        length, record_type, _ = struct.unpack(">HBB", header)
+        require(
+            length >= 4 and offset + length <= len(data),
+            f"invalid GDS record in {path}",
+        )
+        recs.append((record_type, data[offset + 4:offset + length]))
         offset += length
     structs: dict[int, dict] = {}
     current = None
@@ -40,7 +44,11 @@ def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
         elif record_type == 0x08 and current is not None:
             current["open_boundary"] = True
             current["boundary_layer"] = None
-        elif record_type == 0x0D and current is not None and current.get("open_boundary"):
+        elif (
+            record_type == 0x0D
+            and current is not None
+            and current.get("open_boundary")
+        ):
             current["boundary_layer"] = struct.unpack(">h", payload[:2])[0]
         elif (
             record_type == 0x10
@@ -48,23 +56,49 @@ def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
             and current.get("open_boundary")
             and current.get("boundary_layer") is not None
         ):
-            points = struct.unpack(">" + "i" * (len(payload) // 4), payload)
+            nwords = len(payload) // 4
+            points = struct.unpack(">" + "i" * nwords, payload)
             current["bounds"].append(
-                (current["boundary_layer"], min(points[0::2]), min(points[1::2]),
-                 max(points[0::2]), max(points[1::2]))
+                (
+                    current["boundary_layer"],
+                    min(points[0::2]),
+                    min(points[1::2]),
+                    max(points[0::2]),
+                    max(points[1::2]),
+                )
             )
         elif record_type == 0x11 and current is not None:
             current["open_boundary"] = False
         elif record_type == 0x0A and current is not None:
-            current["open_ref"] = {"name": None, "mirror": False, "placed": False}
-        elif record_type == 0x1A and current is not None and current.get("open_ref") is not None:
-            current["open_ref"]["mirror"] = bool(struct.unpack(">H", payload[:2])[0] & 0x8000)
-        elif record_type == 0x12 and current is not None and current.get("open_ref") is not None:
+            current["open_ref"] = {
+                "name": None,
+                "mirror": False,
+                "placed": False,
+            }
+        elif (
+            record_type == 0x1A
+            and current is not None
+            and current.get("open_ref") is not None
+        ):
+            flags = struct.unpack(">H", payload[:2])[0]
+            current["open_ref"]["mirror"] = bool(flags & 0x8000)
+        elif (
+            record_type == 0x12
+            and current is not None
+            and current.get("open_ref") is not None
+        ):
             current["open_ref"]["name"] = payload.rstrip(b"\x00").decode()
-        elif record_type == 0x10 and current is not None and current.get("open_ref") is not None:
-            points = struct.unpack(">" + "i" * (len(payload) // 4), payload)
+        elif (
+            record_type == 0x10
+            and current is not None
+            and current.get("open_ref") is not None
+        ):
+            nwords = len(payload) // 4
+            points = struct.unpack(">" + "i" * nwords, payload)
             ref = current["open_ref"]
-            current["refs"].append((ref["name"], points[0], points[1], ref["mirror"]))
+            current["refs"].append(
+                (ref["name"], points[0], points[1], ref["mirror"])
+            )
             current["open_ref"] = None
     by_name = {s["name"]: s for s in structs.values()}
     memo: dict[str, dict[int, list[float]]] = {}
@@ -75,21 +109,33 @@ def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
         struct_def = by_name[name]
         out: dict[int, list[float]] = {}
         for layer, x0, y0, x1, y1 in struct_def["bounds"]:
-            box = out.setdefault(layer, [float("inf"), float("inf"),
-                                         float("-inf"), float("-inf")])
+            box = out.setdefault(
+                layer,
+                [float("inf"), float("inf"), float("-inf"), float("-inf")],
+            )
             box[0] = min(box[0], x0)
             box[1] = min(box[1], y0)
             box[2] = max(box[2], x1)
             box[3] = max(box[3], y1)
         for child, dx, dy, mirror in struct_def["refs"]:
-            require(child in by_name, f"GDS references unknown cell {child}")
+            require(
+                child in by_name,
+                f"GDS references unknown cell {child}",
+            )
             for layer, box in extents(child).items():
                 if mirror:
                     child_y0, child_y1 = -box[3], -box[2]
                 else:
                     child_y0, child_y1 = box[1], box[3]
-                merged = out.setdefault(layer, [float("inf"), float("inf"),
-                                                float("-inf"), float("-inf")])
+                merged = out.setdefault(
+                    layer,
+                    [
+                        float("inf"),
+                        float("inf"),
+                        float("-inf"),
+                        float("-inf"),
+                    ],
+                )
                 merged[0] = min(merged[0], box[0] + dx)
                 merged[1] = min(merged[1], child_y0 + dy)
                 merged[2] = max(merged[2], box[2] + dx)
@@ -98,7 +144,9 @@ def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
         return out
 
     raw = extents(MACRO_NAME)
-    return {layer: [v * 0.001 for v in box] for layer, box in raw.items()}
+    return {
+        layer: [v * 0.001 for v in box] for layer, box in raw.items()
+    }
 
 
 def require(condition: bool, message: str) -> None:
@@ -153,10 +201,21 @@ def main() -> None:
         require(macro.get(view), f"MACROS.{MACRO_NAME}.{view} is empty")
 
     lef = expected_views["lef"].read_text(encoding="utf-8")
-    for pin, use in (("VDD!", "POWER"), ("VDDARRAY!", "POWER"), ("VSS!", "GROUND")):
+    power_pins = (
+        ("VDD!", "POWER"),
+        ("VDDARRAY!", "POWER"),
+        ("VSS!", "GROUND"),
+    )
+    for pin, use in power_pins:
         require(f"PIN {pin}" in lef, f"SRAM LEF has no {pin} pin")
-        require(f"USE {use} ;" in lef, f"SRAM LEF has no {use} pin declaration")
-    require("LAYER Metal4 ;" in lef, "SRAM power geometry is not exposed on Metal4")
+        require(
+            f"USE {use} ;" in lef,
+            f"SRAM LEF has no {use} pin declaration",
+        )
+    require(
+        "LAYER Metal4 ;" in lef,
+        "SRAM power geometry is not exposed on Metal4",
+    )
     # DigiBnd/SRAM annotation layers ship in the foundry macro; they are only
     # acceptable strictly inside the LEF boundary (flattened audit). Anything
     # protruding past SIZE 146.88 x 336.46 can collide with top-level routing.
@@ -179,38 +238,71 @@ def main() -> None:
 
     require(
         config.get("MAGIC_DRC_USE_GDS") in (0, False),
-        "Magic must use the DEF/LEF view instead of rechecking foundry SRAM internals",
+        "Magic must use the DEF/LEF view instead of rechecking "
+        "foundry SRAM internals",
     )
     require(
         config.get("PDN_MULTILAYER") in (0, False),
         "PDN_MULTILAYER must be disabled for the Metal4-only grid",
     )
-    require(config.get("PDN_CFG") == "dir::pdn_cfg.tcl", "custom PDN_CFG is not selected")
-    require(config.get("PDN_VERTICAL_LAYER") == "Metal4", "power pins must use Metal4")
+    require(
+        config.get("PDN_CFG") == "dir::pdn_cfg.tcl",
+        "custom PDN_CFG is not selected",
+    )
+    require(
+        config.get("PDN_VERTICAL_LAYER") == "Metal4",
+        "power pins must use Metal4",
+    )
     for halo in (
         "FP_MACRO_HORIZONTAL_HALO",
         "FP_MACRO_VERTICAL_HALO",
         "PDN_HORIZONTAL_HALO",
         "PDN_VERTICAL_HALO",
     ):
-        require(config.get(halo) == 0, f"{halo} must be zero for same-layer SRAM abutment")
-    require(config.get("PDN_VPITCH") == 50.0, "PDN pitch no longer aligns with SRAM rails")
-    require(config.get("PDN_VOFFSET") == 10.0, "PDN offset no longer aligns with SRAM rails")
+        require(
+            config.get(halo) == 0,
+            f"{halo} must be zero for same-layer SRAM abutment",
+        )
+    require(
+        config.get("PDN_VPITCH") == 50.0,
+        "PDN pitch no longer aligns with SRAM rails",
+    )
+    require(
+        config.get("PDN_VOFFSET") == 10.0,
+        "PDN offset no longer aligns with SRAM rails",
+    )
     pdn_config = PDN_CONFIG_PATH.read_text(encoding="utf-8")
-    require("-pins Metal4" in pdn_config, "PDN does not export Metal4-only power pins")
-    require("TopMetal1" not in pdn_config, "custom PDN still routes on forbidden TopMetal1")
-    require("Metal3" not in pdn_config, "custom PDN must not cross the SRAM's Metal3 obstruction")
+    require(
+        "-pins Metal4" in pdn_config,
+        "PDN does not export Metal4-only power pins",
+    )
+    require(
+        "TopMetal1" not in pdn_config,
+        "custom PDN still routes on forbidden TopMetal1",
+    )
+    require(
+        "Metal3" not in pdn_config,
+        "custom PDN must not cross the SRAM's Metal3 obstruction",
+    )
     # Boundary-only bridges: PDN stubs meet SRAM pins at the macro edges.
     # VDD/VSS bridge south + north; VDDARRAY reaches the north edge only.
     # No top-level Metal4 may pass through the SRAM interior (obsm4).
     for strap in (
-        "111460 80000 114270 81000",  # VDD south (full 2.81 um pin overlap)
-        "111460 417460 114270 418440",  # VDD north
-        "160500 417460 163930 418440",  # VDDARRAY north (>=1.64 um overlap)
-        "64800 80000 68030 81000",  # VSS south (>=1.13 um overlap)
-        "64800 417460 68030 418440",  # VSS north
+        # VDD south (full 2.81 um pin overlap)
+        "111460 80000 114270 81000",
+        # VDD north
+        "111460 417460 114270 418440",
+        # VDDARRAY north (>=1.64 um overlap)
+        "160500 417460 163930 418440",
+        # VSS south (>=1.13 um overlap)
+        "64800 80000 68030 81000",
+        # VSS north
+        "64800 417460 68030 418440",
     ):
-        require(strap in pdn_config, f"missing SRAM boundary power strap: {strap}")
+        require(
+            strap in pdn_config,
+            f"missing SRAM boundary power strap: {strap}",
+        )
     for through_macro in (
         "111460 80000 114270 418440",
         "159330 80050 163930 418440",
@@ -225,16 +317,26 @@ def main() -> None:
         "111830 79520 113930 81000",
         "159330 417460 163930 419580",
         "64400 79520 68030 81000",
-        "161830 417460 163930 418440",  # pre-widen VDDARRAY north
-        "65500 80000 68030 81000",  # pre-widen VSS south
-        "65500 417460 68030 418440",  # pre-widen VSS north
+        # pre-widen VDDARRAY north
+        "161830 417460 163930 418440",
+        # pre-widen VSS south
+        "65500 80000 68030 81000",
+        # pre-widen VSS north
+        "65500 417460 68030 418440",
     ):
         require(
             deprecated_stub not in pdn_config,
             f"deprecated single-ended SRAM stub remains: {deprecated_stub}",
         )
-    for deprecated in ("FP_PDN_MULTILAYER", "FP_PDN_VPITCH", "FP_PDN_VWIDTH"):
-        require(deprecated not in config, f"deprecated setting remains: {deprecated}")
+    for deprecated in (
+        "FP_PDN_MULTILAYER",
+        "FP_PDN_VPITCH",
+        "FP_PDN_VWIDTH",
+    ):
+        require(
+            deprecated not in config,
+            f"deprecated setting remains: {deprecated}",
+        )
 
     print("GDS SRAM/PDN configuration: PASS")
 

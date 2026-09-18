@@ -182,7 +182,7 @@ module protocol_emulator_core (
   wire [2:0] alu_mov_rs = instruction_data[5:3];
   wire [2:0] alu_op_sel = operand_low[2:0];
   wire [2:0] alu_op_rd = instruction_data[2:0];
-  wire [2:0] alu_op_rs = instruction_data[5:3];
+  // ALU Rs shares instruction_data[5:3] with MOV Rs (alu_mov_rs).
   wire is_branch_op = opcode == 4'h8;
   wire [2:0] rf_ra = alu_mov_rs;
   wire [2:0] rf_rb = time_wait_active ? operand_low[2:0] :
@@ -431,22 +431,23 @@ module protocol_emulator_core (
   // EVENT_STAMP (0xAF) pushes 3 bytes cycling time_lo/time_hi/cause.
   // The timestamp + pending vector latch on the first byte so the triple
   // is self-consistent. Index resets when the engine stops.
-  reg [31:0] stamp_time;
+  // Only time_hi is latched: time_lo is read live from cycle_ctr[7:0].
+  reg [7:0] stamp_time_hi;
   reg [7:0] stamp_cause;
   reg [1:0] stamp_idx;
   // Byte 0 pushes the live counter low byte (the registered latch lands the
   // same cycle, too late for the push); bytes 1-2 use the latched snapshot
   // so the triple is self-consistent.
   wire [7:0] stamp_byte = stamp_idx == 2'd0 ? cycle_ctr[7:0] :
-      stamp_idx == 2'd1 ? stamp_time[15:8] : stamp_cause;
+      stamp_idx == 2'd1 ? stamp_time_hi : stamp_cause;
   always @(posedge clk) begin
     if (!rst_n || !enable) begin
-      stamp_time <= 32'b0;
+      stamp_time_hi <= 8'b0;
       stamp_cause <= 8'b0;
       stamp_idx <= 2'b0;
     end else if (ev_stamp) begin
       if (stamp_idx == 2'd0) begin
-        stamp_time <= cycle_ctr;
+        stamp_time_hi <= cycle_ctr[15:8];
         stamp_cause <= event_pending;
       end
       if (stamp_idx == 2'd2)
