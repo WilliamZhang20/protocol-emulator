@@ -58,7 +58,7 @@ def main() -> None:
         "SRAM location must stay at [42, 81] for the Metal3 keepout abutment",
     )
 
-    expected_obs = ["Metal3", 41.5, 80.2, 189.4, 81.0]
+    expected_obs = ["Metal3", 174.0, 80.4, 189.4, 81.0]
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
     require(
         expected_obs in routing_obs,

@@ -23,13 +23,13 @@ just south of the placed instance (`location` `[42, 81]`):
 
 ```json
 "ROUTING_OBSTRUCTIONS": [
-  ["Metal3", 41.5, 80.2, 189.4, 81.0]
+  ["Metal3", 174.0, 80.4, 189.4, 81.0]
 ]
 ```
 
-That forces `A_DIN` (and similar) M3 routes off the violating track near
-y=80.640 instead of relying on the router to pick a lower track by chance.
-PDN, macro LEF, and placement stay unchanged.
+Keepout is limited to the known `M3.f` hotspot (≈174–189 µm at y≈80.6)
+so south-edge `A_DIN` M2→M3 escapes stay routable. A full-width strip
+starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 
 ## License
 
