@@ -22,6 +22,9 @@ module gpio_arbiter (
     input  wire       execute_gpio_write,
     input  wire       execute_oe_write,
     input  wire       execute_shift_out,
+    input  wire       sideset_apply,
+    input  wire [2:0] sideset_pin,
+    input  wire       sideset_val,
     input  wire       engine_drive_enable,
     input  wire [7:0] engine_out_value,
     input  wire [7:0] engine_out_mask,
@@ -48,6 +51,11 @@ module gpio_arbiter (
   wire [7:0] vm_oe_mask =
       (vm_output_write && execute_oe_write) ? vm_pin_mask : 8'b0;
   wire [7:0] vm_oe_value = oe_bit_value ? selected_pin_mask : 8'b0;
+  // Phase 6: side-set applies a simultaneous GPIO transition at instruction
+  // start. Masked by claims like the VM path; ignored on owned pins.
+  wire [7:0] sideset_pin_mask = (8'b1 << sideset_pin) & ~claimed;
+  wire [7:0] sideset_out_mask = sideset_apply ? sideset_pin_mask : 8'b0;
+  wire [7:0] sideset_out_value = sideset_val ? sideset_pin_mask : 8'b0;
 
   wire res_drive = engine_drive_enable || line_drive_enable;
   wire [7:0] res_out =
@@ -64,9 +72,10 @@ module gpio_arbiter (
       (line_drive_enable ? line_oe_mask : 8'b0);
 
   assign pin_claim = claimed;
-  assign gpio_output_write = vm_output_write || res_drive;
-  assign gpio_value = (vm_out_value & vm_out_mask) | res_out;
-  assign gpio_output_mask = vm_out_mask | res_out_mask;
+  assign gpio_output_write = vm_output_write || res_drive || sideset_apply;
+  assign gpio_value = (vm_out_value & vm_out_mask) | res_out |
+      (sideset_out_value & sideset_out_mask);
+  assign gpio_output_mask = vm_out_mask | res_out_mask | sideset_out_mask;
   assign gpio_oe_value = (vm_oe_value & vm_oe_mask) | res_oe;
   assign gpio_oe_mask = vm_oe_mask | res_oe_mask;
 

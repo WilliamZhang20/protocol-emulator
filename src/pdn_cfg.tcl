@@ -1,8 +1,9 @@
 # Tiny Tapeout SG13CMOS5L power grid.
 #
 # User blocks may expose power only on Metal4. The 50 um stripe pitch and the
-# SRAM's R0 placement align VPWR with a full-height VDD rail and VGND with a
-# full-height VSS rail. With zero macro halo, these same-layer shapes abut.
+# SRAM's R0 placement align VPWR/VGND stripes with the SRAM Metal4 rails.
+# PDNGen still gaps those stripes through the macro, so pdngen{} below adds
+# full-height same-layer straps into the south and north stub tips.
 
 source $::env(SCRIPTS_DIR)/openroad/common/io.tcl
 source $::env(SCRIPTS_DIR)/openroad/common/set_global_connections.tcl

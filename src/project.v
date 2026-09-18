@@ -61,9 +61,11 @@ module tt_um_protocol_emulator (
       .tx_push(tx_push),
       .tx_push_data(tx_push_data),
       .tx_full(tx_full),
+      .tx_level(tx_level),
       .rx_pop(rx_pop),
       .rx_pop_data(rx_pop_data),
       .rx_empty(rx_empty),
+      .rx_level(rx_level),
       .engine_halted(engine_halted)
   );
 
@@ -130,7 +132,7 @@ module tt_um_protocol_emulator (
       .halted(engine_halted)
   );
 
-  wire _unused = &{tx_level, rx_level, 1'b0};
+  wire _unused = 1'b0;
 endmodule
 
 `default_nettype wire

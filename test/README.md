@@ -61,3 +61,23 @@ hang watchdog, RX scoreboarding, and directed CRC poly stress.
 
 `test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, the
 `line_pair` helper, and a soft LS ACK line-pattern TX demo (GL-safe).
+
+`test_alu_branch.py` covers the 8x register file, ALU ops, the zero flag, and
+`JZ`/`JNZ`/`DJNZ` (GL-safe, pins + status only).
+
+`test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
+`EVENT_STAMP` triples against edge events.
+
+`test_sideset.py` checks side-set prefixes land on the same cycle as the next
+op's pin transition.
+
+`test_crc.py` checks IEEE-802.3 CRC-32 (`0xE1` setup, 4-byte push) against zlib.
+
+`test_jtag.py` runs a Shift-DR loopback through the generic shift engine with
+no RTL change per protocol.
+
+`test_onewire.py` runs a 1-Wire reset + presence + write + read demo on one pin.
+
+`test_manchester.py` decodes a Manchester TX frame purely from pin timing.
+
+`test_host_stream.py` checks FIFO level reads (`0xC`) and RX peek (`0xD`).

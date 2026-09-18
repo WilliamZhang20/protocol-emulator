@@ -53,6 +53,22 @@ module protocol_emulator_core (
   wire line_drive;
   wire line_release;
   wire line_sample;
+  wire alu_set;
+  wire alu_mov;
+  wire alu_op;
+  wire djnz_strobe;
+  wire alu_zero;
+  wire djnz_nonzero;
+  wire time_rd;
+  wire time_wait_active;
+  wire ev_stamp;
+  wire time_satisfied;
+  wire sideset_apply;
+  wire [2:0] sideset_pin;
+  wire sideset_val;
+  wire crc_setup32;
+  wire crc_push_b2;
+  wire crc_push_b3;
 
   wire bit_xfer_busy;
   wire bit_xfer_done;
@@ -76,6 +92,8 @@ module protocol_emulator_core (
       .event_wait_matched(event_wait_matched),
       .timer_expired(timer_expired),
       .pin_wait_satisfied(pin_wait_satisfied),
+      .alu_zero(alu_zero),
+      .djnz_nonzero(djnz_nonzero),
       .state(state),
       .program_counter(program_counter),
       .instruction(instruction),
@@ -112,7 +130,21 @@ module protocol_emulator_core (
       .line_cfg(line_cfg),
       .line_drive(line_drive),
       .line_release(line_release),
-      .line_sample(line_sample)
+      .line_sample(line_sample),
+      .alu_set(alu_set),
+      .alu_mov(alu_mov),
+      .alu_op(alu_op),
+      .djnz_strobe(djnz_strobe),
+      .time_rd(time_rd),
+      .time_wait_active(time_wait_active),
+      .ev_stamp(ev_stamp),
+      .time_satisfied(time_satisfied),
+      .sideset_apply(sideset_apply),
+      .sideset_pin(sideset_pin),
+      .sideset_val(sideset_val),
+      .crc_setup32(crc_setup32),
+      .crc_push_b2(crc_push_b2),
+      .crc_push_b3(crc_push_b3)
   );
 
   wire [15:0] timer_count;
@@ -132,7 +164,7 @@ module protocol_emulator_core (
       .done_pulse(timer_done_pulse)
   );
 
-  wire [15:0] crc_value;
+  wire [31:0] crc_value;
   wire crc_busy;
   wire [7:0] crc_cfg = operand_low;
   wire [15:0] crc_poly = {
@@ -140,10 +172,89 @@ module protocol_emulator_core (
       operand_mid
   };
 
+  // Phase 1-2: central 8x16 register file + tiny ALU + zero flag.
+  // Encodings are additive: 0xAA SET Rd,imm8 / 0xAB MOV Rd,Rs /
+  // 0xAC ALU op,Rd,Rs. Branches 0x81 JZ / 0x82 JNZ / 0x88-0x8F DJNZ Rn
+  // reuse the 2-byte jump operand format; 0x80 stays unconditional.
+  wire [2:0] alu_set_rd = operand_low[2:0];
+  wire [15:0] alu_set_val = {8'b0, instruction_data};
+  wire [2:0] alu_mov_rd = instruction_data[2:0];
+  wire [2:0] alu_mov_rs = instruction_data[5:3];
+  wire [2:0] alu_op_sel = operand_low[2:0];
+  wire [2:0] alu_op_rd = instruction_data[2:0];
+  wire [2:0] alu_op_rs = instruction_data[5:3];
+  wire is_branch_op = opcode == 4'h8;
+  wire [2:0] rf_ra = alu_mov_rs;
+  wire [2:0] rf_rb = time_wait_active ? operand_low[2:0] :
+      is_branch_op ? immediate[2:0] :
+      (alu_op ? alu_op_rd : alu_mov_rd);
+  wire [15:0] rf_rd_a;
+  wire [15:0] rf_rd_b;
+  wire [15:0] alu_a = rf_rd_a;
+  wire [15:0] alu_b = rf_rd_b;
+  reg [15:0] alu_result;
+  always @(*) begin
+    case (alu_op_sel)
+      3'd0: alu_result = alu_b + alu_a;
+      3'd1: alu_result = alu_b - alu_a;
+      3'd2: alu_result = alu_b & alu_a;
+      3'd3: alu_result = alu_b | alu_a;
+      3'd4: alu_result = alu_b ^ alu_a;
+      3'd5: alu_result = alu_b << alu_a[3:0];
+      3'd6: alu_result = alu_b >> alu_a[3:0];
+      default: alu_result = alu_b + alu_a;
+    endcase
+  end
+  wire [15:0] rf_wdata = djnz_strobe ? (rf_rd_b - 16'd1) :
+      time_rd ? cycle_ctr[15:0] :
+      alu_set ? alu_set_val :
+      alu_mov ? alu_a :
+      alu_op ? alu_result : 16'b0;
+  wire [2:0] rf_waddr = djnz_strobe ? immediate[2:0] :
+      (time_rd || alu_mov) ? alu_mov_rd :
+      alu_set ? alu_set_rd :
+      alu_op ? alu_op_rd : 3'b0;
+  wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd;
+  register_file regs (
+      .clk(clk),
+      .rst_n(rst_n),
+      .read_address_a(rf_ra),
+      .read_address_b(rf_rb),
+      .read_data_a(rf_rd_a),
+      .read_data_b(rf_rd_b),
+      .write_enable(rf_we),
+      .write_address(rf_waddr),
+      .write_data(rf_wdata)
+  );
+  reg zero_flag;
+  wire [15:0] alu_flag_val = time_rd ? cycle_ctr[15:0] :
+      alu_set ? alu_set_val :
+      alu_mov ? alu_a : alu_result;
+  always @(posedge clk) begin
+    if (!rst_n || !enable)
+      zero_flag <= 1'b0;
+    else if (alu_set || alu_mov || alu_op || time_rd)
+      zero_flag <= (alu_flag_val == 16'b0);
+  end
+  assign alu_zero = zero_flag;
+  assign djnz_nonzero = (rf_rd_b != 16'd1);
+
+  // Phase 3: free-running global cycle counter, deterministic from enable.
+  reg [31:0] cycle_ctr;
+  always @(posedge clk) begin
+    if (!rst_n || !enable)
+      cycle_ctr <= 32'b0;
+    else
+      cycle_ctr <= cycle_ctr + 1'b1;
+  end
+  // WAIT_UNTIL Rn stalls in TIME_WAIT until ctr[15:0] >= Rn (unsigned).
+  assign time_satisfied = cycle_ctr[15:0] >= rf_rd_b;
+
   crc_engine u_crc (
       .clk(clk),
       .rst_n(rst_n),
       .setup(crc_setup),
+      .setup32(crc_setup32),
       .cfg(crc_cfg),
       .poly(crc_poly),
       .feed(crc_feed),
@@ -223,6 +334,9 @@ module protocol_emulator_core (
       .execute_gpio_write(execute_gpio_write),
       .execute_oe_write(execute_oe_write),
       .execute_shift_out(execute_shift_out),
+      .sideset_apply(sideset_apply),
+      .sideset_pin(sideset_pin),
+      .sideset_val(sideset_val),
       .engine_drive_enable(engine_drive_enable),
       .engine_out_value(engine_out_value),
       .engine_out_mask(engine_out_mask),
@@ -313,11 +427,43 @@ module protocol_emulator_core (
       .wait_matched(event_wait_matched)
   );
 
+  // Phase 4: timestamped event capture alongside the sticky scoreboard.
+  // EVENT_STAMP (0xAF) pushes 3 bytes cycling time_lo/time_hi/cause.
+  // The timestamp + pending vector latch on the first byte so the triple
+  // is self-consistent. Index resets when the engine stops.
+  reg [31:0] stamp_time;
+  reg [7:0] stamp_cause;
+  reg [1:0] stamp_idx;
+  // Byte 0 pushes the live counter low byte (the registered latch lands the
+  // same cycle, too late for the push); bytes 1-2 use the latched snapshot
+  // so the triple is self-consistent.
+  wire [7:0] stamp_byte = stamp_idx == 2'd0 ? cycle_ctr[7:0] :
+      stamp_idx == 2'd1 ? stamp_time[15:8] : stamp_cause;
+  always @(posedge clk) begin
+    if (!rst_n || !enable) begin
+      stamp_time <= 32'b0;
+      stamp_cause <= 8'b0;
+      stamp_idx <= 2'b0;
+    end else if (ev_stamp) begin
+      if (stamp_idx == 2'd0) begin
+        stamp_time <= cycle_ctr;
+        stamp_cause <= event_pending;
+      end
+      if (stamp_idx == 2'd2)
+        stamp_idx <= 2'b0;
+      else
+        stamp_idx <= stamp_idx + 1'b1;
+    end
+  end
+
   assign instruction_address = program_counter;
   assign rx_data =
       crc_push_lo ? crc_value[7:0] :
       crc_push_hi ? crc_value[15:8] :
+      crc_push_b2 ? crc_value[23:16] :
+      crc_push_b3 ? crc_value[31:24] :
       line_sample ? {6'b0, line_sample_comb} :
+      ev_stamp ? stamp_byte :
       shifter_parallel[15:8];
 
   wire _unused = &{instruction, opcode, operand_ext, operand_ext_valid,

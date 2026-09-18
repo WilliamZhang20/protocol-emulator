@@ -72,6 +72,8 @@ data:
 | `9` | Pop one RX byte to `uo_out` |
 | `A` | Read engine/FIFO status on `uo_out` |
 | `B` | Read SRAM at the current address to `uo_out` |
+| `C` | Read FIFO levels: `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
+| `D` | Peek next RX byte without popping (no-op while empty) |
 
 Program reads and writes are rejected while the engine runs. This keeps host
 traffic from perturbing instruction timing. Status is
@@ -100,12 +102,22 @@ where applicable:
 | Encoding | Operation |
 | --- | --- |
 | `00`, `01` | NOP, HALT |
+| `02`-`0F` | `SIDESET`: `imm = {val, pin[2:0]}` latched, applied atomically at next `EXECUTE` |
 | `10 ll hh` | WAIT16, blocking little-endian cycle count |
 | `2vppp`, `3vppp` | Write logical GPIO, write its output enable |
 | `40` | Load a byte from TX FIFO; stall while empty |
 | `5p`, `6p` | Shift one bit out or in, LSB first |
 | `70` | Push the received byte; stall while RX FIFO is full |
 | `80 ll hh` | Jump to a 10-bit SRAM address |
+| `81 ll hh` | `JZ`: jump if ALU zero flag set (`80` stays unconditional) |
+| `82 ll hh` | `JNZ`: jump if ALU zero flag clear |
+| `88+n ll hh` | `DJNZ Rn`: decrement `Rn` (0..7), jump if result != 0 |
+| `AA rd ii` | `SET Rd, imm8`: zero-extended load, updates zero flag |
+| `AB rsrd` | `MOV Rd, Rs`: `rsrd = {Rs[2:0], Rd[2:0]}`, updates zero flag |
+| `AC op rsrd` | ALU `Rd = Rd op Rs`, `op`: 0 ADD, 1 SUB, 2 AND, 3 OR, 4 XOR, 5 SHL, 6 SHR |
+| `AD rd` | `GET_TIME Rd`: `Rd` = global cycle-counter low 16 bits |
+| `AE rn` | `WAIT_UNTIL Rn`: stall until counter `[15:0]` >= `Rn` (unsigned) |
+| `AF` | `EVENT_STAMP`: push one byte; 3 consecutive stamps = time_lo/time_hi/cause |
 | `9vppp` | Wait until a logical input pin equals `v` |
 | `A0` | Clear the bit-transfer shift register |
 | `A1 cfg poly_lo poly_hi` | `CRC_SETUP`: width/ref/xor/init in `cfg`, 16-bit poly |
@@ -120,6 +132,8 @@ where applicable:
 | `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer (nonblocking) |
 | `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
 | `E0 ll hh` | `START_TIMER`: nonblocking timer; sets `EV_TIMER_DONE` on expiry |
+| `E1` | `CRC32_SETUP`: one-pulse IEEE-802.3 CRC-32 init (width 32, poly `0x04C11DB7`) |
+| `E2` / `E3` | Push CRC residue byte 2 / byte 3 (`A4`/`A5` push bytes 0/1) |
 | `F0 rise fall` | `ARM_EDGE`: arm rise/fall masks (`imm0` also arms compare) |
 
 ### Orchestration model
@@ -169,6 +183,29 @@ The synchronous SRAM path has deterministic instruction overhead. In the
 supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
 50 MHz, a wait operand of 423 yields approximately 115,207 baud.
 
+Exact per-opcode cost (engine clocks, excluding stall cycles): every
+instruction byte costs 3 cycles (`FETCH_REQUEST` + `FETCH_WAIT` + `EXECUTE`)
+and every operand byte costs 2 (`REQUEST` + `WAIT`). So single-byte ops
+(`GPIO_WRITE`, `SHIFT_OUT/IN`, `TX_LOAD` hit, `RX_PUSH` hit, `SET`-prefix
+`SIDESET`) cost 3; one-operand ops (`MAP`, `CRC_FEED`, `MOV`, `GET_TIME`,
+`WAIT_UNTIL` entry) cost 5; two-operand ops (`WAIT16`/`START_TIMER`/`ARM_EDGE`
+entry, `JMP`/`JZ`/`JNZ`/`DJNZ`, `SET`, ALU) cost 7; `START_XFER`/`CRC_SETUP`
+cost 9 plus resource-busy stall. `WAIT16(N)` totals `N + 11` including the
+following bit operation's fetch. Stalls (`TX` empty, `RX` full, `WAIT_PIN`,
+`WAIT_EVENT`, `WAIT_UNTIL`, `TIMER_WAIT`) add one cycle per waiting clock.
+
+A deeper prefetch queue is intentionally deferred: fetching ahead during
+`EXECUTE` would change every count above and invalidate the characterized
+baud rates, so it is scheduled after the streaming-host cutover when all
+programs are re-timed together.
+
+Baseline lock (Phase 0, pre-deterministic-core migration): this `+11`
+overhead, the single-port 1024x8 SRAM behind `program_memory.sram`, the
+nibble host commands `1`-`B`, and the sticky `event_engine` semantics are
+frozen. New ISA work is purely additive (unused `0xA` sub-ops `0xAA+`,
+`0x8n` branch immediates) until the explicit cutover phase. `make verify`
+must stay green after every phase.
+
 ### Register and state storage
 
 A compact register file holds working values, flags, loop state, addresses, and
@@ -184,7 +221,11 @@ Autonomous FSM for repetitive clocked transfers:
 
 Launched with `START_XFER` (nonblocking). Completion is observed through
 `EV_XFER_DONE` and `WAIT_EVENT`. The same resource covers SPI and I²C data
-bytes; framing stays in bytecode.
+bytes; framing stays in bytecode. JTAG Shift-DR is the same engine with
+`TMS` held low (`jtag_shift_dr_program`) — no RTL change per protocol. Clock
+idle/phase, open-drain, and stretch-wait bits are generic shift primitives,
+not SPI/I²C modes; slow protocols can alternatively bit-bang the same
+transfers with `GPIO_WRITE` + `WAIT_UNTIL` now that the CPU has real branches.
 
 ### Event engine
 
@@ -250,6 +291,21 @@ engine and execution resources.
 
 ## Growth path
 
+### Cutover notes (Phase 9-10): deprecate, don't delete
+
+The following older blocks still work and stay covered by tests; new
+programs should avoid them:
+
+- `line_pair` + `LINE_*` (`A6`-`A9`): kept for the existing USB-LS images.
+  New differential buses should drive pin pairs with `GPIO_WRITE` + `WAIT`
+  (see `line_state_smoke_program`) — the CPU is now fast enough.
+- Per-instruction `MAP` (`Bppp qq`): configure logical-to-physical bindings
+  once at load time; rebinding mid-program stays legal but is discouraged.
+- Nibble host commands `1`-`B` are extended (not replaced) by level/peek
+  reads `C`/`D` for polled streaming drivers. A true byte-wide streaming
+  mode needs a pinout change and stays future work.
+- A deeper prefetch queue stays deferred (see exact-timing note above).
+
 The component boundaries allow later versions to add capabilities incrementally:
 
 - multiple engines sharing program or data memories;
@@ -273,7 +329,9 @@ Near-term orchestration growth already sketched in the ISA:
 
 Protocol-neutral residue datapath (`crc_engine`): programmable width 1..16,
 poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
-are configurations, not dedicated modes.
+are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
+`CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
+bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
 
 ### Line-pair helper
 

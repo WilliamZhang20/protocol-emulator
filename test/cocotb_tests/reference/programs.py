@@ -71,6 +71,88 @@ def jump(address: int) -> list[int]:
     return [0x80, address & 0xFF, (address >> 8) & 0x03]
 
 
+def jump_if_zero(address: int) -> list[int]:
+    """JZ: jump if the ALU zero flag is set (additive; 0x80 stays unconditional)."""
+    return [0x81, address & 0xFF, (address >> 8) & 0x03]
+
+
+def jump_if_not_zero(address: int) -> list[int]:
+    """JNZ: jump if the ALU zero flag is clear."""
+    return [0x82, address & 0xFF, (address >> 8) & 0x03]
+
+
+def djnz(reg: int, address: int) -> list[int]:
+    """DJNZ Rn: decrement Rn, jump if result != 0. Reg 0..7."""
+    if not 0 <= reg <= 7:
+        raise ValueError("DJNZ register must be 0..7")
+    return [0x88 | (reg & 7), address & 0xFF, (address >> 8) & 0x03]
+
+
+# Tiny ALU ops (0xAC sub-op select)
+ALU_ADD = 0
+ALU_SUB = 1
+ALU_AND = 2
+ALU_OR = 3
+ALU_XOR = 4
+ALU_SHL = 5
+ALU_SHR = 6
+
+
+def reg_set(reg: int, value: int) -> list[int]:
+    """SET Rd, imm8: Rd = zero-extended immediate, updates zero flag."""
+    if not 0 <= reg <= 7:
+        raise ValueError("register must be 0..7")
+    return [0xAA, reg & 7, value & 0xFF]
+
+
+def reg_mov(dst: int, src: int) -> list[int]:
+    """MOV Rd, Rs: Rd = Rs, updates zero flag."""
+    return [0xAB, ((src & 7) << 3) | (dst & 7)]
+
+
+def reg_alu(op: int, dst: int, src: int) -> list[int]:
+    """ALU: Rd = Rd op Rs (ADD/SUB/AND/OR/XOR/SHL/SHR), updates zero flag."""
+    if not 0 <= op <= 6:
+        raise ValueError("ALU op must be 0..6")
+    return [0xAC, op & 7, ((src & 7) << 3) | (dst & 7)]
+
+
+def get_time(reg: int) -> list[int]:
+    """GET_TIME Rd: Rd = global cycle counter low 16 bits, updates zero flag."""
+    if not 0 <= reg <= 7:
+        raise ValueError("register must be 0..7")
+    return [0xAD, reg & 7]
+
+
+def wait_until(reg: int) -> list[int]:
+    """WAIT_UNTIL Rn: stall until counter[15:0] >= Rn (unsigned)."""
+    if not 0 <= reg <= 7:
+        raise ValueError("register must be 0..7")
+    return [0xAE, reg & 7]
+
+
+def event_stamp() -> int:
+    """EVENT_STAMP: push one timestamped-event byte; 3x = time_lo/time_hi/cause."""
+    return 0xAF
+
+
+def sideset(pin: int, value: int) -> list[int]:
+    """Side-set prefix: `pin <- value` applied atomically at the next EXECUTE.
+
+    Opcode 0x0 immediates 0x2-0xF (previously NOPs). The two degenerate
+    codes fall back: 0x0 is a plain NOP, and 0x1 would be HALT so pin 1 <- 0
+    uses a normal GPIO_WRITE instead.
+    """
+    if not 0 <= pin <= 7:
+        raise ValueError("side-set pin must be 0..7")
+    imm = ((value & 1) << 3) | (pin & 7)
+    if imm == 0:
+        return [NOP]
+    if imm == 1:
+        return [gpio_write(pin, value)]
+    return [imm]
+
+
 def wait_pin(pin: int, value: int) -> int:
     return 0x90 | ((value & 1) << 3) | (pin & 7)
 
@@ -335,6 +417,69 @@ def crc_usb16_setup() -> list[int]:
     return crc_setup(width=16, poly=0x8005)
 
 
+CRC32_SETUP = 0xE1
+CRC_PUSH_B2 = 0xE2
+CRC_PUSH_B3 = 0xE3
+
+
+def crc32_setup_op() -> int:
+    """IEEE-802.3 CRC-32 setup: width 32, poly 0x04C11DB7, init/xor ones."""
+    return CRC32_SETUP
+
+
+def crc_push_full() -> list[int]:
+    """Push the full 32-bit CRC residue, little-endian (b0..b3)."""
+    return [CRC_PUSH_LO, CRC_PUSH_HI, CRC_PUSH_B2, CRC_PUSH_B3]
+
+
+def crc32_demo_program(data: list[int]) -> list[int]:
+    """Feed bytes through IEEE CRC-32 and push the 32-bit result to RX."""
+    program = [crc32_setup_op()]
+    for b in data:
+        program += crc_feed(b)
+    program += [crc_finalize(), *crc_push_full(), HALT]
+    return program
+
+
+# JTAG Shift-DR pins (logical): the shift engine is protocol-neutral, so a
+# JTAG DR shift is just an MSB-first 8-bit transfer with TMS held low.
+JTAG_TDI = 0
+JTAG_TDO = 1
+JTAG_TCK = 2
+JTAG_TMS = 3
+
+
+def jtag_shift_dr_program(
+    *,
+    tck: int = JTAG_TCK,
+    tms: int = JTAG_TMS,
+    tdi: int = JTAG_TDI,
+    tdo: int = JTAG_TDO,
+    half_period: int = 4,
+) -> list[int]:
+    """One Shift-DR byte via the generic shift engine (TMS held low)."""
+    return [
+        gpio_oe(tms, 1),
+        gpio_oe(tdi, 1),
+        gpio_oe(tck, 1),
+        gpio_oe(tdo, 0),
+        gpio_write(tck, 0),
+        gpio_write(tms, 0),
+        TX_LOAD,
+        *start_xfer(
+            clk_pin=tck,
+            tx_pin=tdi,
+            rx_pin=tdo,
+            bit_count=8,
+            half_period=half_period,
+            msb_first=True,
+        ),
+        *wait_event(EV_XFER_DONE),
+        RX_PUSH,
+        HALT,
+    ]
+
+
 def line_cfg(pin_a: int = DP_PIN, pin_b: int = DM_PIN, jk_swap: bool = False) -> list[int]:
     pins = (pin_a & 7) | ((pin_b & 7) << 3) | ((1 if jk_swap else 0) << 6)
     return [LINE_CFG, pins]
@@ -443,4 +588,68 @@ def ls_ack_packet_program(
         line_release(),
         HALT,
     ]
+    return program
+
+
+# 1-Wire demo (logical pin 0, sim-scaled slot times, ratios preserved).
+# Presence is reported via ARM/WAIT_EVENT + EVENT_STAMP (cause carries FALL);
+# RX_PUSH only carries shifter bytes, so the report byte cannot come from TX.
+OW_PIN = 0
+OW_RESET_LOW = 40
+OW_SLOT = 12
+OW_SLOT_GAP = 4
+OW_READ_SAMPLE = 4
+
+
+def onewire_write_read_program(*, pin: int = OW_PIN, flag: int = 4) -> list[int]:
+    """1-Wire master demo: reset + presence detect, write byte, read one bit.
+
+    Host preloads TX with [data_byte]. Presence (FALL while released) wakes
+    WAIT_EVENT; a side-set marker on `flag` confirms it on the pins. The
+    sampled read bit pushes as 0x80 when the bus reads high.
+    """
+    program = [
+        gpio_oe(pin, 1),
+        gpio_oe(flag, 1),
+        gpio_write(pin, 0),
+        gpio_write(flag, 0),
+        *wait(OW_RESET_LOW),
+        *arm_edges(rise_mask=0, fall_mask=1 << pin),
+        gpio_oe(pin, 0),  # release; device presence pulls low
+        *wait_event(EV_PIN_FALL),  # stall until presence observed
+        *sideset(flag, 1),
+        gpio_oe(pin, 1),
+        TX_LOAD,  # data byte preloaded by host
+    ]
+    for _ in range(8):
+        program += [
+            shift_out(pin),
+            *wait(OW_SLOT),
+            gpio_write(pin, 1),
+            *wait(OW_SLOT_GAP),
+        ]
+    program += [
+        gpio_write(pin, 1),
+        *wait(OW_SLOT_GAP),
+        SHIFT_CLEAR,
+        gpio_write(pin, 0),
+        *wait(2),
+        gpio_oe(pin, 0),  # release for read slot
+        *wait(OW_READ_SAMPLE),
+        shift_in(pin),
+        *wait(OW_SLOT),
+        RX_PUSH,
+        HALT,
+    ]
+    return program
+
+def manchester_tx_program(byte: int, *, pin: int = 0, half: int = 8) -> list[int]:
+    """Manchester TX (IEEE: 1 = low-to-high): idle high, LSB-first."""
+    program = [gpio_oe(pin, 1), gpio_write(pin, 1)]
+    for bit in range(8):
+        if (byte >> bit) & 1:
+            program += [gpio_write(pin, 0), *wait(half), gpio_write(pin, 1), *wait(half)]
+        else:
+            program += [gpio_write(pin, 1), *wait(half), gpio_write(pin, 0), *wait(half)]
+    program += [gpio_write(pin, 1), HALT]
     return program

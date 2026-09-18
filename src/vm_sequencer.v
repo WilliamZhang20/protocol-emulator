@@ -13,6 +13,9 @@ module vm_sequencer (
     input  wire       event_wait_matched,
     input  wire       timer_expired,
     input  wire       pin_wait_satisfied,
+    input  wire       alu_zero,
+    input  wire       djnz_nonzero,
+    input  wire       time_satisfied,
     output reg  [3:0] state,
     output reg  [9:0] program_counter,
     output reg  [7:0] instruction,
@@ -49,7 +52,20 @@ module vm_sequencer (
     output wire       line_cfg,
     output wire       line_drive,
     output wire       line_release,
-    output wire       line_sample
+    output wire       line_sample,
+    output wire       alu_set,
+    output wire       alu_mov,
+    output wire       alu_op,
+    output wire       djnz_strobe,
+    output wire       time_rd,
+    output wire       time_wait_active,
+    output wire       ev_stamp,
+    output wire       sideset_apply,
+    output wire [2:0] sideset_pin,
+    output wire       sideset_val,
+    output wire       crc_setup32,
+    output wire       crc_push_b2,
+    output wire       crc_push_b3
 );
   localparam STATE_IDLE = 4'd0;
   localparam STATE_FETCH_REQUEST = 4'd1;
@@ -64,6 +80,7 @@ module vm_sequencer (
   localparam STATE_OPERAND_EXT_REQUEST = 4'd10;
   localparam STATE_OPERAND_EXT_WAIT = 4'd11;
   localparam STATE_EVENT_WAIT = 4'd12;
+  localparam STATE_TIME_WAIT = 4'd13;
 
   wire decoder_branch;
   wire decoder_delay;
@@ -93,6 +110,39 @@ module vm_sequencer (
   wire is_line_drv = opcode == 4'ha && immediate == 4'h7;
   wire is_line_rel = opcode == 4'ha && immediate == 4'h8;
   wire is_line_sam = opcode == 4'ha && immediate == 4'h9;
+  // Additive ALU ops (Phase 1): previously-undefined 0xA sub-ops.
+  wire is_alu_set = opcode == 4'ha && immediate == 4'ha;
+  wire is_alu_mov = opcode == 4'ha && immediate == 4'hb;
+  wire is_alu_op = opcode == 4'ha && immediate == 4'hc;
+  // Phase 3-4: timestamp + event-stamp ops (previously-undefined 0xA sub-ops).
+  wire is_get_time = opcode == 4'ha && immediate == 4'hd;
+  wire is_wait_until = opcode == 4'ha && immediate == 4'he;
+  wire is_ev_stamp = opcode == 4'ha && immediate == 4'hf;
+  // Phase 8: CRC-32 ops in the spare 0xE immediates (0xE0 stays START_TIMER).
+  wire is_crc32_setup = opcode == 4'he && immediate == 4'h1;
+  wire is_crc32_b2 = opcode == 4'he && immediate == 4'h2;
+  wire is_crc32_b3 = opcode == 4'he && immediate == 4'h3;
+  // Phase 6: side-set prefix. Opcode 0x0 immediates 0x2-0xF were NOPs;
+  // they now latch {pin,val} applied atomically at the next EXECUTE.
+  // 0x00 stays NOP, 0x01 stays HALT. Old programs never emit 0x02-0x0F.
+  wire is_sideset = opcode == 4'h0 && immediate != 4'h0 && immediate != 4'h1;
+
+  // Side-set latch: pending pin/val applied at the next EXECUTE start.
+  reg [2:0] sideset_pin_r;
+  reg sideset_val_r;
+  reg sideset_pending;
+  assign sideset_apply = state == STATE_EXECUTE && sideset_pending;
+  assign sideset_pin = sideset_pin_r;
+  assign sideset_val = sideset_val_r;
+  // Conditional branches (Phase 2): 0x80 stays unconditional; immediates
+  // select the condition. 0x88-0x8F is DJNZ Rn (reg = imm[2:0]).
+  wire is_jmp = opcode == 4'h8 && immediate == 4'h0;
+  wire is_jz = opcode == 4'h8 && immediate == 4'h1;
+  wire is_jnz = opcode == 4'h8 && immediate == 4'h2;
+  wire is_djnz = opcode == 4'h8 && immediate[3];
+  wire branch_taken = is_jmp || (is_jz && alu_zero) ||
+      (is_jnz && !alu_zero) || (is_djnz && djnz_nonzero) ||
+      (opcode == 4'h8 && !is_jz && !is_jnz && !is_djnz);
 
   assign idle_clear = state == STATE_IDLE;
   assign instruction_read =
@@ -135,10 +185,22 @@ module vm_sequencer (
   assign line_release = state == STATE_EXECUTE && is_line_rel;
   assign line_sample = state == STATE_EXECUTE && is_line_sam && !rx_full;
 
+  assign alu_mov = state == STATE_OPERAND_LOW_WAIT && is_alu_mov;
+  assign alu_set = state == STATE_OPERAND_HIGH_WAIT && is_alu_set;
+  assign alu_op = state == STATE_OPERAND_HIGH_WAIT && is_alu_op;
+  assign djnz_strobe = state == STATE_OPERAND_HIGH_WAIT && is_djnz;
+  assign time_rd = state == STATE_OPERAND_LOW_WAIT && is_get_time;
+  assign time_wait_active = state == STATE_TIME_WAIT;
+  assign ev_stamp = state == STATE_EXECUTE && is_ev_stamp && !rx_full;
+  assign crc_setup32 = state == STATE_EXECUTE && is_crc32_setup;
+  assign crc_push_b2 = state == STATE_EXECUTE && is_crc32_b2 && !rx_full;
+  assign crc_push_b3 = state == STATE_EXECUTE && is_crc32_b3 && !rx_full;
+
   assign tx_pop = execute_tx_load;
   assign rx_push =
       (state == STATE_EXECUTE && opcode == 4'h7 && !rx_full) ||
-      crc_push_lo || crc_push_hi || line_sample;
+      crc_push_lo || crc_push_hi || line_sample || ev_stamp ||
+      crc_push_b2 || crc_push_b3;
 
   always @(posedge clk) begin
     if (!rst_n) begin
@@ -150,10 +212,14 @@ module vm_sequencer (
       operand_ext <= 8'b0;
       operand_ext_valid <= 1'b0;
       halted <= 1'b0;
+      sideset_pin_r <= 3'b0;
+      sideset_val_r <= 1'b0;
+      sideset_pending <= 1'b0;
     end else if (!enable) begin
       state <= STATE_IDLE;
       program_counter <= 10'b0;
       halted <= 1'b0;
+      sideset_pending <= 1'b0;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -167,20 +233,46 @@ module vm_sequencer (
           state <= STATE_EXECUTE;
         end
         STATE_EXECUTE: begin
+          // Side-set applies at instruction start, then clears (unless the
+          // current instruction is itself a prefix, which chains).
+          if (sideset_pending && !is_sideset)
+            sideset_pending <= 1'b0;
           case (opcode)
             4'h0: begin
               if (immediate == 4'h1) begin
                 halted <= 1'b1;
                 state <= STATE_HALTED;
               end else begin
+                if (is_sideset) begin
+                  sideset_pin_r <= immediate[2:0];
+                  sideset_val_r <= immediate[3];
+                  sideset_pending <= 1'b1;
+                end
                 program_counter <= program_counter + 1'b1;
                 state <= STATE_FETCH_REQUEST;
               end
             end
-            4'h1, 4'h8, 4'hc, 4'he, 4'hf,
+            4'h1, 4'h8, 4'hc, 4'hf,
             4'hb, 4'hd: begin
               program_counter <= program_counter + 1'b1;
               state <= STATE_OPERAND_LOW_REQUEST;
+            end
+            4'he: begin
+              if (immediate == 4'h0) begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_OPERAND_LOW_REQUEST;
+              end else if (is_crc32_setup) begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_FETCH_REQUEST;
+              end else if (is_crc32_b2 || is_crc32_b3) begin
+                if (!rx_full) begin
+                  program_counter <= program_counter + 1'b1;
+                  state <= STATE_FETCH_REQUEST;
+                end
+              end else begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_FETCH_REQUEST;
+              end
             end
             4'ha: begin
               if (immediate == 4'h0 || is_crc_fin || is_line_rel) begin
@@ -191,8 +283,19 @@ module vm_sequencer (
                   program_counter <= program_counter + 1'b1;
                   state <= STATE_FETCH_REQUEST;
                 end
+              end else if (is_ev_stamp) begin
+                if (!rx_full) begin
+                  program_counter <= program_counter + 1'b1;
+                  state <= STATE_FETCH_REQUEST;
+                end
               end else if (is_crc_setup || is_crc_feed || is_line_cfg ||
-                           is_line_drv) begin
+                           is_line_drv || is_alu_mov) begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_OPERAND_LOW_REQUEST;
+              end else if (is_alu_set || is_alu_op) begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_OPERAND_LOW_REQUEST;
+              end else if (is_get_time || is_wait_until) begin
                 program_counter <= program_counter + 1'b1;
                 state <= STATE_OPERAND_LOW_REQUEST;
               end else begin
@@ -228,8 +331,11 @@ module vm_sequencer (
         STATE_OPERAND_LOW_WAIT: begin
           operand_low <= instruction_data;
           program_counter <= program_counter + 1'b1;
-          if (opcode == 4'hb || is_crc_feed || is_line_cfg || is_line_drv)
+          if (opcode == 4'hb || is_crc_feed || is_line_cfg || is_line_drv ||
+              is_alu_mov || is_get_time)
             state <= STATE_FETCH_REQUEST;
+          else if (is_wait_until)
+            state <= STATE_TIME_WAIT;
           else if (opcode == 4'hd)
             state <= STATE_EVENT_WAIT;
           else
@@ -247,6 +353,16 @@ module vm_sequencer (
             operand_mid <= instruction_data;
             program_counter <= program_counter + 1'b1;
             state <= STATE_OPERAND_EXT_REQUEST;
+          end else if (is_alu_set || is_alu_op) begin
+            operand_mid <= instruction_data;
+            program_counter <= program_counter + 1'b1;
+            state <= STATE_FETCH_REQUEST;
+          end else if (opcode == 4'h8) begin
+            if (branch_taken)
+              program_counter <= {instruction_data[1:0], operand_low};
+            else
+              program_counter <= program_counter + 1'b1;
+            state <= STATE_FETCH_REQUEST;
           end else begin
             program_counter <= {instruction_data[1:0], operand_low};
             state <= STATE_FETCH_REQUEST;
@@ -274,6 +390,10 @@ module vm_sequencer (
         end
         STATE_EVENT_WAIT: begin
           if (event_wait_matched)
+            state <= STATE_FETCH_REQUEST;
+        end
+        STATE_TIME_WAIT: begin
+          if (time_satisfied)
             state <= STATE_FETCH_REQUEST;
         end
         STATE_TIMER_WAIT: begin

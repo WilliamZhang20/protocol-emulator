@@ -19,9 +19,11 @@ module host_interface (
     output wire       tx_push,
     output wire [7:0] tx_push_data,
     input  wire       tx_full,
+    input  wire [2:0] tx_level,
     output wire       rx_pop,
     input  wire [7:0] rx_pop_data,
     input  wire       rx_empty,
+    input  wire [2:0] rx_level,
     input  wire       engine_halted
 );
   reg [7:0] last_command;
@@ -125,6 +127,15 @@ module host_interface (
               program_read_register <= 1'b1;
               read_pending <= 1'b1;
             end
+          end
+          // Phase 10 (additive streaming aids): FIFO levels for polled
+          // drivers, and RX peek without consuming.
+          4'hc: output_register <= {
+              tx_full, rx_empty, tx_level, rx_level
+          };
+          4'hd: begin
+            if (!rx_empty)
+              output_register <= rx_pop_data;
           end
           default: output_register <= output_register;
         endcase
