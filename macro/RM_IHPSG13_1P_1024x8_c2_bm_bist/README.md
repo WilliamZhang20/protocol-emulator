@@ -31,6 +31,15 @@ Keepout is limited to the known `M3.f` hotspot (≈174–189 µm at y≈80.6)
 so south-edge `A_DIN` M2→M3 escapes stay routable. A full-width strip
 starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 
+## Metal4 power straps
+
+PDNGen gaps the vertical Metal4 stripes through the macro body. The custom
+`src/pdn_cfg.tcl` therefore adds full-height straps that overlap each SRAM
+rail (`VDD!`, `VDDARRAY!`, `VSS!`) and both the south and north PDN stub
+tips, so each bank is fed from the top and bottom of the tile — not by a
+single ~1.5 µm end stub. The `VSS!` strap stays clear of the adjacent
+`VPWR` stripe to avoid a same-layer short.
+
 ## License
 
 These files are part of IHP-Open-PDK and are licensed under the Apache License 2.0.

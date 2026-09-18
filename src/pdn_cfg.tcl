@@ -89,7 +89,7 @@ proc replace_power_pin {block metal4 net_name sig_type x1 y1 x2 y2} {
 
 
 # Wrap pdngen so we can:
-#   1. connect SRAM power rails
+#   1. strap SRAM power rails into the gapped Metal4 grid
 #   2. clean up exported VPWR/VGND pins
 rename pdngen pdngen_without_sram_bridges
 
@@ -101,23 +101,38 @@ proc pdngen {args} {
 
     # ------------------------------------------------------------
     # SRAM power connections
+    #
+    # PDNGen removes vertical Metal4 stripes through the macro, leaving
+    # only short stubs above/below. The old hand bridges were ~1.5 um
+    # stubs on a single end of each rail (south for VDD/VSS, north for
+    # VDDARRAY), so each bank was single-fed.
+    #
+    # Measured on the passing GDS (SRAM at 42,81; pitch 50; width 2.1):
+    #   VSS!      die x=63.12..65.93  y=81.00..417.46   VGND stripe x=66.98
+    #   VDD!      die x=111.46..114.27 y=81.00..417.46   VPWR stripe x=112.88
+    #   VDDARRAY! die x=159.33..162.14 y=126.47..417.46  VPWR stripe x=162.88
+    #   stub tips ~y=80.52 (south) and ~y=417.94 (north)
+    #
+    # Strap each rail into both stub tips so the existing full-height
+    # tile stripes feed the SRAM from top and bottom. VSS x starts at
+    # 63.94 to stay clear of the adjacent VPWR stripe (ends x=63.93).
     # ------------------------------------------------------------
 
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
 
-    # SRAM VDD
+    # VDD!: cover rail + aligned VPWR stripe, south stub -> north stub
     odb::dbSBox_create $vpwr_swire $metal4 \
-        111830 79520 113930 81000 STRIPE
+        111460 80000 114270 418440 STRIPE
 
-    # SRAM VDDARRAY
+    # VDDARRAY!: cover rail + aligned VPWR stripe, south stub -> north stub
     odb::dbSBox_create $vpwr_swire $metal4 \
-        159330 417460 163930 419580 STRIPE
+        159330 80050 163930 418440 STRIPE
 
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
 
-    # SRAM VSS
+    # VSS!: cover rail (minus VPWR overlap) + aligned VGND stripe
     odb::dbSBox_create $vgnd_swire $metal4 \
-        64400 79520 68030 81000 STRIPE
+        63940 80000 68030 418440 STRIPE
 
     # ------------------------------------------------------------
     # Export clean Tiny Tapeout power pins

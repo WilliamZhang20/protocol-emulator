@@ -114,6 +114,22 @@ def main() -> None:
     require("-pins Metal4" in pdn_config, "PDN does not export Metal4-only power pins")
     require("TopMetal1" not in pdn_config, "custom PDN still routes on forbidden TopMetal1")
     require("Metal3" not in pdn_config, "custom PDN must not cross the SRAM's Metal3 obstruction")
+    # Full-height straps into both PDN stub tips (not the old ~1.5 um single-ended stubs).
+    for strap in (
+        "111460 80000 114270 418440",  # VDD!
+        "159330 80050 163930 418440",  # VDDARRAY!
+        "63940 80000 68030 418440",  # VSS!
+    ):
+        require(strap in pdn_config, f"missing full-height SRAM power strap: {strap}")
+    for deprecated_stub in (
+        "111830 79520 113930 81000",
+        "159330 417460 163930 419580",
+        "64400 79520 68030 81000",
+    ):
+        require(
+            deprecated_stub not in pdn_config,
+            f"deprecated single-ended SRAM stub remains: {deprecated_stub}",
+        )
     for deprecated in ("FP_PDN_MULTILAYER", "FP_PDN_VPITCH", "FP_PDN_VWIDTH"):
         require(deprecated not in config, f"deprecated setting remains: {deprecated}")
 
