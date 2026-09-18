@@ -200,13 +200,27 @@ def main() -> None:
     require("-pins Metal4" in pdn_config, "PDN does not export Metal4-only power pins")
     require("TopMetal1" not in pdn_config, "custom PDN still routes on forbidden TopMetal1")
     require("Metal3" not in pdn_config, "custom PDN must not cross the SRAM's Metal3 obstruction")
-    # Full-height straps into both PDN stub tips (not the old ~1.5 um single-ended stubs).
+    # Boundary-only bridges: PDN stubs meet SRAM pins at the macro edges.
+    # VDD/VSS bridge south + north; VDDARRAY reaches the north edge only.
+    # No top-level Metal4 may pass through the SRAM interior (obsm4).
     for strap in (
-        "111460 80000 114270 418440",  # VDD!
-        "159330 80050 163930 418440",  # VDDARRAY!
-        "64500 80000 68030 418440",  # VSS!
+        "111460 80000 114270 81000",  # VDD south
+        "111460 417460 114270 418440",  # VDD north
+        "161830 417460 163930 418440",  # VDDARRAY north only
+        "65500 80000 68030 81000",  # VSS south
+        "65500 417460 68030 418440",  # VSS north
     ):
-        require(strap in pdn_config, f"missing full-height SRAM power strap: {strap}")
+        require(strap in pdn_config, f"missing SRAM boundary power strap: {strap}")
+    for through_macro in (
+        "111460 80000 114270 418440",
+        "159330 80050 163930 418440",
+        "63940 80000 68030 418440",
+        "64500 80000 68030 418440",
+    ):
+        require(
+            through_macro not in pdn_config,
+            f"full-height Metal4 through SRAM OBS remains: {through_macro}",
+        )
     for deprecated_stub in (
         "111830 79520 113930 81000",
         "159330 417460 163930 419580",

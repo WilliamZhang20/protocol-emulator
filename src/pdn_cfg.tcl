@@ -114,29 +114,42 @@ proc pdngen {args} {
     #   VDDARRAY! die x=159.33..162.14 y=126.47..417.46  VPWR stripe x=162.88
     #   stub tips ~y=80.52 (south) and ~y=417.94 (north)
     #
-    # Strap each rail into both stub tips so the existing full-height
-    # tile stripes feed the SRAM from top and bottom. VSS x starts at
-    # 64.50 for >=0.42 um M4 clearance from the adjacent VPWR stripe
-    # (ends x=63.93) while still overlapping the VSS rail (ends x=65.93).
+    # Connect SRAM rails to PDN stubs only at macro boundaries.
+    # VDD/VSS connect at north and south boundaries.
+    # VDDARRAY reaches only the north boundary and connects there.
+    # Never extend top-level Metal4 through SRAM OBS regions.
     # ------------------------------------------------------------
 
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
 
-    # VDD!: cover rail + aligned VPWR stripe, south stub -> north stub
+    # VDD:
+    # SRAM pin spans x=111.46..114.27 for the full macro height.
+    # Connect only across the south/north macro boundaries.
     odb::dbSBox_create $vpwr_swire $metal4 \
-        111460 80000 114270 418440 STRIPE
+        111460 80000 114270 81000 STRIPE
 
-    # VDDARRAY!: cover rail + aligned VPWR stripe, south stub -> north stub
     odb::dbSBox_create $vpwr_swire $metal4 \
-        159330 80050 163930 418440 STRIPE
+        111460 417460 114270 418440 STRIPE
+
+    # VDDARRAY:
+    # Pin starts at y=126.465 and reaches the NORTH edge only.
+    # The VPWR stripe overlaps it around x=161.83..162.14,
+    # so only bridge to the north stub.
+    odb::dbSBox_create $vpwr_swire $metal4 \
+        161830 417460 163930 418440 STRIPE
+
 
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
 
-    # VSS!: bridge the SRAM VSS rail to the aligned VGND stripe.
-    # Keep >=0.42 um M4 spacing from adjacent VPWR stripe ending at x=63.93.
-    # x=64.50 still overlaps the SRAM VSS rail, which ends at x=65.93.
+    # VSS:
+    # VGND stripe is approximately x=65.93..68.03.
+    # Extend slightly left to overlap the VSS pin, but only outside/across
+    # the macro boundary — never through its interior.
     odb::dbSBox_create $vgnd_swire $metal4 \
-        64500 80000 68030 418440 STRIPE
+        65500 80000 68030 81000 STRIPE
+
+    odb::dbSBox_create $vgnd_swire $metal4 \
+        65500 417460 68030 418440 STRIPE
 
     # ------------------------------------------------------------
     # Export clean Tiny Tapeout power pins
