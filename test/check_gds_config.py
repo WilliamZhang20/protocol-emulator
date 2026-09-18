@@ -204,11 +204,11 @@ def main() -> None:
     # VDD/VSS bridge south + north; VDDARRAY reaches the north edge only.
     # No top-level Metal4 may pass through the SRAM interior (obsm4).
     for strap in (
-        "111460 80000 114270 81000",  # VDD south
+        "111460 80000 114270 81000",  # VDD south (full 2.81 um pin overlap)
         "111460 417460 114270 418440",  # VDD north
-        "161830 417460 163930 418440",  # VDDARRAY north only
-        "65500 80000 68030 81000",  # VSS south
-        "65500 417460 68030 418440",  # VSS north
+        "160500 417460 163930 418440",  # VDDARRAY north (>=1.64 um overlap)
+        "64800 80000 68030 81000",  # VSS south (>=1.13 um overlap)
+        "64800 417460 68030 418440",  # VSS north
     ):
         require(strap in pdn_config, f"missing SRAM boundary power strap: {strap}")
     for through_macro in (
@@ -225,6 +225,9 @@ def main() -> None:
         "111830 79520 113930 81000",
         "159330 417460 163930 419580",
         "64400 79520 68030 81000",
+        "161830 417460 163930 418440",  # pre-widen VDDARRAY north
+        "65500 80000 68030 81000",  # pre-widen VSS south
+        "65500 417460 68030 418440",  # pre-widen VSS north
     ):
         require(
             deprecated_stub not in pdn_config,

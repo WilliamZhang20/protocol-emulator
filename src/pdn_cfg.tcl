@@ -114,6 +114,11 @@ proc pdngen {args} {
     #   VDDARRAY! die x=159.33..162.14 y=126.47..417.46  VPWR stripe x=162.88
     #   stub tips ~y=80.52 (south) and ~y=417.94 (north)
     #
+    # Boundary-contact X-overlaps (bridge ∩ SRAM pin):
+    #   VSS      >= 1.13 um (bridge x=64.80..68.03)
+    #   VDD      =  2.81 um (full pin width)
+    #   VDDARRAY >= 1.64 um (bridge x=160.50..163.93)
+    #
     # Connect SRAM rails to PDN stubs only at macro boundaries.
     # VDD/VSS connect at north and south boundaries.
     # VDDARRAY reaches only the north boundary and connects there.
@@ -133,23 +138,24 @@ proc pdngen {args} {
 
     # VDDARRAY:
     # Pin starts at y=126.465 and reaches the NORTH edge only.
-    # The VPWR stripe overlaps it around x=161.83..162.14,
-    # so only bridge to the north stub.
+    # Widen the north bridge left to x=160.50 so overlap with the pin
+    # (159.33..162.14) is ~1.64 um, while still meeting only the north stub.
     odb::dbSBox_create $vpwr_swire $metal4 \
-        161830 417460 163930 418440 STRIPE
+        160500 417460 163930 418440 STRIPE
 
 
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
 
     # VSS:
     # VGND stripe is approximately x=65.93..68.03.
-    # Extend slightly left to overlap the VSS pin, but only outside/across
-    # the macro boundary — never through its interior.
+    # Widen left to x=64.80 for ~1.13 um overlap with VSS! (63.12..65.93).
+    # Adjacent VPWR geometry ends at x=63.93, leaving 0.87 um (>0.42 um M4
+    # spacing). Boundary-only — never through the macro interior.
     odb::dbSBox_create $vgnd_swire $metal4 \
-        65500 80000 68030 81000 STRIPE
+        64800 80000 68030 81000 STRIPE
 
     odb::dbSBox_create $vgnd_swire $metal4 \
-        65500 417460 68030 418440 STRIPE
+        64800 417460 68030 418440 STRIPE
 
     # ------------------------------------------------------------
     # Export clean Tiny Tapeout power pins
