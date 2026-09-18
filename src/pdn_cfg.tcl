@@ -116,7 +116,8 @@ proc pdngen {args} {
     #
     # Strap each rail into both stub tips so the existing full-height
     # tile stripes feed the SRAM from top and bottom. VSS x starts at
-    # 63.94 to stay clear of the adjacent VPWR stripe (ends x=63.93).
+    # 64.50 for >=0.42 um M4 clearance from the adjacent VPWR stripe
+    # (ends x=63.93) while still overlapping the VSS rail (ends x=65.93).
     # ------------------------------------------------------------
 
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
@@ -131,9 +132,11 @@ proc pdngen {args} {
 
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
 
-    # VSS!: cover rail (minus VPWR overlap) + aligned VGND stripe
+    # VSS!: bridge the SRAM VSS rail to the aligned VGND stripe.
+    # Keep >=0.42 um M4 spacing from adjacent VPWR stripe ending at x=63.93.
+    # x=64.50 still overlaps the SRAM VSS rail, which ends at x=65.93.
     odb::dbSBox_create $vgnd_swire $metal4 \
-        63940 80000 68030 418440 STRIPE
+        64500 80000 68030 418440 STRIPE
 
     # ------------------------------------------------------------
     # Export clean Tiny Tapeout power pins

@@ -204,7 +204,7 @@ def main() -> None:
     for strap in (
         "111460 80000 114270 418440",  # VDD!
         "159330 80050 163930 418440",  # VDDARRAY!
-        "63940 80000 68030 418440",  # VSS!
+        "64500 80000 68030 418440",  # VSS!
     ):
         require(strap in pdn_config, f"missing full-height SRAM power strap: {strap}")
     for deprecated_stub in (
