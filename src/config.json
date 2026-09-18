@@ -73,6 +73,11 @@
     "program_memory.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
+  "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only",
+  "ROUTING_OBSTRUCTIONS": [
+    ["Metal3", 41.5, 80.2, 189.4, 81.0]
+  ],
+
   "// PDN_CFG": "Expose a Metal4-only grid and abut aligned stripes to the SRAM's Metal4 rails",
   "PDN_CFG": "dir::pdn_cfg.tcl",
   "PDN_VERTICAL_LAYER": "Metal4",

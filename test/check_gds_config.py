@@ -53,6 +53,18 @@ def main() -> None:
         placement.get("orientation") == "R0",
         "SRAM must use R0 to align its vertical Metal4 rails with the PDN",
     )
+    require(
+        placement.get("location") == [42, 81],
+        "SRAM location must stay at [42, 81] for the Metal3 keepout abutment",
+    )
+
+    expected_obs = ["Metal3", 41.5, 80.2, 189.4, 81.0]
+    routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
+    require(
+        expected_obs in routing_obs,
+        "missing Metal3 south-edge keepout for SRAM M3.f spacing "
+        f"(expected {expected_obs})",
+    )
 
     expected_views = {
         "gds": MACRO_DIR / f"{MACRO_NAME}.gds",

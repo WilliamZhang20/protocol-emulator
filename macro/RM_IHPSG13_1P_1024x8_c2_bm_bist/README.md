@@ -14,6 +14,23 @@ The checked-in GDS omits the non-mask `DigiBnd.drawing` (16/0) and
 precheck forbids these metadata layers. All fabrication geometry is unchanged.
 The filtering is reproducible with `tools/filter_gds_layers.py`.
 
+## Metal3 perimeter keepout
+
+SRAM contains wide Metal3 geometry subject to `M3.f` = 0.6 µm spacing. The LEF
+macro obstruction covers the macro body but not the external wide-metal
+spacing, so `src/config.json` keeps a permanent M3-only routing obstruction
+just south of the placed instance (`location` `[42, 81]`):
+
+```json
+"ROUTING_OBSTRUCTIONS": [
+  ["Metal3", 41.5, 80.2, 189.4, 81.0]
+]
+```
+
+That forces `A_DIN` (and similar) M3 routes off the violating track near
+y=80.640 instead of relying on the router to pick a lower track by chance.
+PDN, macro LEF, and placement stay unchanged.
+
 ## License
 
 These files are part of IHP-Open-PDK and are licensed under the Apache License 2.0.

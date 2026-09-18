@@ -34,7 +34,7 @@ make verify
 - cocotb smoke, UART, bit-transfer, orchestration, and fuzz tests through the
   top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
-  and required Metal4/TopMetal1 PDN;
+  required Metal4 PDN, and the SRAM Metal3 M3.f keepout;
 - formal SRAM checks plus exhaustive 300-step UART TX/RX safety checks and
   complete-frame cover traces.
 
