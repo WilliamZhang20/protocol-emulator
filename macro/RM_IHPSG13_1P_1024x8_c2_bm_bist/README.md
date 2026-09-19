@@ -35,18 +35,18 @@ starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 
 PDNGen builds the normal Metal4 stdcell stripe lattice (no per-macro grid in
 `src/pdn_cfg.tcl`). Immediately after `OpenROAD.GeneratePDN`, LibreLane runs
-`Project.ExtendPowerStripes` (`odb_sram_stripes.py`), which:
+`Project.ExtendPowerStripes` (`odb_sram_stripes.py`), which ports PRISM's
+`allocate_sram()` strategy:
 
-1. Reads the placed `program_memory.sram` Metal4 pin columns for `VDD!`,
-   `VDDARRAY!`, and `VSS!` from the LEF (die coordinates from placement
-   `[42, 81]`).
-2. Removes every tile `VPWR`/`VGND` Metal4 stripe that crosses the SRAM
-   footprint.
-3. Draws full-height core-spanning replacement stripes on those pin columns
-   (`VPWR` on `VDD!`/`VDDARRAY!`, `VGND` on `VSS!`) and recreates M1↔M4 rail
-   vias outside the macro.
-4. Exports matching full-height `VPWR`/`VGND` pin boxes so Tiny Tapeout's
-   power-pin check sees clean edge-to-edge ports.
+1. Discovers legal Metal4 supply corridors from the SRAM LEF OBS gaps (plus
+   the declared `VDD!` / `VDDARRAY!` / `VSS!` PIN boxes), assigns polarity
+   from those pins and the ~5.62 µm alternation, and clusters them into
+   array L / band / array R.
+2. Maps every tile stripe crossing the footprint onto the nearest free
+   corridor of the same polarity, then completes VPWR/VGND pairs inside
+   each region (and keeps the named PIN columns for LVS).
+3. Removes the crossing tile stripes and draws full-height replacements on
+   the chosen columns, with M1↔M4 rail vias outside the macro.
 
 `ERROR_ON_PDN_VIOLATIONS` is 0 because pdngen's connectivity check runs before
 the rewrite; LVS is the connectivity signoff. Magic illegal-overlap / Magic

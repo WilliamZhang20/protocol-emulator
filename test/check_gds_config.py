@@ -312,6 +312,11 @@ def main() -> None:
         "STRIPE",
         "on_sram_column",
         "tidy",
+        "allocate_sram",
+        "pair_gap",
+        "complete_pairs",
+        "obs_corridors",
+        "partnered",
     ):
         require(needle in odb, f"odb_sram_stripes.py missing {needle!r}")
 
@@ -352,7 +357,7 @@ def main() -> None:
     print("GDS SRAM/PDN configuration: PASS")
     print(
         "  topology: GeneratePDN + Project.ExtendPowerStripes "
-        "(SRAM-column full-height Metal4)"
+        "(allocate_sram paired OBS-corridor Metal4)"
     )
 
 
