@@ -265,6 +265,11 @@ def main() -> None:
     )
 
     meta = config.get("meta", {})
+    require(
+        meta.get("flow") == "Classic",
+        'meta.flow must be "Classic" when using substituting_steps '
+        "(LibreLane: substituting_steps set with no flow)",
+    )
     steps = meta.get("substituting_steps", {})
     require(
         steps.get("+OpenROAD.GeneratePDN") == "Project.ExtendPowerStripes",
