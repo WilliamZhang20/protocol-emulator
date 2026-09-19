@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Static preflight for the SRAM macro's LibreLane physical configuration.
 
-Encodes the reference-style PDN topology (aligned boundary feeders + outside
-jogs). Strap coordinates are declarative and tied to placement [42, 81].
+Encodes the prism-style PDN topology: normal tile GeneratePDN, then
+Project.ExtendPowerStripes rewrites crossing Metal4 stripes onto the
+SRAM's LEF power columns (full-height VPWR/VGND).
 """
 
 from __future__ import annotations
 
 import json
-import re
 import struct
 from pathlib import Path
 
@@ -19,38 +19,8 @@ MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 INSTANCE_NAME = "program_memory.sram"
 MACRO_DIR = ROOT / "macro" / MACRO_NAME
 PDN_CONFIG_PATH = ROOT / "src" / "pdn_cfg.tcl"
-
-SRAM_ORIGIN = (42.0, 81.0)
-SRAM_SIZE = (146.88, 336.46)
-SRAM_BBOX = (
-    SRAM_ORIGIN[0],
-    SRAM_ORIGIN[1],
-    SRAM_ORIGIN[0] + SRAM_SIZE[0],
-    SRAM_ORIGIN[1] + SRAM_SIZE[1],
-)
-PIN_VSS = (63.12, 81.0, 65.93, 417.46)
-PIN_VDD = (111.46, 81.0, 114.27, 417.46)
-PIN_VDDARRAY = (159.33, 126.465, 162.14, 417.46)
-
-VDD_FEEDERS = (
-    (111460, 80000, 114270, 81000),
-    (111460, 417460, 114270, 418440),
-)
-VSS_FEEDERS = (
-    (64350, 79520, 65930, 81000),
-    (64350, 417460, 65930, 418500),
-)
-VSS_JOGS = (
-    (65930, 79520, 68030, 80520),
-    (65930, 417940, 68030, 418500),
-)
-VDDARRAY_FEEDER = (159330, 417460, 162140, 418440)
-VDDARRAY_JOG = (162140, 417940, 163930, 418440)
-
-MIN_VSS_OVERLAP_UM = 1.0
-MIN_VDDARRAY_OVERLAP_UM = 1.0
-M4_SPACING_UM = 0.42
-VPWR_WEST_OF_VSS = (61.83, 3.56, 63.93, 80.52)
+PLUGIN_PATH = ROOT / "librelane_plugin_sram_pdn.py"
+ODB_SCRIPT_PATH = ROOT / "odb_sram_stripes.py"
 
 
 def gds_flattened_extents(path: Path) -> dict[int, list[float]]:
@@ -189,44 +159,6 @@ def require(condition: bool, message: str) -> None:
         raise SystemExit(f"GDS configuration error: {message}")
 
 
-def nm_box_to_um(
-    box: tuple[int, int, int, int],
-) -> tuple[float, float, float, float]:
-    return tuple(v * 0.001 for v in box)  # type: ignore[return-value]
-
-
-def x_overlap_um(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> float:
-    return max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
-
-
-def outside_or_on_boundary(
-    box_um: tuple[float, float, float, float],
-) -> bool:
-    _x0, y0, _x1, y1 = box_um
-    _mx0, my0, _mx1, my1 = SRAM_BBOX
-    return y1 <= my0 + 1e-9 or y0 >= my1 - 1e-9
-
-
-def parse_pdn_strap_boxes(pdn_text: str) -> list[tuple[int, int, int, int]]:
-    boxes: list[tuple[int, int, int, int]] = []
-    for match in re.finditer(
-        r"odb::dbSBox_create\s+\$\w+\s+\$metal4\s*\\\s*"
-        r"(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+STRIPE",
-        pdn_text,
-    ):
-        boxes.append(
-            tuple(int(g) for g in match.groups())  # type: ignore[arg-type]
-        )
-    return boxes
-
-
-def box_to_key(box: tuple[int, int, int, int]) -> str:
-    return f"{box[0]} {box[1]} {box[2]} {box[3]}"
-
-
 def main() -> None:
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     macro = config.get("MACROS", {}).get(MACRO_NAME)
@@ -239,11 +171,11 @@ def main() -> None:
     placement = macro["instances"][INSTANCE_NAME]
     require(
         placement.get("orientation") == "R0",
-        "SRAM must use R0 to align its vertical Metal4 rails with the PDN",
+        "SRAM must use R0 so Metal4 power columns keep die-frame X",
     )
     require(
         placement.get("location") == [42, 81],
-        "SRAM location must stay at [42, 81] for the pdn_cfg.tcl rail straps",
+        "SRAM location must stay at [42, 81]",
     )
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
@@ -320,28 +252,59 @@ def main() -> None:
         config.get("PDN_VERTICAL_LAYER") == "Metal4",
         "power pins must use Metal4",
     )
-    for halo in (
-        "FP_MACRO_HORIZONTAL_HALO",
-        "FP_MACRO_VERTICAL_HALO",
-        "PDN_HORIZONTAL_HALO",
-        "PDN_VERTICAL_HALO",
+    require(
+        config.get("ERROR_ON_PDN_VIOLATIONS") in (0, False),
+        "ERROR_ON_PDN_VIOLATIONS must be 0 (pdngen runs before "
+        "ExtendPowerStripes)",
+    )
+    # Keep Magic illegal-overlap checking strict until proven false-positive.
+    require(
+        config.get("ERROR_ON_ILLEGAL_OVERLAPS", 1) not in (0, False),
+        "do not waive ERROR_ON_ILLEGAL_OVERLAPS until KLayout DRC + LVS "
+        "are clean and the LEF-abstract OBS issue is confirmed",
+    )
+
+    meta = config.get("meta", {})
+    steps = meta.get("substituting_steps", {})
+    require(
+        steps.get("+OpenROAD.GeneratePDN") == "Project.ExtendPowerStripes",
+        "meta.substituting_steps must insert Project.ExtendPowerStripes "
+        "after OpenROAD.GeneratePDN",
+    )
+    require(
+        PLUGIN_PATH.is_file(),
+        f"missing LibreLane plugin: {PLUGIN_PATH}",
+    )
+    plugin = PLUGIN_PATH.read_text(encoding="utf-8")
+    require(
+        "class ExtendPowerStripes" in plugin
+        and 'id = "Project.ExtendPowerStripes"' in plugin,
+        "plugin must register Project.ExtendPowerStripes",
+    )
+    require(
+        "loads_repairing_escapes" in plugin or "BAD_ESCAPE" in plugin,
+        "plugin must monkeypatch netgen JSON loads for IHP \\VDD! pins",
+    )
+    require(
+        ODB_SCRIPT_PATH.is_file(),
+        f"missing ODB script: {ODB_SCRIPT_PATH}",
+    )
+    odb = ODB_SCRIPT_PATH.read_text(encoding="utf-8")
+    for needle in (
+        "VDD!",
+        "VDDARRAY!",
+        "VSS!",
+        "dbSBox_destroy",
+        "dbSBox_create",
+        "STRIPE",
+        "on_sram_column",
+        "tidy",
     ):
-        require(
-            config.get(halo) == 0,
-            f"{halo} must be zero for same-layer SRAM abutment",
-        )
-    require(
-        config.get("PDN_VPITCH") == 50.0,
-        "PDN pitch no longer aligns with SRAM rails",
-    )
-    require(
-        config.get("PDN_VOFFSET") == 10.0,
-        "PDN offset no longer aligns with SRAM rails",
-    )
+        require(needle in odb, f"odb_sram_stripes.py missing {needle!r}")
 
     pdn_config = PDN_CONFIG_PATH.read_text(encoding="utf-8")
     require(
-        "-pins Metal4" in pdn_config,
+        "PDN_VERTICAL_LAYER" in pdn_config or "-pins Metal4" in pdn_config,
         "PDN does not export Metal4-only power pins",
     )
     require(
@@ -349,95 +312,20 @@ def main() -> None:
         "custom PDN still routes on forbidden TopMetal1",
     )
     require(
-        "Metal3" not in pdn_config,
-        "custom PDN must not cross the SRAM's Metal3 obstruction",
+        "define_pdn_grid" in pdn_config
+        and "stdcell_grid" in pdn_config,
+        "pdn_cfg.tcl must define the stdcell PDN grid",
     )
-
-    expected_boxes = (
-        *VDD_FEEDERS,
-        *VSS_FEEDERS,
-        *VSS_JOGS,
-        VDDARRAY_FEEDER,
-        VDDARRAY_JOG,
-    )
-    for box in expected_boxes:
-        require(
-            box_to_key(box) in pdn_config,
-            f"missing SRAM-aligned PDN strap: {box_to_key(box)}",
-        )
-    parsed = parse_pdn_strap_boxes(pdn_config)
+    # No manual SRAM bridge / feeder / jog rectangles.
     require(
-        set(parsed) == set(expected_boxes),
-        "pdn_cfg.tcl SRAM straps must be exactly the feeder/jog set "
-        f"(got {sorted(parsed)})",
+        "dbSBox_create" not in pdn_config,
+        "pdn_cfg.tcl must not invent manual Metal4 bridge boxes; "
+        "ExtendPowerStripes owns SRAM column stripes",
     )
-
-    for feeder in VSS_FEEDERS:
-        ov = x_overlap_um(nm_box_to_um(feeder), PIN_VSS)
-        require(
-            ov >= MIN_VSS_OVERLAP_UM,
-            f"VSS feeder {feeder} pin overlap {ov:.3f} um "
-            f"< {MIN_VSS_OVERLAP_UM} um",
-        )
-    for feeder in VDD_FEEDERS:
-        ov = x_overlap_um(nm_box_to_um(feeder), PIN_VDD)
-        require(
-            abs(ov - (PIN_VDD[2] - PIN_VDD[0])) < 1e-6,
-            f"VDD feeder {feeder} must keep full pin width "
-            f"overlap, got {ov:.3f}",
-        )
-    ov = x_overlap_um(nm_box_to_um(VDDARRAY_FEEDER), PIN_VDDARRAY)
     require(
-        ov >= MIN_VDDARRAY_OVERLAP_UM,
-        f"VDDARRAY feeder pin overlap {ov:.3f} um "
-        f"< {MIN_VDDARRAY_OVERLAP_UM} um",
+        "tt_attach_sram_pin" not in pdn_config,
+        "dynamic ODB PDN helpers must not live in pdn_cfg.tcl",
     )
-
-    for box in expected_boxes:
-        require(
-            outside_or_on_boundary(nm_box_to_um(box)),
-            f"strap enters macro interior: {nm_box_to_um(box)}",
-        )
-    for jog in (*VSS_JOGS, VDDARRAY_JOG):
-        _x0, y0, _x1, y1 = nm_box_to_um(jog)
-        require(
-            y1 <= SRAM_BBOX[1] + 1e-9 or y0 >= SRAM_BBOX[3] - 1e-9,
-            f"horizontal jog not outside macro bbox: {nm_box_to_um(jog)}",
-        )
-    for feeder in VSS_FEEDERS:
-        gap = nm_box_to_um(feeder)[0] - VPWR_WEST_OF_VSS[2]
-        require(
-            gap >= M4_SPACING_UM - 1e-9,
-            f"VSS feeder only {gap:.3f} um from VPWR "
-            f"(need >={M4_SPACING_UM})",
-        )
-
-    for through_macro in (
-        "111460 80000 114270 418440",
-        "159330 80050 163930 418440",
-        "63940 80000 68030 418440",
-        "64500 80000 68030 418440",
-        "64350 79520 65930 418500",
-    ):
-        require(
-            through_macro not in pdn_config,
-            f"full-height Metal4 through SRAM OBS remains: {through_macro}",
-        )
-    for deprecated_tab in (
-        "111830 79520 113930 81000",
-        "159330 417460 163930 419580",
-        "64400 79520 68030 81000",
-        "161830 417460 163930 418440",
-        "160500 417460 163930 418440",
-        "65500 80000 68030 81000",
-        "65500 417460 68030 418440",
-        "64800 80000 68030 81000",
-        "64800 417460 68030 418440",
-    ):
-        require(
-            deprecated_tab not in pdn_config,
-            f"deprecated edge-tab strap remains: {deprecated_tab}",
-        )
     for deprecated in (
         "FP_PDN_MULTILAYER",
         "FP_PDN_VPITCH",
@@ -447,15 +335,11 @@ def main() -> None:
             deprecated not in config,
             f"deprecated setting remains: {deprecated}",
         )
-    # Guard against reintroducing the broken ODB-dynamic path.
-    require(
-        "tt_attach_sram_pin" not in pdn_config,
-        "dynamic ODB PDN helpers must stay disabled until CI-proven",
-    )
 
     print("GDS SRAM/PDN configuration: PASS")
     print(
-        "  topology: aligned VSS/VDD/VDDARRAY feeders + outside jogs"
+        "  topology: GeneratePDN + Project.ExtendPowerStripes "
+        "(SRAM-column full-height Metal4)"
     )
 
 

@@ -33,17 +33,25 @@ starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 
 ## Metal4 power straps
 
-PDNGen gaps vertical Metal4 stripes through the macro body. The custom
-`src/pdn_cfg.tcl` adds SRAM-aligned boundary feeders at fixed die coordinates
-derived from placement `[42, 81]` + LEF pin geometry + PDN pitch/offset:
+PDNGen builds the normal Metal4 stdcell stripe lattice (no per-macro grid in
+`src/pdn_cfg.tcl`). Immediately after `OpenROAD.GeneratePDN`, LibreLane runs
+`Project.ExtendPowerStripes` (`odb_sram_stripes.py`), which:
 
-- `VDD!` / `VSS!`: vertical feeders at the south and north macro edges
-- `VDDARRAY!`: north-edge feeder only (the pin never reaches the south)
+1. Reads the placed `program_memory.sram` Metal4 pin columns for `VDD!`,
+   `VDDARRAY!`, and `VSS!` from the LEF (die coordinates from placement
+   `[42, 81]`).
+2. Removes every tile `VPWR`/`VGND` Metal4 stripe that crosses the SRAM
+   footprint.
+3. Draws full-height core-spanning replacement stripes on those pin columns
+   (`VPWR` on `VDD!`/`VDDARRAY!`, `VGND` on `VSS!`) and recreates M1↔M4 rail
+   vias outside the macro.
+4. Exports matching full-height `VPWR`/`VGND` pin boxes so Tiny Tapeout's
+   power-pin check sees clean edge-to-edge ports.
 
-Short horizontal M4 jogs outside the macro bbox tie those feeders to the
-nearest `VPWR`/`VGND` stripe stubs. No top-level Metal4 is drawn through the
-macro interior / OBS. The `VSS!` feeder is inset from the west pin edge just
-enough to keep Metal4 spacing from the adjacent `VPWR` stub.
+`ERROR_ON_PDN_VIOLATIONS` is 0 because pdngen's connectivity check runs before
+the rewrite; LVS is the signoff. `ERROR_ON_ILLEGAL_OVERLAPS` stays strict
+until KLayout DRC + LVS prove any Magic LEF-abstract overlap is a false
+positive.
 
 ## License
 
