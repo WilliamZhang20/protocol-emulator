@@ -8,10 +8,13 @@ bytes through TX/RX FIFOs, and starts the engine. Timing, shifting, GPIO output
 and output-enable control, pin mapping, waits, and branches are protocol-neutral;
 UART behavior is supplied entirely by the SRAM image.
 
-The current milestone includes working UART TX and RX programs, a synchronous
-nibble-command host interface, configurable GPIO, FIFOs, timer, bit-transfer
-engine, event scoreboard with nonblocking START/WAIT_EVENT orchestration, and
-the complete SRAM-backed fetch/execute path.
+The current milestone (Phase A baseline) includes working UART TX and RX
+programs, a synchronous nibble-command host interface, 8×16 RF + ALU +
+branches, configurable GPIO, FIFOs, generic CRC, timer, event scoreboard with
+nonblocking START/WAIT_EVENT orchestration, and the complete SRAM-backed
+fetch/execute path. Bit-transfer and line-pair helpers remain for demos but
+are on the Phase B deprecation path toward a programmable action engine — see
+[architecture.md](docs/architecture.md).
 
 ## Local verification
 

@@ -1,14 +1,15 @@
 `default_nettype none
 
-// Sticky event scoreboard with counted tokens for XFER/TIMER completions so
-// back-to-back resource finishes are not lost when WAIT_EVENT has not run yet.
-// Edge/compare sources remain level-sticky. WAIT_EVENT ORs a mask against
+// Sticky event scoreboard with counted tokens for XFER/TIMER/REGION completions
+// so back-to-back resource finishes are not lost when WAIT_EVENT has not run
+// yet. Edge/compare sources remain level-sticky. WAIT_EVENT ORs a mask against
 // pending and consumes one token (or clears sticky) per matched bit.
 module event_engine (
     input  wire       clk,
     input  wire       rst_n,
     input  wire       xfer_done_pulse,
     input  wire       timer_done_pulse,
+    input  wire       region_done_pulse,
     input  wire       line_changed_pulse,
     input  wire       arm_edges,
     input  wire [7:0] rise_enable,
@@ -28,9 +29,11 @@ module event_engine (
   localparam BIT_FALL    = 3;
   localparam BIT_COMPARE = 4;
   localparam BIT_LINE    = 5;
+  localparam BIT_REGION  = 6;
 
   reg [2:0] xfer_tokens;
   reg [2:0] timer_tokens;
+  reg [2:0] region_tokens;
   reg       rise_sticky;
   reg       fall_sticky;
   reg       compare_sticky;
@@ -43,7 +46,8 @@ module event_engine (
   wire fall_hit = |(gpio_falling & fall_mask);
 
   wire [7:0] pending_reg = {
-      2'b0,
+      1'b0,
+      (region_tokens != 3'b0),
       line_sticky,
       compare_sticky,
       fall_sticky,
@@ -59,6 +63,7 @@ module event_engine (
     if (!rst_n) begin
       xfer_tokens <= 3'b0;
       timer_tokens <= 3'b0;
+      region_tokens <= 3'b0;
       rise_sticky <= 1'b0;
       fall_sticky <= 1'b0;
       compare_sticky <= 1'b0;
@@ -104,6 +109,15 @@ module event_engine (
         if (wait_clear && wait_mask[BIT_TIMER] && next_timer != 3'b0)
           next_timer = next_timer - 1'b1;
         timer_tokens <= next_timer;
+      end
+      begin : region_token_update
+        reg [2:0] next_region;
+        next_region = region_tokens;
+        if (region_done_pulse && next_region != 3'b111)
+          next_region = next_region + 1'b1;
+        if (wait_clear && wait_mask[BIT_REGION] && next_region != 3'b0)
+          next_region = next_region - 1'b1;
+        region_tokens <= next_region;
       end
 
       if (wait_clear) begin

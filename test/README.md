@@ -65,6 +65,9 @@ hang watchdog, RX scoreboarding, and directed CRC poly stress.
 `test_alu_branch.py` covers the 8x register file, ALU ops, the zero flag, and
 `JZ`/`JNZ`/`DJNZ` (GL-safe, pins + status only).
 
+`test_action.py` covers the Phase C/D action engine: program slots, `RUN_REGION`,
+GPIO drive via action words, and `WAIT_REGION` join (GL-safe).
+
 `test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
 `EVENT_STAMP` triples against edge events.
 

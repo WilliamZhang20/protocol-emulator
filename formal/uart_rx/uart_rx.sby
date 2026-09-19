@@ -17,6 +17,7 @@ read -formal -sv instruction_decoder.v
 read -formal -sv register_file.v
 read -formal -sv timer_counter.v
 read -formal -sv bit_transfer_engine.v
+read -formal -sv action_engine.v
 read -formal -sv event_engine.v
 read -formal -sv vm_sequencer.v
 read -formal -sv gpio_arbiter.v
@@ -32,6 +33,7 @@ prep -top uart_rx_properties
 ../../src/register_file.v
 ../../src/timer_counter.v
 ../../src/bit_transfer_engine.v
+../../src/action_engine.v
 ../../src/event_engine.v
 ../../src/vm_sequencer.v
 ../../src/gpio_arbiter.v

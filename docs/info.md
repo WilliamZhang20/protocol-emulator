@@ -10,11 +10,14 @@ You can also include images in this folder and reference them in the markdown. E
 ## How it works
 
 The project is an SRAM-programmed deterministic protocol engine. Programs use
-shared timing, shifting, FIFO, and configurable GPIO resources to implement
-protocols without dedicated UART, SPI, or I2C state machines.
+shared timing, shifting, FIFO, CRC, and configurable GPIO resources to
+implement protocols without dedicated UART, SPI, or I2C state machines. The
+architecture locks a reusable CPU baseline and migrates specialized helpers
+toward a programmable action engine (see architecture.md).
 
 See the [architecture and programming reference](architecture.md) for the host
-commands, bytecode, component structure, and reprogrammability model.
+commands, bytecode, component structure, roadmap (Phases A–D), and
+reprogrammability model.
 
 ## How to test
 

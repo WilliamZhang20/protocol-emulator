@@ -69,6 +69,18 @@ module protocol_emulator_core (
   wire crc_setup32;
   wire crc_push_b2;
   wire crc_push_b3;
+  wire action_wr_lo;
+  wire action_wr_hi;
+  wire action_start;
+  wire action_load_shift;
+  wire action_read_result;
+  wire wait_region_active;
+  wire wait_region_clear;
+  wire action_busy;
+  wire action_done;
+  wire [15:0] action_result;
+  wire action_crc_feed;
+  wire [7:0] action_crc_byte;
 
   wire bit_xfer_busy;
   wire bit_xfer_done;
@@ -89,6 +101,7 @@ module protocol_emulator_core (
       .tx_empty(tx_empty),
       .rx_full(rx_full),
       .bit_xfer_busy(bit_xfer_busy),
+      .action_busy(action_busy),
       .event_wait_matched(event_wait_matched),
       .timer_expired(timer_expired),
       .pin_wait_satisfied(pin_wait_satisfied),
@@ -144,7 +157,14 @@ module protocol_emulator_core (
       .sideset_val(sideset_val),
       .crc_setup32(crc_setup32),
       .crc_push_b2(crc_push_b2),
-      .crc_push_b3(crc_push_b3)
+      .crc_push_b3(crc_push_b3),
+      .action_wr_lo(action_wr_lo),
+      .action_wr_hi(action_wr_hi),
+      .action_start(action_start),
+      .action_load_shift(action_load_shift),
+      .action_read_result(action_read_result),
+      .wait_region_active(wait_region_active),
+      .wait_region_clear(wait_region_clear)
   );
 
   wire [15:0] timer_count;
@@ -193,6 +213,9 @@ module protocol_emulator_core (
   wire [15:0] alu_a = rf_rd_a;
   wire [15:0] alu_b = rf_rd_b;
   reg [15:0] alu_result;
+  // Phase 3: free-running global cycle counter, deterministic from enable.
+  // Declared before RF write mux so Icarus can bind the reference.
+  reg [31:0] cycle_ctr;
   always @(*) begin
     case (alu_op_sel)
       3'd0: alu_result = alu_b + alu_a;
@@ -207,14 +230,16 @@ module protocol_emulator_core (
   end
   wire [15:0] rf_wdata = djnz_strobe ? (rf_rd_b - 16'd1) :
       time_rd ? cycle_ctr[15:0] :
+      action_read_result ? action_result :
       alu_set ? alu_set_val :
       alu_mov ? alu_a :
       alu_op ? alu_result : 16'b0;
   wire [2:0] rf_waddr = djnz_strobe ? immediate[2:0] :
-      (time_rd || alu_mov) ? alu_mov_rd :
+      (time_rd || alu_mov || action_read_result) ? alu_mov_rd :
       alu_set ? alu_set_rd :
       alu_op ? alu_op_rd : 3'b0;
-  wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd;
+  wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd ||
+      action_read_result;
   register_file regs (
       .clk(clk),
       .rst_n(rst_n),
@@ -228,19 +253,18 @@ module protocol_emulator_core (
   );
   reg zero_flag;
   wire [15:0] alu_flag_val = time_rd ? cycle_ctr[15:0] :
+      action_read_result ? action_result :
       alu_set ? alu_set_val :
       alu_mov ? alu_a : alu_result;
   always @(posedge clk) begin
     if (!rst_n || !enable)
       zero_flag <= 1'b0;
-    else if (alu_set || alu_mov || alu_op || time_rd)
+    else if (alu_set || alu_mov || alu_op || time_rd || action_read_result)
       zero_flag <= (alu_flag_val == 16'b0);
   end
   assign alu_zero = zero_flag;
   assign djnz_nonzero = (rf_rd_b != 16'd1);
 
-  // Phase 3: free-running global cycle counter, deterministic from enable.
-  reg [31:0] cycle_ctr;
   always @(posedge clk) begin
     if (!rst_n || !enable)
       cycle_ctr <= 32'b0;
@@ -257,11 +281,51 @@ module protocol_emulator_core (
       .setup32(crc_setup32),
       .cfg(crc_cfg),
       .poly(crc_poly),
-      .feed(crc_feed),
-      .feed_byte(instruction_data),
+      .feed(crc_feed || action_crc_feed),
+      .feed_byte(action_crc_feed ? action_crc_byte : instruction_data),
       .finalize(crc_finalize),
       .crc(crc_value),
       .busy(crc_busy)
+  );
+
+  wire action_drive_enable;
+  wire [7:0] action_out_value;
+  wire [7:0] action_out_mask;
+  wire [7:0] action_oe_value;
+  wire [7:0] action_oe_mask;
+  wire [7:0] action_claim;
+  // E5 RUN_REGION id,count supplies count on the high operand byte.
+  wire is_run_region_count = opcode == 4'he && immediate == 4'h5;
+  // E4 start samples the slot from instruction_data on LOW_WAIT (operand_low
+  // has not updated yet). E5 start uses the already-latched operand_low.
+  wire [2:0] action_start_slot =
+      is_run_region_count ? operand_low[2:0] : instruction_data[2:0];
+
+  action_engine u_action (
+      .clk(clk),
+      .rst_n(rst_n),
+      .enable(enable),
+      .wr_lo(action_wr_lo),
+      .wr_hi(action_wr_hi),
+      .wr_slot(operand_low[2:0]),
+      .wr_data(instruction_data),
+      .load_shift(action_load_shift),
+      .shift_data(instruction_data),
+      .start(action_start),
+      .start_slot(action_start_slot),
+      .repeat_count(is_run_region_count ? instruction_data : 8'b0),
+      .pin_sampled(gpio_sampled),
+      .crc_feed(action_crc_feed),
+      .crc_byte(action_crc_byte),
+      .busy(action_busy),
+      .done_pulse(action_done),
+      .result(action_result),
+      .drive_enable(action_drive_enable),
+      .drive_out_value(action_out_value),
+      .drive_out_mask(action_out_mask),
+      .drive_oe_value(action_oe_value),
+      .drive_oe_mask(action_oe_mask),
+      .claim(action_claim)
   );
 
   wire [7:0] line_claim;
@@ -328,6 +392,12 @@ module protocol_emulator_core (
       .line_out_mask(line_out_mask),
       .line_oe_value(line_oe_value),
       .line_oe_mask(line_oe_mask),
+      .action_claim(action_claim),
+      .action_drive_enable(action_drive_enable),
+      .action_out_value(action_out_value),
+      .action_out_mask(action_out_mask),
+      .action_oe_value(action_oe_value),
+      .action_oe_mask(action_oe_mask),
       .selected_pin(immediate[2:0]),
       .gpio_bit_value(execute_shift_out ? shifter_serial_out : immediate[3]),
       .oe_bit_value(immediate[3]),
@@ -413,6 +483,7 @@ module protocol_emulator_core (
       .rst_n(rst_n),
       .xfer_done_pulse(bit_xfer_done),
       .timer_done_pulse(timer_done_pulse),
+      .region_done_pulse(action_done),
       .line_changed_pulse(line_changed),
       .arm_edges(arm_edges),
       .rise_enable(operand_low),
@@ -421,8 +492,8 @@ module protocol_emulator_core (
       .gpio_falling(gpio_falling),
       .compare_match(gpio_compare_match),
       .compare_arm(immediate[0]),
-      .wait_clear(wait_event_clear),
-      .wait_mask(operand_low),
+      .wait_clear(wait_event_clear || wait_region_clear),
+      .wait_mask(wait_region_active ? 8'h40 : operand_low),
       .pending(event_pending),
       .wait_matched(event_wait_matched)
   );

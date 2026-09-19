@@ -24,6 +24,28 @@ EV_PIN_RISE = 1 << 2
 EV_PIN_FALL = 1 << 3
 EV_COMPARE = 1 << 4
 EV_LINE_CHANGE = 1 << 5
+EV_REGION_DONE = 1 << 6
+
+# Action-engine CPU interface (Phase C/D)
+RUN_REGION = 0xE4
+RUN_REGION_N = 0xE5
+WAIT_REGION = 0xE6
+READ_RESULT = 0xE7
+ACTION_WR_LO = 0xE8
+ACTION_WR_HI = 0xE9
+ACTION_LOAD_SHIFT = 0xEA
+
+# Action word opcodes (bits [15:12])
+ACT_NOP = 0x0
+ACT_GPIO = 0x1
+ACT_SAMPLE = 0x2
+ACT_SHIFT = 0x3
+ACT_COUNT = 0x4
+ACT_CRC = 0x5
+ACT_NEXT = 0x6
+ACT_DELAY = 0x7
+ACT_REPEAT = 0x8
+ACT_DONE = 0x9
 
 
 def wait(cycles: int) -> list[int]:
@@ -653,3 +675,177 @@ def manchester_tx_program(byte: int, *, pin: int = 0, half: int = 8) -> list[int
             program += [gpio_write(pin, 1), *wait(half), gpio_write(pin, 0), *wait(half)]
     program += [gpio_write(pin, 1), HALT]
     return program
+
+
+def action_word(op: int, args: int = 0) -> int:
+    """Pack a 16-bit action word: `{op[3:0], args[11:0]}`."""
+    return ((op & 0xF) << 12) | (args & 0xFFF)
+
+
+def action_gpio(*, pin: int, out: int | None = None, oe: int | None = None) -> int:
+    """GPIO action: optional out and/or OE update on `pin`."""
+    args = pin & 7
+    if out is not None:
+        args |= (1 << 9) | ((out & 1) << 8)
+    if oe is not None:
+        args |= (1 << 11) | ((oe & 1) << 10)
+    return action_word(ACT_GPIO, args)
+
+
+def action_delay(cycles: int) -> int:
+    if not 0 <= cycles <= 0xFF:
+        raise ValueError("action delay must fit in 8 bits")
+    return action_word(ACT_DELAY, cycles)
+
+
+def action_done() -> int:
+    return action_word(ACT_DONE)
+
+
+def prog_action(slot: int, word: int) -> list[int]:
+    """Write one 16-bit action slot (lo then hi)."""
+    return [
+        ACTION_WR_LO,
+        slot & 7,
+        word & 0xFF,
+        ACTION_WR_HI,
+        slot & 7,
+        (word >> 8) & 0xFF,
+    ]
+
+
+def run_region(slot: int = 0) -> list[int]:
+    return [RUN_REGION, slot & 7]
+
+
+def run_region_n(slot: int, count: int) -> list[int]:
+    """Start region at `slot`; `count` is extra passes after the first."""
+    if not 0 <= count <= 0xFF:
+        raise ValueError("region repeat count must fit in 8 bits")
+    return [RUN_REGION_N, slot & 7, count & 0xFF]
+
+
+def wait_region() -> int:
+    return WAIT_REGION
+
+
+def read_result(rd: int) -> list[int]:
+    return [READ_RESULT, rd & 7]
+
+
+def action_load_shift(data: int) -> list[int]:
+    return [ACTION_LOAD_SHIFT, data & 0xFF]
+
+
+def action_gpio_pulse_program(*, pin: int = 0, delay: int = 4) -> list[int]:
+    """Program a 3-slot region: OE+drive high, delay, done — then run/join."""
+    region = [
+        *prog_action(0, action_gpio(pin=pin, out=1, oe=1)),
+        *prog_action(1, action_delay(delay)),
+        *prog_action(2, action_done()),
+    ]
+    return [
+        *region,
+        *run_region(0),
+        wait_region(),
+        HALT,
+    ]
+
+
+def action_shift(*, pin: int, shift_in: bool = False, msb_first: bool = False) -> int:
+    """SHIFT action: out (default) or in; LSB-first unless msb_first."""
+    args = (pin & 7) | ((1 if msb_first else 0) << 10) | ((1 if shift_in else 0) << 11)
+    return action_word(ACT_SHIFT, args)
+
+
+def action_count_load(value: int) -> int:
+    return action_word(ACT_COUNT, ((0b00) << 10) | (value & 0xFF))
+
+
+def action_count_djnz(target_slot: int) -> int:
+    return action_word(ACT_COUNT, ((0b11) << 10) | (target_slot & 7))
+
+
+def action_sample(pin: int) -> int:
+    return action_word(ACT_SAMPLE, pin & 7)
+
+
+def action_shift_out_byte_program(
+    data: int, *, pin: int = 0, half: int = 2
+) -> list[int]:
+    """Shift out 8 LSB-first bits via action region (SPI-shaped without bit-xfer)."""
+    # slots: 0 COUNT_LOAD 8, 1 SHIFT out, 2 DELAY, 3 DJNZ ->1, 4 DONE
+    region = [
+        *prog_action(0, action_count_load(8)),
+        *prog_action(1, action_shift(pin=pin, shift_in=False, msb_first=False)),
+        *prog_action(2, action_delay(half)),
+        *prog_action(3, action_count_djnz(1)),
+        *prog_action(4, action_done()),
+    ]
+    return [
+        *action_load_shift(data),
+        *region,
+        *run_region(0),
+        wait_region(),
+        HALT,
+    ]
+
+
+def action_overlap_program(*, action_pin: int = 0, cpu_pin: int = 1, delay: int = 40) -> list[int]:
+    """CPU toggles cpu_pin while action region holds action_pin high."""
+    region = [
+        *prog_action(0, action_gpio(pin=action_pin, out=1, oe=1)),
+        *prog_action(1, action_delay(delay)),
+        *prog_action(2, action_done()),
+    ]
+    return [
+        gpio_oe(cpu_pin, 1),
+        gpio_write(cpu_pin, 0),
+        *region,
+        *run_region(0),
+        gpio_write(cpu_pin, 1),  # overlaps with running region
+        wait_region(),
+        HALT,
+    ]
+
+
+def action_repeat_n_program(*, pin: int = 0, extras: int = 2, pulse: int = 3) -> list[int]:
+    """RUN_REGION_N: first pass + `extras` repeats; each pass pulses pin."""
+    region = [
+        *prog_action(0, action_gpio(pin=pin, out=1, oe=1)),
+        *prog_action(1, action_delay(pulse)),
+        *prog_action(2, action_gpio(pin=pin, out=0, oe=1)),
+        *prog_action(3, action_delay(pulse)),
+        *prog_action(4, action_done()),
+    ]
+    return [
+        *region,
+        *run_region_n(0, extras),
+        wait_region(),
+        HALT,
+    ]
+
+
+def action_read_result_program(*, sample_pin: int = 2, marker_pin: int = 3) -> list[int]:
+    """SAMPLE a high pin, READ_RESULT, JNZ marker — proves result → RF path."""
+    region = [
+        *prog_action(0, action_sample(sample_pin)),
+        *prog_action(1, action_done()),
+    ]
+    prefix = [
+        gpio_oe(marker_pin, 1),
+        gpio_write(marker_pin, 0),
+        *region,
+        *run_region(0),
+        wait_region(),
+        *read_result(0),
+    ]
+    # layout: prefix | JNZ(3) | HALT | gpio_write | HALT
+    marker_addr = len(prefix) + 3 + 1
+    return [
+        *prefix,
+        *jump_if_not_zero(marker_addr),
+        HALT,
+        gpio_write(marker_pin, 1),
+        HALT,
+    ]

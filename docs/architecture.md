@@ -4,15 +4,121 @@
 
 The chip is a deterministic, SRAM-programmed protocol engine. Protocol behavior
 is expressed as programs that manipulate shared timing, serial, FIFO, and GPIO
-resources. UART, SPI, and I2C are initial demonstrations of the architecture,
-not fixed-function peripherals in the hardware.
+resources. UART, SPI, and I2C are demonstrations of the programming model, not
+fixed-function peripherals in the hardware.
 
-The first implementation contains one engine. The structure intentionally keeps
-execution resources and external interfaces separable so later versions can add
-more engines, event routing, and autonomous data movement without replacing the
-programming model.
+**Direction:** stop growing specialized accelerators. Protocols should compose
+from a small CPU plus reusable datapaths steered by a programmable action
+engine. New ISA and RTL work must not add protocol-shaped instructions or
+FSMs (no further `LINE_*`, SPI/I²C/JTAG modes, USB helpers, etc.).
 
-## System structure
+The first implementation contains one engine. Execution resources and external
+interfaces stay separable so later versions can add engines, event routing, and
+autonomous data movement without replacing the programming model.
+
+## Roadmap (Phases A–D)
+
+| Phase | Goal |
+| --- | --- |
+| **A — baseline** | Lock the reusable core. Keep shipping demos on current RTL. |
+| **B — remove baggage** | Deprecate specialized blocks once the action engine covers them. |
+| **C — action engine** | Tiny programmable action slots replace protocol-shaped FSMs. |
+| **D — CPU ↔ action** | Region launch/join ISA so the CPU can overlap with actions. |
+
+### Phase A — baseline (locked)
+
+Keep and maintain:
+
+| Resource | Role |
+| --- | --- |
+| 8×16 register file | Working values, loop state, protocol temporaries |
+| Tiny ALU + zero flag | `SET`/`MOV`/`ADD`/`SUB`/`AND`/`OR`/`XOR`/`SHL`/`SHR` |
+| Conditional branches / `DJNZ` | `JZ`/`JNZ`/`DJNZ Rn` |
+| SRAM programs | Foundry 1024×8 program memory |
+| TX/RX FIFOs | Host payload decoupling |
+| Generic CRC datapath | Width/poly/reflect/xor; not protocol modes |
+| Configurable GPIO fabric | Value, OE, map, sample, edges/compare |
+| Global clock / cycle counter | `GET_TIME`, `WAIT_UNTIL`, blocking `WAIT16` |
+
+Host link, exact fetch timing (`+11` UART overhead), and sticky event-engine
+semantics remain frozen as previously characterized. Additive ISA is allowed
+only when it serves the action-engine path (Phases C–D) or fixes baseline
+gaps (e.g. pin-to-reg read). **Do not add protocol-specific instructions.**
+
+### Phase B — remove architectural baggage
+
+Eventually remove or deprecate once the action engine can implement the same
+patterns in programs:
+
+| Legacy block | Why it goes |
+| --- | --- |
+| `line_pair` + `LINE_*` (`A6`–`A9`) | Differential SE0/J/K/SE1 is GPIO + timing |
+| SPI-shaped bit-transfer FSM + `START_XFER` | Clocked shift is actions + counter/shifter |
+
+These blocks still work and stay tested until cutover. New programs should
+prefer GPIO/timer/CRC composition (and, once available, action regions) over
+`LINE_*` / `START_XFER`.
+
+Target conceptual silicon:
+
+```text
+BEFORE                              AFTER
+CPU                                 CPU
+ ├─ bit-transfer engine              ├─ programmable action engine
+ ├─ line-pair engine                 ├─ CRC datapath
+ ├─ timer                            └─ generic shift/counter datapath
+ └─ CRC
+```
+
+CRC, shifter, and counter become reusable functional units controlled by
+action words, not autonomous protocol-shaped FSMs. A simple timer may remain
+as a counter configuration or a thin CPU-visible wrapper; it must not grow
+into another protocol accelerator.
+
+### Phase C — action engine (start tiny)
+
+Initial shape (implemented):
+
+- **8 action slots** × 16-bit action words
+- **1 action per cycle** (deterministic; `DELAY` holds without advancing)
+
+Each action word is `{op[3:0], args[11:0]}`:
+
+| `op` | Name | Args |
+| --- | --- | --- |
+| `0` | `NOP` | — |
+| `1` | `GPIO` | `[11]=oe_we, [10]=oe_val, [9]=out_we, [8]=out_val, [2:0]=pin` |
+| `2` | `SAMPLE` | `[2:0]=pin` → `result` / `sample_bit` |
+| `3` | `SHIFT` | `[11]=in, [10]=msb_first, [2:0]=pin` |
+| `4` | `COUNT` | `[11:10]=load/inc/dec/djnz`, imm / target slot |
+| `5` | `CRC` | feed `shift[7:0]` into the shared CRC datapath |
+| `6` | `NEXT` | `[11:8]=cond`, `[2:0]=slot` |
+| `7` | `DELAY` | `[7:0]=cycles` |
+| `8` | `REPEAT` | `[2:0]=slot` (intra-region jump) |
+| `9` | `DONE` | clear claims; on final pass pulse `EV_REGION_DONE` (repeats first) |
+
+That set is enough to generate surprisingly complex protocols (SPI-like
+clocked bytes, open-drain ACK bits, differential line patterns, CRC-framed
+packets) without dedicating RTL to any one of them.
+
+### Phase D — CPU ↔ action interface (implemented)
+
+| Encoding | Operation |
+| --- | --- |
+| `E8 slot data` | `ACTION_WR_LO`: write action `[slot][7:0]` |
+| `E9 slot data` | `ACTION_WR_HI`: write action `[slot][15:8]` |
+| `EA data` | `ACTION_LOAD_SHIFT`: preload shift register low byte |
+| `E4 id` | `RUN_REGION id` (nonblocking; `id` = start slot) |
+| `E5 id count` | `RUN_REGION id, count` (`count` = extra passes after first) |
+| `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` (bit 6, token-counted) |
+| `E7 rd` | `READ_RESULT Rd`: copy action result into the register file |
+
+The CPU runs while a region executes (`RUN_REGION` is nonblocking). Join with
+`WAIT_REGION` or `WAIT_EVENT` mask bit 6. Region completion posts a
+token-counted event so overlapped timeouts and multi-resource joins stay
+expressible.
+
+## System structure (current silicon)
 
 ```text
                          Host control and data
@@ -40,6 +146,25 @@ programming model.
                   +--------+ +-----+ +--------+
                                           |
                                    Physical protocol pins
+```
+
+Target structure after Phases C–D (baggage removed):
+
+```text
+                    +---------------------+
+                    |   Protocol CPU      |
+                    | RF + ALU + branches |
+                    +----------+----------+
+                               |
+                    +----------v----------+
+                    |  Action engine      |
+                    |  8 slots, 1 act/cyc |
+                    +--+--------+-------+-+
+                       |        |       |
+                  +----v--+ +---v---+ +-v------+
+                  | shift | | CRC   | | GPIO   |
+                  |/count | | path  | | fabric |
+                  +-------+ +-------+ +--------+
 ```
 
 The architecture has two conceptual planes:
@@ -124,16 +249,22 @@ where applicable:
 | `A2 data` | `CRC_FEED`: absorb one byte |
 | `A3` | `CRC_FINALIZE`: apply refout/xorout to residue |
 | `A4` / `A5` | Push CRC low/high byte to RX FIFO |
-| `A6 pins` | `LINE_CFG`: `{jk_swap, pin_b[2:0], pin_a[2:0]}` |
-| `A7 state` | `LINE_DRIVE`: `state` in `{SE0,J,K,SE1}` |
-| `A8` | `LINE_RELEASE`: drop OE/claim on the pair |
-| `A9` | `LINE_SAMPLE`: push sampled state code to RX |
+| `A6 pins` | `LINE_CFG`: `{jk_swap, pin_b[2:0], pin_a[2:0]}` *(legacy; Phase B)* |
+| `A7 state` | `LINE_DRIVE`: `state` in `{SE0,J,K,SE1}` *(legacy; Phase B)* |
+| `A8` | `LINE_RELEASE`: drop OE/claim on the pair *(legacy; Phase B)* |
+| `A9` | `LINE_SAMPLE`: push sampled state code to RX *(legacy; Phase B)* |
 | `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
-| `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer (nonblocking) |
+| `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer *(legacy; Phase B)* |
 | `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
 | `E0 ll hh` | `START_TIMER`: nonblocking timer; sets `EV_TIMER_DONE` on expiry |
 | `E1` | `CRC32_SETUP`: one-pulse IEEE-802.3 CRC-32 init (width 32, poly `0x04C11DB7`) |
 | `E2` / `E3` | Push CRC residue byte 2 / byte 3 (`A4`/`A5` push bytes 0/1) |
+| `E4 id` | `RUN_REGION`: start action region at slot `id` (nonblocking) |
+| `E5 id count` | `RUN_REGION` with `count` extra repeats after the first pass |
+| `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` |
+| `E7 rd` | `READ_RESULT`: action result → `Rd` |
+| `E8 slot data` / `E9 slot data` | Program action slot lo/hi byte |
+| `EA data` | `ACTION_LOAD_SHIFT`: preload action shift register |
 | `F0 rise fall` | `ARM_EDGE`: arm rise/fall masks (`imm0` also arms compare) |
 
 ### Orchestration model
@@ -150,18 +281,30 @@ WAIT_EVENT TIMER_DONE
 RX_PUSH
 ```
 
+After Phase D, the preferred pattern is the same shape with regions:
+
+```text
+TX_LOAD
+RUN_REGION spi_byte
+START_TIMER          ; optional overlapped timeout
+; CPU may continue useful work here
+WAIT_REGION          ; or WAIT_EVENT REGION_DONE
+READ_RESULT
+```
+
 `WAIT_EVENT` ORs its mask against a sticky pending vector. `XFER_DONE` and
 `TIMER_DONE` are **token-counted** (so back-to-back completions are not lost);
 edge/compare sources are level-sticky. Typical bits:
 
 | Bit | Name | Source |
 | --- | --- | --- |
-| 0 | `EV_XFER_DONE` | bit-transfer engine done pulse |
+| 0 | `EV_XFER_DONE` | bit-transfer engine done pulse *(legacy join)* |
 | 1 | `EV_TIMER_DONE` | async timer expiry |
 | 2 | `EV_PIN_RISE` | armed rising edges |
 | 3 | `EV_PIN_FALL` | armed falling edges |
 | 4 | `EV_COMPARE` | armed GPIO compare match |
-| 5 | `EV_LINE_CHANGE` | `line_pair` sampled state changed |
+| 5 | `EV_LINE_CHANGE` | `line_pair` sampled state changed *(legacy)* |
+| 6 | `EV_REGION_DONE` | action-engine region done pulse |
 
 `WAIT_EVENT(XFER_DONE \| TIMER_DONE)` wakes on the first of the two (timeout-or-
 complete). To require both, issue two waits with single-bit masks (events are
@@ -171,7 +314,7 @@ sticky).
 GPIO writes to claimed pins are ignored so two drivers cannot fight. Blocking
 `WAIT16` remains for UART-style bit bang.
 
-`Cppp cfg pins half` operand layout is unchanged from the bit-transfer engine:
+`Cppp cfg pins half` operand layout (legacy bit-transfer engine):
 
 | Byte | Fields |
 | --- | --- |
@@ -199,25 +342,23 @@ A deeper prefetch queue is intentionally deferred: fetching ahead during
 baud rates, so it is scheduled after the streaming-host cutover when all
 programs are re-timed together.
 
-Baseline lock (Phase 0, pre-deterministic-core migration): this `+11`
-overhead, the single-port 1024x8 SRAM behind `program_memory.sram`, the
-nibble host commands `1`-`B` (later extended by level/peek reads `C`/`D`),
-and the sticky `event_engine` semantics are
-frozen. New ISA work is purely additive (previously-unused `0xA` sub-ops,
-`0x8n` branch immediates, `0xE1`-`0xE3`, side-set `0x02`-`0x0F`)
-until the explicit cutover phase. `make verify`
-must stay green after every phase.
+Baseline lock (Phase A): this `+11` overhead, the single-port 1024x8 SRAM
+behind `program_memory.sram`, the nibble host commands `1`-`B` (extended by
+level/peek reads `C`/`D`), the sticky `event_engine` semantics, and the keep
+list above are frozen. New ISA work serves Phases C–D or baseline gaps only —
+not new protocol-specific accelerators. `make verify` must stay green after
+every phase.
 
 ### Register and state storage
 
 An 8x16 register file holds working values, flags, loop state, addresses, and
 temporary protocol data, driven by a tiny ALU (`SET`/`MOV`/`ADD`/`SUB`/`AND`/
 `OR`/`XOR`/`SHL`/`SHR`) with a zero flag feeding `JZ`/`JNZ`/`DJNZ` branches.
-Dedicated counters and shift storage handle operations
-that would otherwise require long software sequences while remaining reusable
-across protocols.
+Dedicated counters and shift storage handle operations that would otherwise
+require long software sequences while remaining reusable across protocols.
+Phase C folds those dedicated paths under action-word control.
 
-### Bit-transfer engine
+### Bit-transfer engine *(legacy; Phase B)*
 
 Autonomous FSM for repetitive clocked transfers:
 
@@ -225,22 +366,26 @@ Autonomous FSM for repetitive clocked transfers:
 
 Launched with `START_XFER` (nonblocking). Completion is observed through
 `EV_XFER_DONE` and `WAIT_EVENT`. The same resource covers SPI and I²C data
-bytes; framing stays in bytecode. JTAG Shift-DR is the same engine with
-`TMS` held low (`jtag_shift_dr_program`) — no RTL change per protocol. Clock
-idle/phase, open-drain, and stretch-wait bits are generic shift primitives,
-not SPI/I²C modes; slow protocols can alternatively bit-bang the same
-transfers with `GPIO_WRITE` + `WAIT_UNTIL` now that the CPU has real branches.
+bytes; framing stays in bytecode. Clock idle/phase, open-drain, and
+stretch-wait bits are generic shift primitives, not SPI/I²C modes.
+
+**Replacement:** action-engine sequences of GPIO / shift / counter / sample /
+done. Until that lands, existing programs and tests may keep using
+`START_XFER`. New demos should not depend on extending this FSM.
 
 ### Event engine
 
 Sticky pending bits from resources and pin activity. `WAIT_EVENT` is the join
 primitive that turns the VM into an orchestrator. Edge and compare sources are
-armed with `ARM_EDGE`.
+armed with `ARM_EDGE`. Phase D adds region-done as a first-class join source
+(or reuses a dedicated event bit).
 
 ### Timers and counters
 
 `WAIT16` remains a blocking delay. `START_TIMER` runs the same counter
-autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts.
+autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts. Longer
+term, count/delay primitives in the action engine should absorb most
+protocol-rate timing that today uses the SPI-shaped transfer FSM.
 
 ### Configurable GPIO fabric
 
@@ -261,6 +406,24 @@ while the host services data at a less predictable rate.
 Programs may wait or branch on FIFO state. The engine must define explicit
 behavior for empty and full conditions so host latency cannot silently corrupt
 a transfer.
+
+### CRC engine
+
+Protocol-neutral residue datapath (`crc_engine`): programmable width 1..16,
+poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
+are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
+`CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
+bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
+Phase C exposes CRC update as an action primitive rather than only CPU opcodes.
+
+### Line-pair helper *(legacy; Phase B)*
+
+`line_pair` drives or samples a two-pin state `{SE0, J, K, SE1}` with optional
+J/K polarity swap. Intended for differential-style soft buses (e.g. low-speed
+USB bitbang). Framing, NRZI, and PIDs stay in SRAM programs.
+
+**Replacement:** GPIO value/OE actions (or plain `GPIO_WRITE` + waits today).
+See `line_state_smoke_program` for the CPU-only path already in tree.
 
 ## Reprogrammability model
 
@@ -293,16 +456,26 @@ No module is designated as a UART controller, SPI controller, or I2C controller.
 Loopback or paired endpoints will verify that each demonstration uses the same
 engine and execution resources.
 
+## Soft low-speed USB (non-compliant demo)
+
+With GPIO/timers alone, or with legacy `line_pair` + `crc_engine`, bytecode can
+emit LS line patterns at ~1.5 Mb/s on two `uio` pins. Board notes: wire D+/D−
+to `uio[0]`/`uio[1]`, 1.5 kΩ pull-up on D− for LS device idle J, series
+resistors as needed. Not USB-IF compliant — analyzer / cocotb host only.
+Prefer GPIO-composed programs for new work; retire `LINE_*` with Phase B.
+
 ## Growth path
 
-### Cutover notes (Phase 9-10): deprecate, don't delete
+### Cutover notes: deprecate, don't delete (until Phase B complete)
 
 The following older blocks still work and stay covered by tests; new
 programs should avoid them:
 
-- `line_pair` + `LINE_*` (`A6`-`A9`): kept for the existing USB-LS images.
+- `line_pair` + `LINE_*` (`A6`-`A9`): kept for existing USB-LS images.
   New differential buses should drive pin pairs with `GPIO_WRITE` + `WAIT`
-  (see `line_state_smoke_program`) — the CPU is now fast enough.
+  (see `line_state_smoke_program`) — and later with action regions.
+- Bit-transfer FSM + `START_XFER` (`Cppp…`): kept for SPI/I²C demos until
+  action-engine shift/counter sequences replace them.
 - Per-instruction `MAP` (`Bppp qq`): configure logical-to-physical bindings
   once at load time; rebinding mid-program stays legal but is discouraged.
 - Nibble host commands `1`-`B` are extended (not replaced) by level/peek
@@ -310,43 +483,23 @@ programs should avoid them:
   mode needs a pinout change and stays future work.
 - A deeper prefetch queue stays deferred (see exact-timing note above).
 
-The component boundaries allow later versions to add capabilities incrementally:
+### What to build next
 
-- multiple engines sharing program or data memories;
-- an event router for pin edges, timers, and inter-engine signals;
-- DMA-style movement between host queues, memories, and engines;
-- richer wait and wake-up behavior;
-- specialized but protocol-neutral datapath operations; and
-- debug visibility, tracing, and execution breakpoints.
+1. **Action engine MVP (Phase C):** 8 slots, 1 action/cycle, primitives listed
+   above; CRC and shift/counter as shared units under action control.
+2. **CPU interface (Phase D):** `RUN_REGION` / `WAIT_REGION` / `READ_RESULT`
+   with overlapped CPU execution where practical.
+3. **Prove replacements:** reimplement SPI byte, I²C ACK bit, and LS line
+   patterns as action regions; then deprecate `START_XFER` / `LINE_*`.
+4. Only then consider multi-engine, DMA, or richer event routing.
 
-New hardware operations should accelerate patterns useful to several protocols.
-Protocol-specific state machines remain outside the architectural direction.
+### Explicit non-goals
 
-Near-term orchestration growth already sketched in the ISA:
+- New protocol-specific opcodes or FSMs (USB, 1-Wire, CAN, …).
+- Growing the bit-transfer or line-pair engines with more modes.
+- Specialized accelerators that duplicate what action words + CRC/shift/count
+  can already express.
 
-- richer resource scoreboard (multi-XFER IDs, ready/busy);
-- second timer / capture;
-- compact register-file ALU for lengths and protocol state (done: 8x16 +
-  ALU + `JZ`/`JNZ`/`DJNZ`; still open: immediate-form ALU, pin-to-reg read);
-- stronger GPIO arbitration across concurrent owners.
-
-### CRC engine
-
-Protocol-neutral residue datapath (`crc_engine`): programmable width 1..16,
-poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
-are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
-`CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
-bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
-
-### Line-pair helper
-
-`line_pair` drives or samples a two-pin state `{SE0, J, K, SE1}` with optional
-J/K polarity swap. Intended for differential-style soft buses (e.g. low-speed
-USB bitbang). Framing, NRZI, and PIDs stay in SRAM programs.
-
-### Soft low-speed USB (non-compliant demo)
-
-With GPIO/timers alone, or with `line_pair` + `crc_engine`, bytecode can emit
-LS line patterns at ~1.5 Mb/s on two `uio` pins. Board notes: wire D+/D− to
-`uio[0]`/`uio[1]`, 1.5 kΩ pull-up on D− for LS device idle J, series resistors
-as needed. Not USB-IF compliant — analyzer / cocotb host only.
+Component boundaries still allow later versions to add multiple engines, DMA,
+and debug/trace — but those build on the simplified CPU + action + datapath
+shape, not on a pile of protocol helpers.

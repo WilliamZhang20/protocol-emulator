@@ -2,6 +2,7 @@
 
 // Instruction fetch/execute FSM plus decoded resource strobes.
 // Opcode 0xA immediate sub-ops: shift-clear, CRC, and line_pair controls.
+// Opcode 0xE immediates 0x4-0xA: action-engine program/run/join/result.
 module vm_sequencer (
     input  wire       clk,
     input  wire       rst_n,
@@ -10,6 +11,7 @@ module vm_sequencer (
     input  wire       tx_empty,
     input  wire       rx_full,
     input  wire       bit_xfer_busy,
+    input  wire       action_busy,
     input  wire       event_wait_matched,
     input  wire       timer_expired,
     input  wire       pin_wait_satisfied,
@@ -65,7 +67,14 @@ module vm_sequencer (
     output wire       sideset_val,
     output wire       crc_setup32,
     output wire       crc_push_b2,
-    output wire       crc_push_b3
+    output wire       crc_push_b3,
+    output wire       action_wr_lo,
+    output wire       action_wr_hi,
+    output wire       action_start,
+    output wire       action_load_shift,
+    output wire       action_read_result,
+    output wire       wait_region_active,
+    output wire       wait_region_clear
 );
   localparam STATE_IDLE = 4'd0;
   localparam STATE_FETCH_REQUEST = 4'd1;
@@ -81,6 +90,7 @@ module vm_sequencer (
   localparam STATE_OPERAND_EXT_WAIT = 4'd11;
   localparam STATE_EVENT_WAIT = 4'd12;
   localparam STATE_TIME_WAIT = 4'd13;
+  localparam STATE_REGION_WAIT = 4'd14;
 
   wire decoder_branch;
   wire decoder_delay;
@@ -122,6 +132,14 @@ module vm_sequencer (
   wire is_crc32_setup = opcode == 4'he && immediate == 4'h1;
   wire is_crc32_b2 = opcode == 4'he && immediate == 4'h2;
   wire is_crc32_b3 = opcode == 4'he && immediate == 4'h3;
+  // Phase C/D: action engine — program slots, run/join, read result.
+  wire is_run_region = opcode == 4'he && immediate == 4'h4;
+  wire is_run_region_n = opcode == 4'he && immediate == 4'h5;
+  wire is_wait_region = opcode == 4'he && immediate == 4'h6;
+  wire is_read_result = opcode == 4'he && immediate == 4'h7;
+  wire is_action_wr_lo = opcode == 4'he && immediate == 4'h8;
+  wire is_action_wr_hi = opcode == 4'he && immediate == 4'h9;
+  wire is_action_load_sh = opcode == 4'he && immediate == 4'ha;
   // Phase 6: side-set prefix. Opcode 0x0 immediates 0x2-0xF were NOPs;
   // they now latch {pin,val} applied atomically at the next EXECUTE.
   // 0x00 stays NOP, 0x01 stays HALT. Old programs never emit 0x02-0x0F.
@@ -196,6 +214,24 @@ module vm_sequencer (
   assign crc_push_b2 = state == STATE_EXECUTE && is_crc32_b2 && !rx_full;
   assign crc_push_b3 = state == STATE_EXECUTE && is_crc32_b3 && !rx_full;
 
+  // Action program: E8/E9 slot,data — write fires when data byte arrives.
+  assign action_wr_lo =
+      state == STATE_OPERAND_HIGH_WAIT && is_action_wr_lo;
+  assign action_wr_hi =
+      state == STATE_OPERAND_HIGH_WAIT && is_action_wr_hi;
+  // RUN_REGION id: start on low operand; RUN_REGION id,count on high.
+  assign action_start =
+      ((state == STATE_OPERAND_LOW_WAIT && is_run_region) ||
+       (state == STATE_OPERAND_HIGH_WAIT && is_run_region_n)) &&
+      !action_busy;
+  assign action_load_shift =
+      state == STATE_OPERAND_LOW_WAIT && is_action_load_sh;
+  assign action_read_result =
+      state == STATE_OPERAND_LOW_WAIT && is_read_result;
+  assign wait_region_active = state == STATE_REGION_WAIT;
+  assign wait_region_clear =
+      state == STATE_REGION_WAIT && event_wait_matched;
+
   assign tx_pop = execute_tx_load;
   assign rx_push =
       (state == STATE_EXECUTE && opcode == 4'h7 && !rx_full) ||
@@ -269,6 +305,13 @@ module vm_sequencer (
                   program_counter <= program_counter + 1'b1;
                   state <= STATE_FETCH_REQUEST;
                 end
+              end else if (is_wait_region) begin
+                state <= STATE_REGION_WAIT;
+              end else if (is_run_region || is_run_region_n ||
+                           is_read_result || is_action_wr_lo ||
+                           is_action_wr_hi || is_action_load_sh) begin
+                program_counter <= program_counter + 1'b1;
+                state <= STATE_OPERAND_LOW_REQUEST;
               end else begin
                 program_counter <= program_counter + 1'b1;
                 state <= STATE_FETCH_REQUEST;
@@ -330,22 +373,40 @@ module vm_sequencer (
         STATE_OPERAND_LOW_REQUEST: state <= STATE_OPERAND_LOW_WAIT;
         STATE_OPERAND_LOW_WAIT: begin
           operand_low <= instruction_data;
-          program_counter <= program_counter + 1'b1;
           if (opcode == 4'hb || is_crc_feed || is_line_cfg || is_line_drv ||
-              is_alu_mov || is_get_time)
+              is_alu_mov || is_get_time || is_read_result ||
+              is_action_load_sh) begin
+            program_counter <= program_counter + 1'b1;
             state <= STATE_FETCH_REQUEST;
-          else if (is_wait_until)
+          end else if (is_run_region) begin
+            if (!action_busy) begin
+              program_counter <= program_counter + 1'b1;
+              state <= STATE_FETCH_REQUEST;
+            end
+          end else if (is_wait_until) begin
+            program_counter <= program_counter + 1'b1;
             state <= STATE_TIME_WAIT;
-          else if (opcode == 4'hd)
+          end else if (opcode == 4'hd) begin
+            program_counter <= program_counter + 1'b1;
             state <= STATE_EVENT_WAIT;
-          else
+          end else begin
+            program_counter <= program_counter + 1'b1;
             state <= STATE_OPERAND_HIGH_REQUEST;
+          end
         end
         STATE_OPERAND_HIGH_REQUEST: state <= STATE_OPERAND_HIGH_WAIT;
         STATE_OPERAND_HIGH_WAIT: begin
           if (opcode == 4'h1) begin
             program_counter <= program_counter + 1'b1;
             state <= STATE_TIMER_WAIT;
+          end else if (is_action_wr_lo || is_action_wr_hi) begin
+            program_counter <= program_counter + 1'b1;
+            state <= STATE_FETCH_REQUEST;
+          end else if (is_run_region_n) begin
+            if (!action_busy) begin
+              program_counter <= program_counter + 1'b1;
+              state <= STATE_FETCH_REQUEST;
+            end
           end else if (opcode == 4'he || opcode == 4'hf) begin
             program_counter <= program_counter + 1'b1;
             state <= STATE_FETCH_REQUEST;
@@ -391,6 +452,12 @@ module vm_sequencer (
         STATE_EVENT_WAIT: begin
           if (event_wait_matched)
             state <= STATE_FETCH_REQUEST;
+        end
+        STATE_REGION_WAIT: begin
+          if (event_wait_matched) begin
+            program_counter <= program_counter + 1'b1;
+            state <= STATE_FETCH_REQUEST;
+          end
         end
         STATE_TIME_WAIT: begin
           if (time_satisfied)
