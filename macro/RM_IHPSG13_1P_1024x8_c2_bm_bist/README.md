@@ -34,16 +34,16 @@ starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 ## Metal4 power straps
 
 PDNGen gaps vertical Metal4 stripes through the macro body. The custom
-`src/pdn_cfg.tcl` then derives boundary feeders at run time from:
+`src/pdn_cfg.tcl` adds SRAM-aligned boundary feeders at fixed die coordinates
+derived from placement `[42, 81]` + LEF pin geometry + PDN pitch/offset:
 
-- the placed SRAM instance bbox and Metal4 pin geometry in the ODB
-- the nearest same-net Metal4 stripe stubs already created by PDNGen
-- Metal4 spacing keepouts against opposite-net stripes
+- `VDD!` / `VSS!`: vertical feeders at the south and north macro edges
+- `VDDARRAY!`: north-edge feeder only (the pin never reaches the south)
 
-`VDD!` / `VSS!` attach at south and north edges; `VDDARRAY!` only at north.
-Short horizontal jogs stay outside the macro. No absolute strap coordinates
-are hardcoded, so pitch/offset/placement changes can reshuffle geometry
-without editing `pdn_cfg.tcl`.
+Short horizontal M4 jogs outside the macro bbox tie those feeders to the
+nearest `VPWR`/`VGND` stripe stubs. No top-level Metal4 is drawn through the
+macro interior / OBS. The `VSS!` feeder is inset from the west pin edge just
+enough to keep Metal4 spacing from the adjacent `VPWR` stub.
 
 ## License
 
