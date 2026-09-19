@@ -81,6 +81,7 @@ module protocol_emulator_core (
   wire [15:0] action_result;
   wire action_crc_feed;
   wire [7:0] action_crc_byte;
+  wire crc_busy;
 
   wire bit_xfer_busy;
   wire bit_xfer_done;
@@ -102,6 +103,7 @@ module protocol_emulator_core (
       .rx_full(rx_full),
       .bit_xfer_busy(bit_xfer_busy),
       .action_busy(action_busy),
+      .crc_busy(crc_busy),
       .event_wait_matched(event_wait_matched),
       .timer_expired(timer_expired),
       .pin_wait_satisfied(pin_wait_satisfied),
@@ -185,7 +187,6 @@ module protocol_emulator_core (
   );
 
   wire [31:0] crc_value;
-  wire crc_busy;
   wire [7:0] crc_cfg = operand_low;
   wire [15:0] crc_poly = {
       (operand_ext_valid ? operand_ext : instruction_data),
@@ -315,6 +316,7 @@ module protocol_emulator_core (
       .start_slot(action_start_slot),
       .repeat_count(is_run_region_count ? instruction_data : 8'b0),
       .pin_sampled(gpio_sampled),
+      .crc_busy(crc_busy),
       .crc_feed(action_crc_feed),
       .crc_byte(action_crc_byte),
       .busy(action_busy),

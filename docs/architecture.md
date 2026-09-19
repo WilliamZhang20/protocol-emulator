@@ -414,7 +414,11 @@ poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
 are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
 `CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
 bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
-Phase C exposes CRC update as an action primitive rather than only CPU opcodes.
+
+**Pipelined for timing:** each `CRC_FEED` / reflect-out `CRC_FINALIZE` runs
+bit-serially (one CRC bit per clock) with `busy` asserted. The VM and action
+engine stall on `busy` so the old 8-bit combinational unroll cannot miss the
+20 ns setup budget. Phase C still exposes CRC update as an action primitive.
 
 ### Line-pair helper *(legacy; Phase B)*
 

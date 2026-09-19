@@ -12,6 +12,7 @@ module vm_sequencer (
     input  wire       rx_full,
     input  wire       bit_xfer_busy,
     input  wire       action_busy,
+    input  wire       crc_busy,
     input  wire       event_wait_matched,
     input  wire       timer_expired,
     input  wire       pin_wait_satisfied,
@@ -149,6 +150,9 @@ module vm_sequencer (
   reg [2:0] sideset_pin_r;
   reg sideset_val_r;
   reg sideset_pending;
+  // One-shot issue flag so bit-serial CRC feed/finalize are pulsed once,
+  // then the sequencer waits for crc_busy to fall.
+  reg crc_issued;
   assign sideset_apply = state == STATE_EXECUTE && sideset_pending;
   assign sideset_pin = sideset_pin_r;
   assign sideset_val = sideset_val_r;
@@ -193,8 +197,12 @@ module vm_sequencer (
   // CRC_SETUP fires on first EXT_WAIT cycle (poly_hi on instruction_data).
   assign crc_setup =
       state == STATE_OPERAND_EXT_WAIT && is_crc_setup && !operand_ext_valid;
-  assign crc_feed = state == STATE_OPERAND_LOW_WAIT && is_crc_feed;
-  assign crc_finalize = state == STATE_EXECUTE && is_crc_fin;
+  // Bit-serial CRC: pulse feed/finalize only while the engine is idle, then
+  // hold the sequencer until busy clears.
+  assign crc_feed =
+      state == STATE_OPERAND_LOW_WAIT && is_crc_feed && !crc_issued && !crc_busy;
+  assign crc_finalize =
+      state == STATE_EXECUTE && is_crc_fin && !crc_issued && !crc_busy;
   assign crc_push_lo = state == STATE_EXECUTE && is_crc_lo && !rx_full;
   assign crc_push_hi = state == STATE_EXECUTE && is_crc_hi && !rx_full;
 
@@ -251,11 +259,13 @@ module vm_sequencer (
       sideset_pin_r <= 3'b0;
       sideset_val_r <= 1'b0;
       sideset_pending <= 1'b0;
+      crc_issued <= 1'b0;
     end else if (!enable) begin
       state <= STATE_IDLE;
       program_counter <= 10'b0;
       halted <= 1'b0;
       sideset_pending <= 1'b0;
+      crc_issued <= 1'b0;
     end else begin
       case (state)
         STATE_IDLE: begin
@@ -318,7 +328,15 @@ module vm_sequencer (
               end
             end
             4'ha: begin
-              if (immediate == 4'h0 || is_crc_fin || is_line_rel) begin
+              if (is_crc_fin) begin
+                if (!crc_issued && !crc_busy)
+                  crc_issued <= 1'b1;
+                else if (crc_issued && !crc_busy) begin
+                  crc_issued <= 1'b0;
+                  program_counter <= program_counter + 1'b1;
+                  state <= STATE_FETCH_REQUEST;
+                end
+              end else if (immediate == 4'h0 || is_line_rel) begin
                 program_counter <= program_counter + 1'b1;
                 state <= STATE_FETCH_REQUEST;
               end else if (is_crc_lo || is_crc_hi || is_line_sam) begin
@@ -373,7 +391,15 @@ module vm_sequencer (
         STATE_OPERAND_LOW_REQUEST: state <= STATE_OPERAND_LOW_WAIT;
         STATE_OPERAND_LOW_WAIT: begin
           operand_low <= instruction_data;
-          if (opcode == 4'hb || is_crc_feed || is_line_cfg || is_line_drv ||
+          if (is_crc_feed) begin
+            if (!crc_issued && !crc_busy)
+              crc_issued <= 1'b1;
+            else if (crc_issued && !crc_busy) begin
+              crc_issued <= 1'b0;
+              program_counter <= program_counter + 1'b1;
+              state <= STATE_FETCH_REQUEST;
+            end
+          end else if (opcode == 4'hb || is_line_cfg || is_line_drv ||
               is_alu_mov || is_get_time || is_read_result ||
               is_action_load_sh) begin
             program_counter <= program_counter + 1'b1;

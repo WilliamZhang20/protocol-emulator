@@ -26,6 +26,7 @@ module action_engine (
 
     input  wire [7:0]  pin_sampled,
 
+    input  wire        crc_busy,
     output wire        crc_feed,
     output wire [7:0]  crc_byte,
 
@@ -81,6 +82,7 @@ module action_engine (
   reg        sample_bit;
   reg        done_r;
   reg        crc_feed_r;
+  reg        crc_issue;
 
   reg        drv_en;
   reg [7:0]  drv_out;
@@ -124,6 +126,7 @@ module action_engine (
       sample_bit <= 1'b0;
       done_r <= 1'b0;
       crc_feed_r <= 1'b0;
+      crc_issue <= 1'b0;
       drv_en <= 1'b0;
       drv_out <= 8'b0;
       drv_out_m <= 8'b0;
@@ -134,6 +137,7 @@ module action_engine (
       state <= ST_IDLE;
       done_r <= 1'b0;
       crc_feed_r <= 1'b0;
+      crc_issue <= 1'b0;
       drv_en <= 1'b0;
       drv_out_m <= 8'b0;
       drv_oe_m <= 8'b0;
@@ -255,8 +259,14 @@ module action_engine (
               end
 
               OP_CRC: begin
-                crc_feed_r <= 1'b1;
-                pc <= pc + 1'b1;
+                // Pulse CRC feed once, then wait for bit-serial engine.
+                if (!crc_issue && !crc_busy) begin
+                  crc_feed_r <= 1'b1;
+                  crc_issue <= 1'b1;
+                end else if (crc_issue && !crc_busy) begin
+                  crc_issue <= 1'b0;
+                  pc <= pc + 1'b1;
+                end
               end
 
               OP_NEXT: begin
