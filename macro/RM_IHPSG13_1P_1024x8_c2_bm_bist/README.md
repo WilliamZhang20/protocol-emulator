@@ -41,10 +41,16 @@ PDNGen builds the normal Metal4 stdcell stripe lattice (no per-macro grid in
 1. Discovers legal Metal4 supply corridors from the SRAM LEF OBS gaps (plus
    the declared `VDD!` / `VDDARRAY!` / `VSS!` PIN boxes), assigns polarity
    from those pins and the ~5.62 µm alternation, and clusters them into
-   array L / band / array R.
+   array L / band / array R.  `src/config.json` reads the LEF straight from
+   the PDK (`pdk_dir::libs.ref/sg13cmos5l_sram/lef/...`), which declares all
+   32 supply columns: 12 `VDD!`, 12 `VSS!` and 8 `VDDARRAY!`.  A trimmed LEF
+   that declares one column per net leaves the rest invisible to the tools,
+   and the whole array then draws through a single 2.81 µm column per
+   supply.
 2. Maps every tile stripe crossing the footprint onto the nearest free
    corridor of the same polarity, then completes VPWR/VGND pairs inside
-   each region (and keeps the named PIN columns for LVS).
+   each region and tops each region up to `SRAM_PDN_MIN_PAIRS` pairs
+   (default 2), keeping the named PIN columns for LVS.
 3. Removes the crossing tile stripes and draws full-height replacements on
    the chosen columns, with M1↔M4 rail vias outside the macro.
 

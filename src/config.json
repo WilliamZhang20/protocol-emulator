@@ -51,27 +51,27 @@
         "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.gds"
       ],
       "lef": [
-        "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
+        "pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
       ],
       "lib": {
         "nom_*": [
-          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
         ],
         "min_*": [
-          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
         ],
         "max_*": [
-          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
         ],
         "*": [
-          "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
         ]
       },
       "nl": [
         "dir::./RM_IHPSG13_1P_1024x8_c2_bm_bist.v"
       ],
       "spice": [
-        "dir::../macro/RM_IHPSG13_1P_1024x8_c2_bm_bist/RM_IHPSG13_1P_1024x8_c2_bm_bist.cdl"
+        "pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_1024x8_c2_bm_bist.cdl"
       ]
     }
   },
