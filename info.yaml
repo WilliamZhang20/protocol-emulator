@@ -24,6 +24,7 @@ project:
     - "register_file.v"
     - "timer_counter.v"
     - "bit_transfer_engine.v"
+    - "action_engine.v"
     - "event_engine.v"
     - "vm_sequencer.v"
     - "gpio_arbiter.v"
