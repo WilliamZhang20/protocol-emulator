@@ -49,9 +49,10 @@ PDNGen builds the normal Metal4 stdcell stripe lattice (no per-macro grid in
    power-pin check sees clean edge-to-edge ports.
 
 `ERROR_ON_PDN_VIOLATIONS` is 0 because pdngen's connectivity check runs before
-the rewrite; LVS is the signoff. `ERROR_ON_ILLEGAL_OVERLAPS` stays strict
-until KLayout DRC + LVS prove any Magic LEF-abstract overlap is a false
-positive.
+the rewrite; LVS is the connectivity signoff. Magic illegal-overlap / Magic
+DRC are waived for the LEF-abstract Metal4 OBS bar on the `VDDARRAY!` column
+break (same class as ihp-um-janestreet-prism); `RUN_KLAYOUT_DRC` stays on as
+the physical DRC signoff.
 
 ## License
 

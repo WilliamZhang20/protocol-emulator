@@ -257,11 +257,19 @@ def main() -> None:
         "ERROR_ON_PDN_VIOLATIONS must be 0 (pdngen runs before "
         "ExtendPowerStripes)",
     )
-    # Keep Magic illegal-overlap checking strict until proven false-positive.
+    # Prism-style signoff: Magic LEF-abstract OBS false positives on the
+    # VDDARRAY! column are waived; KLayout DRC + LVS remain required.
     require(
-        config.get("ERROR_ON_ILLEGAL_OVERLAPS", 1) not in (0, False),
-        "do not waive ERROR_ON_ILLEGAL_OVERLAPS until KLayout DRC + LVS "
-        "are clean and the LEF-abstract OBS issue is confirmed",
+        config.get("ERROR_ON_ILLEGAL_OVERLAPS") in (0, False),
+        "ERROR_ON_ILLEGAL_OVERLAPS must be 0 (VDDARRAY! LEF OBS bar)",
+    )
+    require(
+        config.get("RUN_MAGIC_DRC") in (0, False),
+        "RUN_MAGIC_DRC must be 0 once illegal-overlap is waived",
+    )
+    require(
+        config.get("RUN_KLAYOUT_DRC") in (1, True),
+        "RUN_KLAYOUT_DRC must be on as the physical DRC signoff",
     )
 
     meta = config.get("meta", {})

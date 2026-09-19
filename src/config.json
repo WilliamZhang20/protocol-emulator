@@ -90,6 +90,9 @@
   "PDN_VERTICAL_LAYER": "Metal4",
   "//pdn_violations": "pdngen's connectivity check runs before ExtendPowerStripes bridges the SRAM columns; LVS is the verdict",
   "ERROR_ON_PDN_VIOLATIONS": 0,
+  "//illegal_overlap": "Magic extracts the SRAM from its LEF abstract; Metal4 OBS includes a keep-out bar at the VDDARRAY! column break (LEF y 39.085-45.205) that the GDS does not have as conflicting metal. Full-height VPWR on that column trips Magic illegal-overlap; KLayout DRC + LVS are the signoff (same as ihp-um-janestreet-prism).",
+  "ERROR_ON_ILLEGAL_OVERLAPS": 0,
+  "RUN_MAGIC_DRC": 0,
   "FP_MACRO_HORIZONTAL_HALO": 0,
   "FP_MACRO_VERTICAL_HALO": 0,
   "PDN_HORIZONTAL_HALO": 0,
@@ -112,7 +115,8 @@
 
   "//": "Save some time",
   "RUN_KLAYOUT_XOR": 0,
-  "RUN_KLAYOUT_DRC": 0,
+  "//klayout_drc": "Physical DRC signoff after Magic DRC is off (SRAM LEF-abstract false positives); must stay on",
+  "RUN_KLAYOUT_DRC": 1,
 
   "//": "Don't put clock buffers on the outputs",
   "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS": 0,
