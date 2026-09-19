@@ -1,9 +1,10 @@
 # Tiny Tapeout SG13CMOS5L power grid.
 #
-# User blocks may expose power only on Metal4. The 50 um stripe pitch and the
-# SRAM's R0 placement align VPWR/VGND stripes with the SRAM Metal4 rails.
-# PDNGen still gaps those stripes through the macro, so pdngen{} below adds
-# full-height same-layer straps into the south and north stub tips.
+# User blocks may expose power only on Metal4. PDNGen builds the stripe grid
+# from PDN_* env knobs, then the pdngen wrapper below derives SRAM feeders
+# from the placed macro's Metal4 pin geometry and the stripes already in the
+# ODB — no baked-in die coordinates. Lateral jogs stay outside the macro;
+# nothing is drawn through OBS.
 
 source $::env(SCRIPTS_DIR)/openroad/common/io.tcl
 source $::env(SCRIPTS_DIR)/openroad/common/set_global_connections.tcl
@@ -65,8 +66,319 @@ if { $::env(PDN_ENABLE_RAILS) == 1 } {
         -layers "$::env(PDN_RAIL_LAYER) Metal4"
 }
 
-# Replace automatically-created fragmented power pins with one clean
-# full-height Metal4 pin for each power net.
+# ------------------------------------------------------------
+# Helpers: query ODB instead of hardcoding die coordinates
+# ------------------------------------------------------------
+
+proc tt_dbu_per_um {} {
+    return [[ord::get_db_tech] getDbUnitsPerMicron]
+}
+
+proc tt_m4_spacing {metal4} {
+    # Prefer the layer spacing rule; fall back to 0.42 um (SG13 M4).
+    set sp 0
+    if {![catch {set sp [$metal4 getSpacing]}]} {
+        if {$sp > 0} {
+            return $sp
+        }
+    }
+    return [expr {int(0.42 * [tt_dbu_per_um])}]
+}
+
+proc tt_find_sram_inst {block} {
+    set cell_name "RM_IHPSG13_1P_1024x8_c2_bm_bist"
+    foreach inst [$block getInsts] {
+        if {[[$inst getMaster] getName] eq $cell_name} {
+            return $inst
+        }
+    }
+    return "NULL"
+}
+
+proc tt_inst_bbox {inst} {
+    set b [$inst getBBox]
+    return [list [$b xMin] [$b yMin] [$b xMax] [$b yMax]]
+}
+
+# Absolute die-frame bbox of a macro pin (prefer iterm bbox from ODB).
+proc tt_pin_bbox_on_layer {inst pin_name layer} {
+    set iterm [$inst findITerm $pin_name]
+    if {$iterm == "NULL"} {
+        error "SRAM instance missing pin $pin_name"
+    }
+    # dbITerm::getBBox is already in die coordinates.
+    if {![catch {set ib [$iterm getBBox]}]} {
+        return [list [$ib xMin] [$ib yMin] [$ib xMax] [$ib yMax]]
+    }
+    # Fallback: transform master pin geometry for R0 placements.
+    set mterm [$iterm getMTerm]
+    set ox [[$inst getBBox] xMin]
+    set oy [[$inst getBBox] yMin]
+    set x0 0
+    set y0 0
+    set x1 0
+    set y1 0
+    set have 0
+    foreach mpin [$mterm getMPins] {
+        foreach g [$mpin getGeometry] {
+            if {[[$g getTechLayer] getName] != [$layer getName]} {
+                continue
+            }
+            set ax [expr {$ox + [$g xMin]}]
+            set ay [expr {$oy + [$g yMin]}]
+            set bx [expr {$ox + [$g xMax]}]
+            set by [expr {$oy + [$g yMax]}]
+            if {!$have} {
+                set x0 $ax; set y0 $ay; set x1 $bx; set y1 $by
+                set have 1
+            } else {
+                set x0 [expr {min($x0,$ax)}]
+                set y0 [expr {min($y0,$ay)}]
+                set x1 [expr {max($x1,$bx)}]
+                set y1 [expr {max($y1,$by)}]
+            }
+        }
+    }
+    if {!$have} {
+        error "no Metal4 geometry on pin $pin_name"
+    }
+    return [list $x0 $y0 $x1 $y1]
+}
+
+# Collect Metal4 special-wire rectangles on a net: list of {x0 y0 x1 y1}.
+proc tt_net_m4_rects {block net_name layer} {
+    set net [$block findNet $net_name]
+    set out {}
+    if {$net == "NULL"} {
+        return $out
+    }
+    foreach swire [$net getSWires] {
+        foreach sbox [$swire getWires] {
+            if {[[$sbox getTechLayer] getName] != [$layer getName]} {
+                continue
+            }
+            lappend out [list [$sbox xMin] [$sbox yMin] [$sbox xMax] [$sbox yMax]]
+        }
+    }
+    return $out
+}
+
+proc tt_rect_cx {r} {
+    return [expr {([lindex $r 0] + [lindex $r 2]) / 2.0}]
+}
+
+proc tt_x_overlap {a b} {
+    set lo [expr {max([lindex $a 0], [lindex $b 0])}]
+    set hi [expr {min([lindex $a 2], [lindex $b 2])}]
+    return [expr {$hi - $lo}]
+}
+
+proc tt_y_overlap {a b} {
+    set lo [expr {max([lindex $a 1], [lindex $b 1])}]
+    set hi [expr {min([lindex $a 3], [lindex $b 3])}]
+    return [expr {$hi - $lo}]
+}
+
+# Vertical-ish rects (taller than wide) near pin_cx, entirely south of y_cut.
+proc tt_nearest_south_stub {rects pin_cx y_cut} {
+    set best {}
+    set best_dist 1e99
+    foreach r $rects {
+        lassign $r x0 y0 x1 y1
+        set w [expr {$x1 - $x0}]
+        set h [expr {$y1 - $y0}]
+        if {$h < $w} {
+            continue
+        }
+        if {$y1 > $y_cut} {
+            continue
+        }
+        set dist [expr {abs(($x0+$x1)/2.0 - $pin_cx)}]
+        if {$dist < $best_dist} {
+            set best_dist $dist
+            set best $r
+        }
+    }
+    return $best
+}
+
+proc tt_nearest_north_stub {rects pin_cx y_cut} {
+    set best {}
+    set best_dist 1e99
+    foreach r $rects {
+        lassign $r x0 y0 x1 y1
+        set w [expr {$x1 - $x0}]
+        set h [expr {$y1 - $y0}]
+        if {$h < $w} {
+            continue
+        }
+        if {$y0 < $y_cut} {
+            continue
+        }
+        set dist [expr {abs(($x0+$x1)/2.0 - $pin_cx)}]
+        if {$dist < $best_dist} {
+            set best_dist $dist
+            set best $r
+        }
+    }
+    return $best
+}
+
+# Clip [x0,x1] so the feeder keeps >= spacing from opposite-net M4 outside
+# the macro on the side being attached.
+proc tt_clip_feeder_x {pin_x0 pin_x1 opp_rects side macro_y0 macro_y1 spacing} {
+    set x0 $pin_x0
+    set x1 $pin_x1
+    foreach r $opp_rects {
+        lassign $r ox0 oy0 ox1 oy1
+        if {$side eq "south"} {
+            if {$oy1 > $macro_y0} {
+                continue
+            }
+        } else {
+            if {$oy0 < $macro_y1} {
+                continue
+            }
+        }
+        # Opposite metal to the west of the pin: push feeder left edge right.
+        if {$ox1 <= $pin_x1 && $ox1 > $pin_x0} {
+            set x0 [expr {max($x0, $ox1 + $spacing)}]
+        }
+        # Opposite metal to the east of the pin: push feeder right edge left.
+        if {$ox0 >= $pin_x0 && $ox0 < $pin_x1} {
+            set x1 [expr {min($x1, $ox0 - $spacing)}]
+        }
+        # Fully covering / overlapping opposite strip in X: keep clear of it.
+        if {$ox0 < $pin_x1 && $ox1 > $pin_x0} {
+            if {$ox1 <= ($pin_x0+$pin_x1)/2.0} {
+                set x0 [expr {max($x0, $ox1 + $spacing)}]
+            } elseif {$ox0 >= ($pin_x0+$pin_x1)/2.0} {
+                set x1 [expr {min($x1, $ox0 - $spacing)}]
+            } else {
+                # Opposite overlaps pin center: prefer clearing the nearer edge.
+                set clear_r [expr {$ox1 + $spacing}]
+                set clear_l [expr {$ox0 - $spacing}]
+                if {[expr {$pin_x1 - $clear_r}] >= [expr {$clear_l - $pin_x0}]} {
+                    set x0 [expr {max($x0, $clear_r)}]
+                } else {
+                    set x1 [expr {min($x1, $clear_l)}]
+                }
+            }
+        }
+    }
+    if {$x1 - $x0 < [expr {int(0.5 * [tt_dbu_per_um])}]} {
+        error "feeder X collapsed after opposite-net keepout \
+            (pin $pin_x0..$pin_x1 -> $x0..$x1)"
+    }
+    return [list $x0 $x1]
+}
+
+proc tt_add_box {swire layer x0 y0 x1 y1} {
+    if {$x1 <= $x0 || $y1 <= $y0} {
+        return
+    }
+    odb::dbSBox_create $swire $layer $x0 $y0 $x1 $y1 STRIPE
+}
+
+# Attach one SRAM power pin: vertical feeder(s) at the reachable boundary
+# plus a short outside-macro jog to the nearest same-net stripe stub.
+proc tt_attach_sram_pin {block metal4 swire pin_box sides same_rects opp_rects spacing} {
+    lassign $pin_box px0 py0 px1 py1
+    set pin_cx [expr {($px0 + $px1) / 2.0}]
+    set inst [tt_find_sram_inst $block]
+    lassign [tt_inst_bbox $inst] mx0 my0 mx1 my1
+
+    foreach side $sides {
+        if {$side eq "south"} {
+            # Pin must reach the south macro edge.
+            if {[expr {abs($py0 - $my0)}] > [tt_dbu_per_um]} {
+                puts "PDN: skip south attach — pin does not reach south edge"
+                continue
+            }
+            set stub [tt_nearest_south_stub $same_rects $pin_cx $my0]
+            if {$stub eq {}} {
+                error "no south Metal4 stub near pin cx=$pin_cx on target net"
+            }
+            lassign $stub sx0 sy0 sx1 sy1
+            lassign [tt_clip_feeder_x $px0 $px1 $opp_rects south $my0 $my1 $spacing] fx0 fx1
+            # Feeder: from stub tip up to macro south edge, pin-aligned X.
+            set fy0 $sy1
+            set fy1 $my0
+            if {$fy1 < $fy0} {
+                # Stub already past the edge; sit a short apron below the edge.
+                set fy0 [expr {$my0 - int(1.5 * [tt_dbu_per_um])}]
+                set fy1 $my0
+            }
+            tt_add_box $swire $metal4 $fx0 $fy0 $fx1 $fy1
+            # Jog only if feeder does not already share X with the stub.
+            if {[tt_x_overlap [list $fx0 $fy0 $fx1 $fy1] $stub] < 1} {
+                set jy0 [expr {max($sy1 - int(0.5 * [tt_dbu_per_um]), $fy0)}]
+                set jy1 $sy1
+                if {$jy1 <= $jy0} {
+                    set jy0 $fy0
+                    set jy1 [expr {min($fy1, $sy1)}]
+                }
+                set jx0 [expr {min($fx0, $sx0)}]
+                set jx1 [expr {max($fx1, $sx1)}]
+                # Keep jog outside / on the south edge.
+                if {$jy1 > $my0} {
+                    set jy1 $my0
+                }
+                tt_add_box $swire $metal4 $jx0 $jy0 $jx1 $jy1
+            } elseif {[expr {abs((($fx0+$fx1)/2.0) - (($sx0+$sx1)/2.0))}] > 1} {
+                # Partial X overlap: still bridge the gap with a short jog.
+                set jy0 [expr {min($fy0, $sy1 - 1)}]
+                set jy1 [expr {min($fy1, $sy1)}]
+                if {$jy1 > $jy0} {
+                    set jx0 [expr {min($fx0, $sx0)}]
+                    set jx1 [expr {max($fx1, $sx1)}]
+                    tt_add_box $swire $metal4 $jx0 $jy0 $jx1 $jy1
+                }
+            }
+        } elseif {$side eq "north"} {
+            if {[expr {abs($py1 - $my1)}] > [tt_dbu_per_um]} {
+                puts "PDN: skip north attach — pin does not reach north edge"
+                continue
+            }
+            set stub [tt_nearest_north_stub $same_rects $pin_cx $my1]
+            if {$stub eq {}} {
+                error "no north Metal4 stub near pin cx=$pin_cx on target net"
+            }
+            lassign $stub sx0 sy0 sx1 sy1
+            lassign [tt_clip_feeder_x $px0 $px1 $opp_rects north $my0 $my1 $spacing] fx0 fx1
+            set fy0 $my1
+            set fy1 $sy0
+            if {$fy1 < $fy0} {
+                set fy0 $my1
+                set fy1 [expr {$my1 + int(1.5 * [tt_dbu_per_um])}]
+            }
+            tt_add_box $swire $metal4 $fx0 $fy0 $fx1 $fy1
+            if {[tt_x_overlap [list $fx0 $fy0 $fx1 $fy1] $stub] < 1} {
+                set jy0 $sy0
+                set jy1 [expr {min($sy0 + int(0.5 * [tt_dbu_per_um]), $fy1)}]
+                if {$jy1 <= $jy0} {
+                    set jy0 $fy0
+                    set jy1 $fy1
+                }
+                if {$jy0 < $my1} {
+                    set jy0 $my1
+                }
+                set jx0 [expr {min($fx0, $sx0)}]
+                set jx1 [expr {max($fx1, $sx1)}]
+                tt_add_box $swire $metal4 $jx0 $jy0 $jx1 $jy1
+            } elseif {[expr {abs((($fx0+$fx1)/2.0) - (($sx0+$sx1)/2.0))}] > 1} {
+                set jy0 [expr {max($fy0, $sy0)}]
+                set jy1 [expr {max($fy1, $sy0 + 1)}]
+                if {$jy1 > $jy0} {
+                    set jx0 [expr {min($fx0, $sx0)}]
+                    set jx1 [expr {max($fx1, $sx1)}]
+                    tt_add_box $swire $metal4 $jx0 $jy0 $jx1 $jy1
+                }
+            }
+        }
+    }
+}
+
 proc replace_power_pin {block metal4 net_name sig_type x1 y1 x2 y2} {
     set net [$block findNet $net_name]
     set bterm [$block findBTerm $net_name]
@@ -77,21 +389,43 @@ proc replace_power_pin {block metal4 net_name sig_type x1 y1 x2 y2} {
 
     $bterm setSigType $sig_type
 
-    # Delete all PDNGen-generated pin shapes.
     foreach bpin [$bterm getBPins] {
         odb::dbBPin_destroy $bpin
     }
 
-    # Create exactly one exported pin shape.
     set bpin [odb::dbBPin_create $bterm]
     odb::dbBox_create $bpin $metal4 $x1 $y1 $x2 $y2
     $bpin setPlacementStatus FIRM
 }
 
+# Pick a full-height Metal4 stripe east of the SRAM as the exported TT pin.
+proc tt_export_pin_from_stripe {block metal4 net_name sig_type west_limit} {
+    set rects [tt_net_m4_rects $block $net_name $metal4]
+    set best {}
+    set best_h 0
+    foreach r $rects {
+        lassign $r x0 y0 x1 y1
+        if {$x0 < $west_limit} {
+            continue
+        }
+        set h [expr {$y1 - $y0}]
+        set w [expr {$x1 - $x0}]
+        if {$h > $w && $h > $best_h} {
+            set best_h $h
+            set best $r
+        }
+    }
+    if {$best eq {}} {
+        error "no full-height $net_name Metal4 stripe east of $west_limit"
+    }
+    lassign $best x0 y0 x1 y1
+    replace_power_pin $block $metal4 $net_name $sig_type $x0 $y0 $x1 $y1
+}
+
 
 # Wrap pdngen so we can:
-#   1. strap SRAM power rails into the gapped Metal4 grid
-#   2. clean up exported VPWR/VGND pins
+#   1. derive SRAM-aligned Metal4 feeders from pin + stripe geometry
+#   2. clean up exported VPWR/VGND pins from real stripes
 rename pdngen pdngen_without_sram_bridges
 
 proc pdngen {args} {
@@ -99,76 +433,39 @@ proc pdngen {args} {
 
     set block [ord::get_db_block]
     set metal4 [[ord::get_db_tech] findLayer Metal4]
+    set spacing [tt_m4_spacing $metal4]
 
-    # ------------------------------------------------------------
-    # SRAM power connections
-    #
-    # PDNGen removes vertical Metal4 stripes through the macro, leaving
-    # only short stubs above/below. The old hand bridges were ~1.5 um
-    # stubs on a single end of each rail (south for VDD/VSS, north for
-    # VDDARRAY), so each bank was single-fed.
-    #
-    # Measured on the passing GDS (SRAM at 42,81; pitch 50; width 2.1):
-    #   VSS!      die x=63.12..65.93  y=81.00..417.46   VGND stripe x=66.98
-    #   VDD!      die x=111.46..114.27 y=81.00..417.46   VPWR stripe x=112.88
-    #   VDDARRAY! die x=159.33..162.14 y=126.47..417.46  VPWR stripe x=162.88
-    #   stub tips ~y=80.52 (south) and ~y=417.94 (north)
-    #
-    # Boundary-contact X-overlaps (bridge ∩ SRAM pin):
-    #   VSS      >= 1.13 um (bridge x=64.80..68.03)
-    #   VDD      =  2.81 um (full pin width)
-    #   VDDARRAY >= 1.64 um (bridge x=160.50..163.93)
-    #
-    # Connect SRAM rails to PDN stubs only at macro boundaries.
-    # VDD/VSS connect at north and south boundaries.
-    # VDDARRAY reaches only the north boundary and connects there.
-    # Never extend top-level Metal4 through SRAM OBS regions.
-    # ------------------------------------------------------------
+    set sram [tt_find_sram_inst $block]
+    if {$sram == "NULL"} {
+        puts "PDN: no SRAM instance — skipping feeder attach"
+        return
+    }
+    lassign [tt_inst_bbox $sram] mx0 my0 mx1 my1
+
+    set vpwr_rects [tt_net_m4_rects $block VPWR $metal4]
+    set vgnd_rects [tt_net_m4_rects $block VGND $metal4]
+
+    set vss_pin  [tt_pin_bbox_on_layer $sram "VSS!" $metal4]
+    set vdd_pin  [tt_pin_bbox_on_layer $sram "VDD!" $metal4]
+    set vdda_pin [tt_pin_bbox_on_layer $sram "VDDARRAY!" $metal4]
 
     set vpwr_swire [odb::dbSWire_create [$block findNet VPWR] ROUTED]
-
-    # VDD:
-    # SRAM pin spans x=111.46..114.27 for the full macro height.
-    # Connect only across the south/north macro boundaries.
-    odb::dbSBox_create $vpwr_swire $metal4 \
-        111460 80000 114270 81000 STRIPE
-
-    odb::dbSBox_create $vpwr_swire $metal4 \
-        111460 417460 114270 418440 STRIPE
-
-    # VDDARRAY:
-    # Pin starts at y=126.465 and reaches the NORTH edge only.
-    # Widen the north bridge left to x=160.50 so overlap with the pin
-    # (159.33..162.14) is ~1.64 um, while still meeting only the north stub.
-    odb::dbSBox_create $vpwr_swire $metal4 \
-        160500 417460 163930 418440 STRIPE
-
-
     set vgnd_swire [odb::dbSWire_create [$block findNet VGND] ROUTED]
 
-    # VSS:
-    # VGND stripe is approximately x=65.93..68.03.
-    # Widen left to x=64.80 for ~1.13 um overlap with VSS! (63.12..65.93).
-    # Adjacent VPWR geometry ends at x=63.93, leaving 0.87 um (>0.42 um M4
-    # spacing). Boundary-only — never through the macro interior.
-    odb::dbSBox_create $vgnd_swire $metal4 \
-        64800 80000 68030 81000 STRIPE
+    # VDD!: both boundaries. Same-net VPWR stripe is already near-aligned;
+    # opposite-net keepout is VGND.
+    tt_attach_sram_pin $block $metal4 $vpwr_swire $vdd_pin \
+        {south north} $vpwr_rects $vgnd_rects $spacing
 
-    odb::dbSBox_create $vgnd_swire $metal4 \
-        64800 417460 68030 418440 STRIPE
+    # VDDARRAY!: north only (pin does not reach the south edge).
+    tt_attach_sram_pin $block $metal4 $vpwr_swire $vdda_pin \
+        {north} $vpwr_rects $vgnd_rects $spacing
 
-    # ------------------------------------------------------------
-    # Export clean Tiny Tapeout power pins
-    #
-    # Use a stripe to the RIGHT of the SRAM, where the stripe is
-    # uninterrupted from bottom to top.
-    # ------------------------------------------------------------
+    # VSS!: both boundaries; clip against nearby VPWR stubs.
+    tt_attach_sram_pin $block $metal4 $vgnd_swire $vss_pin \
+        {south north} $vgnd_rects $vpwr_rects $spacing
 
-    replace_power_pin \
-        $block $metal4 VPWR POWER \
-        211830 3560 213930 707080
-
-    replace_power_pin \
-        $block $metal4 VGND GROUND \
-        215930 3560 218030 707080
+    # Export Tiny Tapeout pins on uninterrupted stripes east of the SRAM.
+    tt_export_pin_from_stripe $block $metal4 VPWR POWER $mx1
+    tt_export_pin_from_stripe $block $metal4 VGND GROUND $mx1
 }

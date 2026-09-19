@@ -33,12 +33,17 @@ starved detailed routing. PDN, macro LEF, and placement stay unchanged.
 
 ## Metal4 power straps
 
-PDNGen gaps the vertical Metal4 stripes through the macro body. The custom
-`src/pdn_cfg.tcl` therefore adds full-height straps that overlap each SRAM
-rail (`VDD!`, `VDDARRAY!`, `VSS!`) and both the south and north PDN stub
-tips, so each bank is fed from the top and bottom of the tile — not by a
-single ~1.5 µm end stub. The `VSS!` strap stays clear of the adjacent
-`VPWR` stripe to avoid a same-layer short.
+PDNGen gaps vertical Metal4 stripes through the macro body. The custom
+`src/pdn_cfg.tcl` then derives boundary feeders at run time from:
+
+- the placed SRAM instance bbox and Metal4 pin geometry in the ODB
+- the nearest same-net Metal4 stripe stubs already created by PDNGen
+- Metal4 spacing keepouts against opposite-net stripes
+
+`VDD!` / `VSS!` attach at south and north edges; `VDDARRAY!` only at north.
+Short horizontal jogs stay outside the macro. No absolute strap coordinates
+are hardcoded, so pitch/offset/placement changes can reshuffle geometry
+without editing `pdn_cfg.tcl`.
 
 ## License
 

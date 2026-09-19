@@ -31,11 +31,13 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify lint synth-check gds-config-check sim memory-test formal clean
+.PHONY: help verify lint synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
 	@echo "make gds-config-check  Check SRAM macro and PDN configuration"
+	@echo "make pdn-def-check DEF=...  Check SRAM power nets in a final DEF"
+	@echo "make pdn-extract-check SPICE=...  Check Magics SRAM power binding"
 	@echo "make lint         Lint the complete RTL hierarchy"
 	@echo "make sim          Run the cocotb regression"
 	@echo "make memory-test  Exercise the foundry SRAM model"
@@ -53,6 +55,14 @@ synth-check:
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py
+
+pdn-def-check:
+	@test -n "$(DEF)" || (echo "usage: make pdn-def-check DEF=path/to/design.def" >&2; exit 1)
+	$(PYTHON) test/check_pdn_def.py $(DEF)
+
+pdn-extract-check:
+	@test -n "$(SPICE)" || (echo "usage: make pdn-extract-check SPICE=path/to/design.spice" >&2; exit 1)
+	$(PYTHON) test/check_pdn_extract.py $(SPICE)
 
 sim:
 	$(MAKE) -C test clean
