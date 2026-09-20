@@ -162,3 +162,322 @@ async def test_action_read_result_sample(dut):
     await host_command(dut, 0x8, 1)
     await wait_until_halted(dut, timeout_cycles=4000)
     assert driven_level(dut, MARKER_PIN) == 1, "READ_RESULT/JNZ marker not set"
+
+@cocotb.test()
+async def test_action_parallel_gpio_lane(dut):
+    """A 32-bit action changes two output pins on the same clock edge."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_done, action_gpio, action_parallel_gpio,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(0, action_gpio(pin=0, out=1, oe=1) |
+                     action_parallel_gpio(1, out=1, oe=1)),
+        *prog_action(1, action_done()),
+        *run_region(0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    seen = False
+    for _ in range(3000):
+        await RisingEdge(dut.clk)
+        a, b = driven_level(dut, 0), driven_level(dut, 1)
+        assert (a == 1) == (b == 1), "parallel pins changed on different cycles"
+        if a == 1:
+            seen = True
+        if seen and _ % 64 == 63 and not status_running(await read_status(dut)):
+            break
+    assert seen, "parallel action never drove the pins"
+    await wait_until_halted(dut, timeout_cycles=3000)
+
+@cocotb.test()
+async def test_action_region_clocked_transfer_bits(dut):
+    """A clocked region emits the expected eight MOSI bits on rising SCLK."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_clocked_transfer, gpio_oe, gpio_write, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    byte = 0xA5
+    program = [
+        gpio_oe(0, 1), gpio_oe(1, 1), gpio_write(1, 0),
+        *action_clocked_transfer(
+            clk_pin=1, tx_pin=0, rx_pin=2, bit_count=8,
+            half_period=5, msb_first=False,
+        ),
+        wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x6, byte)
+    await host_command(dut, 0x7, byte >> 4)
+    await host_command(dut, 0x8, 1)
+    observed = []
+    old_clock = 0
+    for _ in range(4000):
+        await RisingEdge(dut.clk)
+        clk = driven_level(dut, 1)
+        mosi = driven_level(dut, 0)
+        if clk == 1 and old_clock == 0 and mosi is not None:
+            observed.append(mosi)
+            if len(observed) == 8:
+                break
+        if clk is not None:
+            old_clock = clk
+    assert observed == [(byte >> bit) & 1 for bit in range(8)]
+    await wait_until_halted(dut, timeout_cycles=4000)
+
+
+@cocotb.test()
+async def test_action_shift_16_bit_preload(dut):
+    """Both preload bytes reach a 16-bit region transfer in LSB order."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_delay,
+        action_done, action_load_shift, action_load_shift_hi,
+        action_shift, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    word = 0xA55A
+    region = [
+        *prog_action(0, action_count_load(16)),
+        *prog_action(1, action_shift(pin=0)),
+        *prog_action(2, action_delay(2)),
+        *prog_action(3, action_count_djnz(1)),
+        *prog_action(4, action_done()),
+    ]
+    program = [
+        *action_load_shift(word & 0xFF),
+        *action_load_shift_hi(word >> 8),
+        *region, *run_region(0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    observed = []
+    last = None
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        bit = driven_level(dut, 0)
+        if bit is not None and bit != last:
+            observed.append(bit)
+            last = bit
+        if cycle % 64 == 63 and not status_running(await read_status(dut)):
+            break
+    expected = [(word >> i) & 1 for i in range(16)]
+    transitions = [expected[0]] + [b for a, b in zip(expected, expected[1:]) if b != a]
+    assert observed == transitions, f"got transitions {observed}, want {transitions}"
+    await wait_until_halted(dut, timeout_cycles=4000)
+
+@cocotb.test()
+async def test_action_duplex_receive_result(dut):
+    """The output SHIFT lane samples a separate RX pin on every bit."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_done,
+        action_load_shift, action_push_result, action_shift,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    dut.uio_in.value = 1 << 2
+    region = [
+        *prog_action(0, action_count_load(8)),
+        *prog_action(1, action_shift(pin=0, rx_pin=2, duplex=True)),
+        *prog_action(2, action_count_djnz(1)),
+        *prog_action(3, action_done()),
+    ]
+    program = [
+        *action_load_shift(0), *region,
+        *run_region(0), wait_region(), *action_push_result(high=True), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    await wait_until_halted(dut, timeout_cycles=4000)
+    await host_command(dut, 0x9)
+    assert int(dut.uo_out.value) == 0xFF
+
+
+@cocotb.test()
+async def test_region_native_fifo_stalls_and_streams(dut):
+    """PULL waits for TX, then SHIFT and PUSH deliver a received byte."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_delay,
+        action_done, action_pull_tx, action_push_rx, action_shift,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    dut.uio_in.value = 1 << 2
+    program = [
+        *prog_action(0, action_pull_tx(bits=8, msb_first=True)),
+        *prog_action(1, action_count_load(8)),
+        *prog_action(2, action_shift(pin=0, rx_pin=2, duplex=True,
+                                     msb_first=True)),
+        *prog_action(3, action_delay(2)),
+        *prog_action(4, action_count_djnz(2)),
+        *prog_action(5, action_push_rx(high=False)),
+        *prog_action(6, action_done()),
+        *run_region(0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(160):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, 0) is None, "PULL advanced with empty TX"
+    await host_command(dut, 0x6, 0xA)
+    await host_command(dut, 0x7, 0x5)
+    await wait_until_halted(dut, timeout_cycles=4000)
+    await host_command(dut, 0x9)
+    assert int(dut.uo_out.value) == 0xFF
+
+
+@cocotb.test()
+async def test_cpu_pin_write_waits_for_region_claim(dut):
+    """CPU's conflicting write issues after the region releases its pin."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio, gpio_write,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(0, action_gpio(pin=0, out=1, oe=1)),
+        *prog_action(1, action_delay(90)),
+        *prog_action(2, action_done()),
+        *run_region(0), gpio_write(0, 0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(2000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, 0) == 1:
+            break
+    else:
+        raise AssertionError("region did not claim pin")
+    for _ in range(45):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, 0) == 1, "CPU wrote through live claim"
+    await wait_until_halted(dut, timeout_cycles=4000)
+    assert driven_level(dut, 0) == 0
+
+
+@cocotb.test()
+async def test_map_swaps_physical_pins(dut):
+    """Remapping one logical pin preserves a one-to-one physical map."""
+    from cocotb_tests.reference.programs import (
+        HALT, gpio_oe, gpio_write, map_pin,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *map_pin(0, 1),
+        gpio_oe(0, 1), gpio_write(0, 1),
+        gpio_oe(1, 1), gpio_write(1, 0), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    await wait_until_halted(dut, timeout_cycles=4000)
+    assert driven_level(dut, 1) == 1
+    assert driven_level(dut, 0) == 0
+
+
+@cocotb.test()
+async def test_action_table_write_waits_for_region(dut):
+    """CPU cannot alter a live action word or advance past that write."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio, gpio_oe, gpio_write,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        gpio_oe(1, 1),
+        *prog_action(0, action_gpio(pin=0, out=1, oe=1)),
+        *prog_action(1, action_delay(100)),
+        *prog_action(2, action_done()),
+        *run_region(0),
+        *prog_action(0, action_gpio(pin=0, out=0, oe=1)),
+        gpio_write(1, 1),  # marker after the table write
+        wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(2000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, 0) == 1:
+            break
+    else:
+        raise AssertionError("region did not start")
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, 1) == 0, "CPU passed table write while busy"
+    await wait_until_halted(dut, timeout_cycles=4000)
+    assert driven_level(dut, 1) == 1
+
+
+@cocotb.test()
+async def test_region_push_stalls_on_full_rx(dut):
+    """A fifth region push waits until the host drains one FIFO entry."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_done,
+        action_push_rx, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(0, action_count_load(5)),
+        *prog_action(1, action_push_rx()),
+        *prog_action(2, action_count_djnz(1)),
+        *prog_action(3, action_done()),
+        *run_region(0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(200):
+        await RisingEdge(dut.clk)
+    assert status_running(await read_status(dut)), "region ignored RX full"
+    await host_command(dut, 0x9)
+    assert int(dut.uo_out.value) == 0
+    await wait_until_halted(dut, timeout_cycles=4000)
+    for _ in range(4):
+        await host_command(dut, 0x9)
+        assert int(dut.uo_out.value) == 0
+
+
+@cocotb.test()
+async def test_halt_waits_for_outstanding_region(dut):
+    """HALT does not let the host disable a region still driving the bus."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio, prog_action, run_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(0, action_gpio(pin=0, out=1, oe=1)),
+        *prog_action(1, action_delay(100)),
+        *prog_action(2, action_done()),
+        *run_region(0), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(2000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, 0) == 1:
+            break
+    else:
+        raise AssertionError("region did not start")
+    for _ in range(50):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, 0) == 1
+    assert status_running(await read_status(dut))
+    await wait_until_halted(dut, timeout_cycles=4000)

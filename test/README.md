@@ -49,34 +49,36 @@ under `formal/models/`; neither model is synthesized into the ASIC.
 `test_uart.py` loads distinct TX and RX bytecode images through the real host
 interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins.
 
-`test_bit_xfer.py` exercises the shared autonomous bit-transfer engine with SPI
+`test_clocked_regions.py` exercises action regions with SPI
 mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching case.
 
-`test_orchestrate.py` checks nonblocking `START_XFER` / `WAIT_EVENT`, overlapped
+`test_orchestrate.py` checks nonblocking `RUN_REGION` / `WAIT_EVENT`, overlapped
 timer joins, edge wakeups, and GPIO ownership while a transfer runs.
 
-`test_fuzz.py` runs a mutational orchestration campaign (96 trials: double START,
-OR-joins, edge wake, ownership, CRC pipelines, line_pair, CRC-then-XFER) with a
+`test_fuzz.py` runs a mutational orchestration campaign (96 trials: double region starts,
+OR-joins, edge wake, ownership, CRC pipelines, parallel line actions, CRC-then-region) with a
 hang watchdog, RX scoreboarding, and directed CRC poly stress.
 
-`test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, the
-`line_pair` helper, and a soft LS ACK line-pattern TX demo (GL-safe).
+`test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, parallel GPIO action regions, and a soft LS ACK line-pattern TX demo (GL-safe).
 
 `test_alu_branch.py` covers the 8x register file, ALU ops, the zero flag, and
 `JZ`/`JNZ`/`DJNZ` (GL-safe, pins + status only).
 
 `test_action.py` covers the Phase C/D action engine: program slots, `RUN_REGION`,
-GPIO drive via action words, and `WAIT_REGION` join (GL-safe).
+parallel GPIO drive via 32-bit action words, transfer-bit equivalence, and
+`WAIT_REGION` join. It also checks native FIFO backpressure, pin-claim and
+action-table stalls, physical MAP swaps, and result forwarding (GL-safe).
 
 `test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
-`EVENT_STAMP` triples against edge events.
+`EVENT_STAMP` triples, source/pin detail, wrapped deadlines, and zero-length async timers.
 
 `test_sideset.py` checks side-set prefixes land on the same cycle as the next
 op's pin transition.
 
-`test_crc.py` checks IEEE-802.3 CRC-32 (`0xE1` setup, 4-byte push) against zlib.
+`test_crc.py` checks IEEE-802.3 CRC-32 (`0xE1` setup, 4-byte push) against zlib
+and checks serialized CPU/action feeds of the shared CRC block.
 
-`test_jtag.py` runs a Shift-DR loopback through the generic shift engine with
+`test_jtag.py` runs a Shift-DR loopback through a clocked action region with
 no RTL change per protocol.
 
 `test_onewire.py` runs a 1-Wire reset + presence + write + read demo on one pin.

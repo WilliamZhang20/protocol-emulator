@@ -9,7 +9,6 @@ module instruction_decoder (
     output wire       delay_enable,
     output wire       gpio_enable,
     output wire       shift_enable,
-    output wire       bit_xfer_enable,
     output wire       event_enable
 );
   assign opcode = instruction[7:4];
@@ -20,7 +19,6 @@ module instruction_decoder (
                        opcode == 4'h9 || opcode == 4'hb;
   assign shift_enable = ((opcode >= 4'h4) && (opcode <= 4'h6)) ||
                         opcode == 4'ha;
-  assign bit_xfer_enable = opcode == 4'hc;
   assign event_enable = opcode == 4'hd || opcode == 4'hf;
 endmodule
 

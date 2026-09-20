@@ -12,7 +12,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal
 endif
-PROJECT_SOURCES = project.v protocol_emulator_core.v instruction_decoder.v program_memory.v register_file.v timer_counter.v bit_transfer_engine.v action_engine.v event_engine.v vm_sequencer.v gpio_arbiter.v gpio_datapath.v crc_engine.v line_pair.v byte_fifo.v host_interface.v
+PROJECT_SOURCES = project.v protocol_emulator_core.v instruction_decoder.v program_memory.v register_file.v timer_counter.v action_engine.v event_engine.v vm_sequencer.v gpio_arbiter.v gpio_datapath.v crc_engine.v byte_fifo.v host_interface.v
 
 ifneq ($(GATES),yes)
 SIM_BUILD = sim_build/rtl
@@ -31,6 +31,6 @@ VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPS
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_uart,cocotb_tests.test_bit_xfer,cocotb_tests.test_orchestrate,cocotb_tests.test_fuzz,cocotb_tests.test_usb_ls,cocotb_tests.test_alu_branch,cocotb_tests.test_time_event,cocotb_tests.test_sideset,cocotb_tests.test_crc,cocotb_tests.test_jtag,cocotb_tests.test_onewire,cocotb_tests.test_manchester,cocotb_tests.test_host_stream,cocotb_tests.test_action
+COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_uart,cocotb_tests.test_clocked_regions,cocotb_tests.test_orchestrate,cocotb_tests.test_fuzz,cocotb_tests.test_usb_ls,cocotb_tests.test_alu_branch,cocotb_tests.test_time_event,cocotb_tests.test_sideset,cocotb_tests.test_crc,cocotb_tests.test_jtag,cocotb_tests.test_onewire,cocotb_tests.test_manchester,cocotb_tests.test_host_stream,cocotb_tests.test_action
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

@@ -35,7 +35,10 @@ module timer_counter (
       done_reg <= 1'b0;
       if (load) begin
         count <= load_value;
-        async_run <= async_start;
+        async_run <= async_start && load_value != 16'b0;
+        // A zero-length asynchronous timer completes immediately rather
+        // than remaining busy forever with an already-expired counter.
+        done_reg <= async_start && load_value == 16'b0;
       end else if (ticking) begin
         count <= count - 1'b1;
         if (count == 16'd1 && async_run) begin

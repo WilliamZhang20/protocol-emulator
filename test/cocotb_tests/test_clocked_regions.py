@@ -1,4 +1,4 @@
-"""Bit-transfer engine tests: SPI mode 0/3 and I2C write with clock stretch."""
+"""Clocked action-region tests: SPI mode 0/3 and I2C with clock stretch."""
 
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
@@ -170,12 +170,12 @@ async def run_spi_mode(dut, mode: int) -> None:
 
 
 @cocotb.test()
-async def test_spi_mode0_bit_xfer(dut):
+async def test_spi_mode0_region(dut):
     await run_spi_mode(dut, 0)
 
 
 @cocotb.test()
-async def test_spi_mode3_bit_xfer(dut):
+async def test_spi_mode3_region(dut):
     await run_spi_mode(dut, 3)
 
 
@@ -311,7 +311,7 @@ async def i2c_ack_responder(bus: OpenDrainBus) -> None:
 
 @cocotb.test()
 async def test_i2c_clock_stretch(dut):
-    """Hold SCL low in CLOCK_ACTIVE; engine must stay busy until SCL rises."""
+    """Hold SCL low in CLOCK_ACTIVE; region must wait until SCL rises."""
     await start_clock(dut)
     await reset_top(dut)
     payload = 0xC3

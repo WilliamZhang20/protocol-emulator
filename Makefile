@@ -15,14 +15,12 @@ RTL_SOURCES := \
 	src/program_memory.v \
 	src/register_file.v \
 	src/timer_counter.v \
-	src/bit_transfer_engine.v \
 	src/action_engine.v \
 	src/event_engine.v \
 	src/vm_sequencer.v \
 	src/gpio_arbiter.v \
 	src/gpio_datapath.v \
 	src/crc_engine.v \
-	src/line_pair.v \
 	src/byte_fifo.v \
 	src/host_interface.v
 

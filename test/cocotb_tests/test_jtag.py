@@ -47,7 +47,8 @@ async def test_jtag_shift_dr_loopback(dut):
     await start_clock(dut)
     await reset_top(dut)
     tx_byte = 0xA5
-    await load_program(dut, jtag_shift_dr_program(half_period=4))
+    # The external loopback passes through the two-flop GPIO synchronizer.
+    await load_program(dut, jtag_shift_dr_program(half_period=8))
     await push_tx(dut, tx_byte)
     dut.uio_in.value = 0
     await host_command(dut, 0x8, 1)

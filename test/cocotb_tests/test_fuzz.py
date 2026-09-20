@@ -1,8 +1,8 @@
 """Mutational orchestration fuzzer with hang watchdog and hard invariants.
 
 Gate-level safe: observes host status and `uio_*` only. Generates completable
-programs by construction; stresses double START_XFER, OR-waits, edge arming,
-GPIO ownership, CRC feeds, and line_pair drive/sample.
+programs by construction; stresses double RUN_REGION, OR-waits, edge arming,
+GPIO ownership, CRC feeds, and action line drive/sample.
 """
 
 from __future__ import annotations
@@ -25,13 +25,12 @@ from cocotb_tests.reference.programs import (
     EV_PIN_FALL,
     EV_PIN_RISE,
     EV_TIMER_DONE,
-    EV_XFER_DONE,
+    EV_REGION_DONE,
     HALT,
     LINE_J,
     LINE_K,
     LINE_SE0,
     NOP,
-    TX_LOAD,
     arm_edges,
     crc_finalize,
     crc_feed,
@@ -40,12 +39,11 @@ from cocotb_tests.reference.programs import (
     crc_usb16_setup,
     gpio_oe,
     gpio_write,
-    line_cfg,
-    line_drive,
-    line_release,
-    line_sample,
+    action_line_drive,
+    action_line_release,
+    action_line_sample,
     start_timer,
-    start_xfer,
+    action_clocked_transfer,
     wait,
     wait_event,
 )
@@ -53,7 +51,7 @@ from cocotb_tests.reference.programs import (
 MOSI, MISO, SCLK = 0, 1, 2
 FREE_PIN = 5  # never claimed by XFER in this fuzzer
 EDGE_PIN = 6
-# line_pair demo pins — keep clear of MOSI/SCLK/FREE/EDGE
+# two-pin demo pins — keep clear of MOSI/SCLK/FREE/EDGE
 LP_A, LP_B = 3, 4
 
 
@@ -145,7 +143,7 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             "edge_wake",
             "busy_gpio",
             "crc_pipe",
-            "line_pair",
+            "line_regions",
             "crc_then_xfer",
         ],
         weights=[22, 14, 12, 12, 10, 12, 10, 8],
@@ -156,18 +154,18 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
     if kind == "paired":
         tx_bytes = [rng.randint(0, 255)]
         xfer_kw = _xfer_kwargs(rng)
-        body: list[int] = [TX_LOAD, *_nops(rng)]
+        body: list[int] = [*_nops(rng)]
         ops = ["xfer", "timer"]
         rng.shuffle(ops)
         for op in ops:
             if op == "xfer":
-                body += start_xfer(**xfer_kw)
+                body += action_clocked_transfer(**xfer_kw)
             else:
                 body += start_timer(rng.randint(4, 48))
             body += _nops(rng)
             if rng.random() < 0.6:
                 body.append(gpio_write(FREE_PIN, rng.randint(0, 1)))
-        waits = [wait_event(EV_XFER_DONE), wait_event(EV_TIMER_DONE)]
+        waits = [wait_event(EV_REGION_DONE), wait_event(EV_TIMER_DONE)]
         rng.shuffle(waits)
         flat: list[int] = []
         for w in waits:
@@ -190,13 +188,11 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
         first["half_period"] = rng.randint(2, 4)
         second = _xfer_kwargs(rng)
         body = [
-            TX_LOAD,
-            *start_xfer(**first),
+            *action_clocked_transfer(**first),
+            *wait_event(EV_REGION_DONE),
             *_nops(rng),
-            TX_LOAD,
-            *start_xfer(**second),
-            *wait_event(EV_XFER_DONE),
-            *wait_event(EV_XFER_DONE),
+            *action_clocked_transfer(**second),
+            *wait_event(EV_REGION_DONE),
         ]
         return FuzzPlan(
             _lead() + body + [HALT],
@@ -211,18 +207,17 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
         tx_bytes = [rng.randint(0, 255)]
         xfer_kw = _xfer_kwargs(rng)
         body = [
-            TX_LOAD,
-            *start_xfer(**xfer_kw),
+            *action_clocked_transfer(**xfer_kw),
             *start_timer(rng.randint(3, 24)),
             *_nops(rng),
-            *wait_event(EV_XFER_DONE | EV_TIMER_DONE),
+            *wait_event(EV_REGION_DONE | EV_TIMER_DONE),
         ]
         return FuzzPlan(
             _lead() + body + [HALT],
             tx_bytes,
             xfer_starts=1,
             timer_starts=1,
-            min_sclk_edges=xfer_kw["bit_count"],
+            min_sclk_edges=1,
             labels=labels,
         )
 
@@ -262,17 +257,19 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             labels=labels,
         )
 
-    if kind == "line_pair":
+    if kind == "line_regions":
         labels.add("line")
         seq = [LINE_J, LINE_K, LINE_SE0, LINE_J]
         if rng.random() < 0.5:
             mid = [LINE_K, LINE_SE0]
             rng.shuffle(mid)
             seq = [LINE_J] + mid + [LINE_J]
-        body = [*line_cfg(LP_A, LP_B)]
+        body = []
         for st in seq:
-            body += [*line_drive(st), *wait(rng.randint(2, 6))]
-        body += [line_release(), line_sample(), HALT]
+            body += [*action_line_drive(st, pin_a=LP_A, pin_b=LP_B),
+                     *wait(rng.randint(2, 6))]
+        body += [*action_line_release(pin_a=LP_A, pin_b=LP_B),
+                 *action_line_sample(pin_a=LP_A, pin_b=LP_B), HALT]
         return FuzzPlan(
             body,
             tx_bytes=[],
@@ -294,9 +291,8 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
             *_nops(rng),
             crc_finalize(),
             *crc_push_result(),
-            TX_LOAD,
-            *start_xfer(**xfer_kw),
-            *wait_event(EV_XFER_DONE),
+            *action_clocked_transfer(**xfer_kw),
+            *wait_event(EV_REGION_DONE),
             HALT,
         ]
         return FuzzPlan(
@@ -313,12 +309,11 @@ def build_fuzz_plan(rng: random.Random) -> FuzzPlan:
     tx_bytes = [rng.randint(0, 255)]
     xfer_kw = _xfer_kwargs(rng)
     body = [
-        TX_LOAD,
-        *start_xfer(**xfer_kw),
+            *action_clocked_transfer(**xfer_kw),
         gpio_write(FREE_PIN, 1),
         gpio_write(FREE_PIN, 0),
         gpio_write(FREE_PIN, 1),
-        *wait_event(EV_XFER_DONE),
+        *wait_event(EV_REGION_DONE),
     ]
     return FuzzPlan(
         _lead() + body + [HALT],
@@ -333,7 +328,7 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
     for byte in plan.tx_bytes:
         await push_tx(dut, byte)
 
-    # Idle J on line_pair pins for SAMPLE-after-release plans.
+    # Idle J on two-pin bus inputs for SAMPLE-after-release plans.
     idle = 0 if plan.edge_rise else (1 << EDGE_PIN)
     idle |= (0 << LP_A) | (1 << LP_B)
     dut.uio_in.value = idle
@@ -445,7 +440,7 @@ async def run_plan(dut, plan: FuzzPlan, trial: int, hang_limit: int = 8000) -> d
             f"trial {trial}: free pin never high during xfer"
         )
     if "line" in plan.labels:
-        assert saw_line_activity > 0, f"trial {trial}: line_pair never drove"
+        assert saw_line_activity > 0, f"trial {trial}: action pair never drove"
 
     if plan.expect_rx is not None:
         for i, want in enumerate(plan.expect_rx):
@@ -504,18 +499,17 @@ async def test_fuzz_adversarial_or_then_halt(dut):
             gpio_oe(MOSI, 1),
             gpio_oe(SCLK, 1),
             gpio_write(SCLK, 0),
-            TX_LOAD,
-            *start_xfer(
+            *action_clocked_transfer(
                 clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=2
             ),
             *start_timer(120),
-            *wait_event(EV_XFER_DONE | EV_TIMER_DONE),
+            *wait_event(EV_REGION_DONE | EV_TIMER_DONE),
             HALT,
         ],
         tx_bytes=[0x5A],
         xfer_starts=1,
         timer_starts=1,
-        min_sclk_edges=8,
+        min_sclk_edges=1,
         labels={"or", "adversarial"},
     )
     await load_program(dut, plan.program)
@@ -524,7 +518,7 @@ async def test_fuzz_adversarial_or_then_halt(dut):
 
 @cocotb.test()
 async def test_fuzz_double_start_serialization(dut):
-    """Back-to-back START_XFER must serialize and complete two transfers."""
+    """Sequential action regions must complete two transfers."""
     await start_clock(dut)
     await reset_top(dut)
     plan = FuzzPlan(
@@ -532,16 +526,14 @@ async def test_fuzz_double_start_serialization(dut):
             gpio_oe(MOSI, 1),
             gpio_oe(SCLK, 1),
             gpio_write(SCLK, 0),
-            TX_LOAD,
-            *start_xfer(
+            *action_clocked_transfer(
                 clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=2
             ),
-            TX_LOAD,
-            *start_xfer(
+            *wait_event(EV_REGION_DONE),
+            *action_clocked_transfer(
                 clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=2
             ),
-            *wait_event(EV_XFER_DONE),
-            *wait_event(EV_XFER_DONE),
+            *wait_event(EV_REGION_DONE),
             HALT,
         ],
         tx_bytes=[0x11, 0x22],

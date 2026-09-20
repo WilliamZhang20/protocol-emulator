@@ -6,24 +6,18 @@ TX_LOAD = 0x40
 RX_PUSH = 0x70
 SHIFT_CLEAR = 0xA0
 
-# Opcode 0xA immediate sub-ops (general CRC + line_pair)
+# Opcode 0xA immediate sub-ops (CRC, ALU, and time)
 CRC_SETUP = 0xA1
 CRC_FEED = 0xA2
 CRC_FINALIZE = 0xA3
 CRC_PUSH_LO = 0xA4
 CRC_PUSH_HI = 0xA5
-LINE_CFG = 0xA6
-LINE_DRIVE = 0xA7
-LINE_RELEASE = 0xA8
-LINE_SAMPLE = 0xA9
 
 # Event mask bits (WAIT_EVENT / OR)
-EV_XFER_DONE = 1 << 0
 EV_TIMER_DONE = 1 << 1
 EV_PIN_RISE = 1 << 2
 EV_PIN_FALL = 1 << 3
 EV_COMPARE = 1 << 4
-EV_LINE_CHANGE = 1 << 5
 EV_REGION_DONE = 1 << 6
 
 # Action-engine CPU interface (Phase C/D)
@@ -34,6 +28,12 @@ READ_RESULT = 0xE7
 ACTION_WR_LO = 0xE8
 ACTION_WR_HI = 0xE9
 ACTION_LOAD_SHIFT = 0xEA
+ACTION_WR_LANE_LO = 0xEB
+ACTION_WR_LANE_HI = 0xEC
+EVENT_DETAIL = 0xED
+ACTION_LOAD_SHIFT_HI = 0xEE
+ACTION_PUSH_RESULT = 0xEF
+ACTION_LOAD_TX = 0xC8
 
 # Action word opcodes (bits [15:12])
 ACT_NOP = 0x0
@@ -46,6 +46,8 @@ ACT_NEXT = 0x6
 ACT_DELAY = 0x7
 ACT_REPEAT = 0x8
 ACT_DONE = 0x9
+ACT_PULL = 0xB
+ACT_PUSH = 0xC
 
 
 def wait(cycles: int) -> list[int]:
@@ -183,46 +185,6 @@ def map_pin(logical_pin: int, physical_pin: int) -> list[int]:
     return [0xB0 | (logical_pin & 7), physical_pin & 7]
 
 
-def start_xfer(
-    *,
-    clk_pin: int,
-    tx_pin: int,
-    rx_pin: int,
-    bit_count: int,
-    half_period: int,
-    msb_first: bool = True,
-    clk_idle: int = 0,
-    sample_phase: int = 0,
-    tx_open_drain: bool = False,
-    clk_open_drain: bool = False,
-    wait_clk_high: bool = False,
-) -> list[int]:
-    """Configure and launch the bit-transfer engine without waiting."""
-    if not 1 <= bit_count <= 16:
-        raise ValueError("bit_count must be 1..16")
-    if not 0 <= half_period <= 0xFF:
-        raise ValueError("half_period must fit in 8 bits")
-    cfg = (
-        ((bit_count - 1) & 0xF)
-        | ((1 if msb_first else 0) << 4)
-        | ((clk_idle & 1) << 5)
-        | ((sample_phase & 1) << 6)
-        | ((1 if tx_open_drain else 0) << 7)
-    )
-    pins = (
-        (tx_pin & 7)
-        | ((rx_pin & 7) << 3)
-        | ((1 if clk_open_drain else 0) << 6)
-        | ((1 if wait_clk_high else 0) << 7)
-    )
-    return [0xC0 | (clk_pin & 7), cfg, pins, half_period & 0xFF]
-
-
-def bit_xfer(**kwargs) -> list[int]:
-    """Backward-compatible blocking transfer: START_XFER + WAIT_EVENT XFER_DONE."""
-    return start_xfer(**kwargs) + wait_event(EV_XFER_DONE)
-
-
 def uart_tx_program(wait_cycles: int, pin: int = 0) -> list[int]:
     """Continuous 8-N-1 TX loop; TX_LOAD stalls safely on an empty FIFO."""
     program = [gpio_oe(pin, 1), gpio_write(pin, 1)]
@@ -246,47 +208,30 @@ def uart_rx_program(wait_cycles: int, first_sample_wait: int, pin: int = 0) -> l
 
 
 def spi_master_program(
-    *,
-    mode: int,
-    bit_count: int = 8,
-    half_period: int = 2,
-    mosi: int = 0,
-    miso: int = 1,
-    sclk: int = 2,
-    cs: int = 3,
+    *, mode: int, bit_count: int = 8, half_period: int = 2,
+    mosi: int = 0, miso: int = 1, sclk: int = 2, cs: int = 3,
 ) -> list[int]:
-    """One SPI master transfer via nonblocking START_XFER + WAIT_EVENT."""
+    """One SPI master transaction compiled to an action region."""
     if mode not in (0, 1, 2, 3):
         raise ValueError("SPI mode must be 0..3")
     clk_idle = 1 if mode in (2, 3) else 0
     sample_phase = 1 if mode in (1, 3) else 0
     return [
-        gpio_oe(cs, 1),
-        gpio_write(cs, 1),
-        gpio_oe(mosi, 1),
-        gpio_oe(sclk, 1),
-        gpio_write(sclk, clk_idle),
-        gpio_oe(miso, 0),
-        TX_LOAD,
+        gpio_oe(cs, 1), gpio_write(cs, 1),
+        gpio_oe(mosi, 1), gpio_oe(sclk, 1),
+        gpio_write(sclk, clk_idle), gpio_oe(miso, 0),
         gpio_write(cs, 0),
-        *start_xfer(
-            clk_pin=sclk,
-            tx_pin=mosi,
-            rx_pin=miso,
-            bit_count=bit_count,
-            half_period=half_period,
-            msb_first=True,
-            clk_idle=clk_idle,
-            sample_phase=sample_phase,
+        *action_clocked_transfer(
+            clk_pin=sclk, tx_pin=mosi, rx_pin=miso,
+            bit_count=bit_count, half_period=half_period,
+            msb_first=True, clk_idle=clk_idle, sample_phase=sample_phase,
         ),
-        *wait_event(EV_XFER_DONE),
-        RX_PUSH,
-        gpio_write(cs, 1),
-        HALT,
+        wait_region(), *action_push_result(),
+        gpio_write(cs, 1), HALT,
     ]
 
 
-def overlap_xfer_timer_program(
+def overlap_region_timer_program(
     *,
     half_period: int = 2,
     timer_cycles: int = 80,
@@ -295,15 +240,14 @@ def overlap_xfer_timer_program(
     sclk: int = 2,
     flag_pin: int = 4,
 ) -> list[int]:
-    """Prove VM freedom: START_XFER, toggle a flag, wait XFER_DONE|TIMER_DONE."""
+    """Prove VM freedom: RUN_REGION, toggle a flag, wait REGION_DONE|TIMER_DONE."""
     return [
         gpio_oe(mosi, 1),
         gpio_oe(sclk, 1),
         gpio_oe(flag_pin, 1),
         gpio_write(sclk, 0),
         gpio_write(flag_pin, 0),
-        TX_LOAD,
-        *start_xfer(
+        *action_clocked_transfer(
             clk_pin=sclk,
             tx_pin=mosi,
             rx_pin=miso,
@@ -312,71 +256,43 @@ def overlap_xfer_timer_program(
         ),
         *start_timer(timer_cycles),
         gpio_write(flag_pin, 1),
-        *wait_event(EV_XFER_DONE),
+        *wait_event(EV_REGION_DONE),
         *wait_event(EV_TIMER_DONE),
-        RX_PUSH,
+        *action_push_result(),
         gpio_write(flag_pin, 0),
         HALT,
     ]
 
 
 def i2c_write_byte_program(
-    *,
-    sda: int = 0,
-    scl: int = 1,
-    half_period: int = 2,
+    *, sda: int = 0, scl: int = 1, half_period: int = 2,
     with_ack_xfer: bool = True,
 ) -> list[int]:
-    """I2C master: START, 8-bit write via BIT_XFER, optional ACK bit, STOP."""
+    """I2C master START/write/ACK/STOP using action regions."""
     program = [
-        gpio_oe(sda, 1),
-        gpio_write(sda, 1),
-        gpio_oe(scl, 1),
-        gpio_write(scl, 1),
-        TX_LOAD,
-        gpio_write(sda, 0),
-        *wait(half_period),
-        gpio_write(scl, 0),
-        *bit_xfer(
-            clk_pin=scl,
-            tx_pin=sda,
-            rx_pin=sda,
-            bit_count=8,
-            half_period=half_period,
-            msb_first=True,
-            clk_idle=0,
-            sample_phase=0,
-            tx_open_drain=True,
-            clk_open_drain=True,
-            wait_clk_high=True,
+        gpio_oe(sda, 1), gpio_write(sda, 1),
+        gpio_oe(scl, 1), gpio_write(scl, 1),
+        gpio_write(sda, 0), *wait(half_period), gpio_write(scl, 0),
+        *action_clocked_transfer(
+            clk_pin=scl, tx_pin=sda, rx_pin=sda, bit_count=8,
+            half_period=half_period, msb_first=True, clk_idle=0,
+            tx_open_drain=True, clk_open_drain=True, wait_clk_high=True,
         ),
+        wait_region(),
     ]
     if with_ack_xfer:
         program += [
-            TX_LOAD,
-            *bit_xfer(
-                clk_pin=scl,
-                tx_pin=sda,
-                rx_pin=sda,
-                bit_count=1,
-                half_period=half_period,
-                msb_first=True,
-                clk_idle=0,
-                sample_phase=0,
-                tx_open_drain=True,
-                clk_open_drain=True,
-                wait_clk_high=True,
+            *action_clocked_transfer(
+                clk_pin=scl, tx_pin=sda, rx_pin=sda, bit_count=1,
+                half_period=half_period, msb_first=True, clk_idle=0,
+                tx_open_drain=True, clk_open_drain=True, wait_clk_high=True,
             ),
-            RX_PUSH,
+            wait_region(), *action_push_result(shift=7),
         ]
     program += [
-        gpio_oe(sda, 1),
-        gpio_write(sda, 0),
-        gpio_oe(scl, 1),
-        gpio_write(scl, 1),
-        *wait(half_period),
-        gpio_oe(sda, 0),
-        HALT,
+        gpio_oe(sda, 1), gpio_write(sda, 0),
+        gpio_oe(scl, 1), gpio_write(scl, 1),
+        *wait(half_period), gpio_oe(sda, 0), HALT,
     ]
     return program
 
@@ -388,7 +304,7 @@ DM_PIN = 1
 # LS bit time at 50 MHz ≈ 33 cycles (1.5 Mb/s). Use a round value for smoke.
 LS_BIT_CYCLES = 33
 
-# Line-pair state codes (match line_pair RTL)
+# Two-pin line state codes used by action programs
 LINE_SE0 = 0
 LINE_J = 1
 LINE_K = 2
@@ -472,51 +388,20 @@ JTAG_TMS = 3
 
 
 def jtag_shift_dr_program(
-    *,
-    tck: int = JTAG_TCK,
-    tms: int = JTAG_TMS,
-    tdi: int = JTAG_TDI,
-    tdo: int = JTAG_TDO,
+    *, tck: int = JTAG_TCK, tms: int = JTAG_TMS,
+    tdi: int = JTAG_TDI, tdo: int = JTAG_TDO,
     half_period: int = 4,
 ) -> list[int]:
-    """One Shift-DR byte via the generic shift engine (TMS held low)."""
+    """One Shift-DR byte using the generic action region."""
     return [
-        gpio_oe(tms, 1),
-        gpio_oe(tdi, 1),
-        gpio_oe(tck, 1),
-        gpio_oe(tdo, 0),
-        gpio_write(tck, 0),
-        gpio_write(tms, 0),
-        TX_LOAD,
-        *start_xfer(
-            clk_pin=tck,
-            tx_pin=tdi,
-            rx_pin=tdo,
-            bit_count=8,
-            half_period=half_period,
-            msb_first=True,
+        gpio_oe(tms, 1), gpio_oe(tdi, 1), gpio_oe(tck, 1),
+        gpio_oe(tdo, 0), gpio_write(tck, 0), gpio_write(tms, 0),
+        *action_clocked_transfer(
+            clk_pin=tck, tx_pin=tdi, rx_pin=tdo,
+            bit_count=8, half_period=half_period, msb_first=True,
         ),
-        *wait_event(EV_XFER_DONE),
-        RX_PUSH,
-        HALT,
+        wait_region(), *action_push_result(), HALT,
     ]
-
-
-def line_cfg(pin_a: int = DP_PIN, pin_b: int = DM_PIN, jk_swap: bool = False) -> list[int]:
-    pins = (pin_a & 7) | ((pin_b & 7) << 3) | ((1 if jk_swap else 0) << 6)
-    return [LINE_CFG, pins]
-
-
-def line_drive(state: int) -> list[int]:
-    return [LINE_DRIVE, state & 3]
-
-
-def line_release() -> int:
-    return LINE_RELEASE
-
-
-def line_sample() -> int:
-    return LINE_SAMPLE
 
 
 def line_state_smoke_program(
@@ -528,7 +413,7 @@ def line_state_smoke_program(
     """Phase-0 smoke: drive J / K / SE0 / J on a pin pair using only GPIO+WAIT16.
 
     LS idle is J (D+ = 0, D− = 1) with a board pull-up on D−. No CRC or
-    line_pair resource — proves timing headroom before dedicated engines.
+    dedicated line resources — proves GPIO timing headroom.
     """
     def drive(dp_v: int, dm_v: int) -> list[int]:
         return [gpio_write(dp, dp_v), gpio_write(dm, dm_v), *wait(bit_cycles)]
@@ -546,28 +431,18 @@ def line_state_smoke_program(
     ]
 
 
-def line_pair_smoke_program(
-    *,
-    dp: int = DP_PIN,
-    dm: int = DM_PIN,
+def action_line_smoke_program(
+    *, dp: int = DP_PIN, dm: int = DM_PIN,
     bit_cycles: int = LS_BIT_CYCLES,
 ) -> list[int]:
-    """Drive J/K/SE0/J via line_pair, sample final idle after release."""
-    return [
-        *line_cfg(dp, dm),
-        *line_drive(LINE_J),
-        *wait(bit_cycles),
-        *line_drive(LINE_K),
-        *wait(bit_cycles),
-        *line_drive(LINE_SE0),
-        *wait(bit_cycles),
-        *line_drive(LINE_J),
-        *wait(bit_cycles),
-        line_release(),
-        # Host/cocotb may drive idle J on uio_in while OE is released.
-        line_sample(),
-        HALT,
-    ]
+    """Drive J/K/SE0/J with action regions and sample idle after release."""
+    program = []
+    for state in (LINE_J, LINE_K, LINE_SE0, LINE_J):
+        program += action_line_drive(state, pin_a=dp, pin_b=dm)
+        program += wait(bit_cycles)
+    program += action_line_release(pin_a=dp, pin_b=dm)
+    program += action_line_sample(pin_a=dp, pin_b=dm)
+    return program + [HALT]
 
 
 def crc_usb16_demo_program(data: list[int]) -> list[int]:
@@ -597,25 +472,22 @@ def ls_ack_packet_program(
     # ACK PID 0xD2 = 11010010 LSB-first bits; NRZI from last SYNC state (K):
     # bit0=0 -> toggle to J, 1=J, 0=K, 0=J, 1=J, 0=K, 1=K, 1=K — approximate demo
     ack = [LINE_J, LINE_J, LINE_K, LINE_J, LINE_J, LINE_K, LINE_K, LINE_K]
-    program = [*line_cfg(dp, dm), *line_drive(LINE_J), *wait(bit_cycles)]
+    program = [*action_line_drive(LINE_J, pin_a=dp, pin_b=dm), *wait(bit_cycles)]
     for st in sync + ack:
-        program += [*line_drive(st), *wait(bit_cycles)]
-    # EOP: SE0 for two bit times, then J
+        program += [*action_line_drive(st, pin_a=dp, pin_b=dm), *wait(bit_cycles)]
     program += [
-        *line_drive(LINE_SE0),
+        *action_line_drive(LINE_SE0, pin_a=dp, pin_b=dm),
+        *wait(bit_cycles), *wait(bit_cycles),
+        *action_line_drive(LINE_J, pin_a=dp, pin_b=dm),
         *wait(bit_cycles),
-        *wait(bit_cycles),
-        *line_drive(LINE_J),
-        *wait(bit_cycles),
-        line_release(),
-        HALT,
+        *action_line_release(pin_a=dp, pin_b=dm), HALT,
     ]
     return program
 
 
 # 1-Wire demo (logical pin 0, sim-scaled slot times, ratios preserved).
 # Presence is reported via ARM/WAIT_EVENT + EVENT_STAMP (cause carries FALL);
-# RX_PUSH only carries shifter bytes, so the report byte cannot come from TX.
+# RX_PUSH carries the manual shifter byte, not the TX byte.
 OW_PIN = 0
 OW_RESET_LOW = 40
 OW_SLOT = 12
@@ -702,8 +574,22 @@ def action_done() -> int:
     return action_word(ACT_DONE)
 
 
+def action_pull_tx(bits: int = 8, msb_first: bool = True) -> int:
+    """Region-local TX pop; PC holds until data is available."""
+    if not 1 <= bits <= 16:
+        raise ValueError("transfer width must be 1..16")
+    return action_word(ACT_PULL, bits | (0x20 if msb_first else 0))
+
+
+def action_push_rx(high: bool = False, shift: int = 0) -> int:
+    """Region-local RX push; PC holds while the host RX FIFO is full."""
+    if not 0 <= shift <= 7:
+        raise ValueError("result shift must be 0..7")
+    return action_word(ACT_PUSH, (1 if high else 0) | (shift << 1))
+
+
 def prog_action(slot: int, word: int) -> list[int]:
-    """Write one 16-bit action slot (lo then hi)."""
+    """Write an action slot, including its optional parallel lane."""
     return [
         ACTION_WR_LO,
         slot & 7,
@@ -711,7 +597,23 @@ def prog_action(slot: int, word: int) -> list[int]:
         ACTION_WR_HI,
         slot & 7,
         (word >> 8) & 0xFF,
+        *([ACTION_WR_LANE_LO, slot & 7, (word >> 16) & 0xFF,
+           ACTION_WR_LANE_HI, slot & 7, (word >> 24) & 0xFF]
+          if word >> 16 else []),
     ]
+
+
+def action_parallel_gpio(pin: int, *, out: int | None = None,
+                         oe: int | None = None, sample: bool = False) -> int:
+    """Encode the upper lane of a 32-bit action word."""
+    lane = (1 << 15) | ((pin & 7) << 8)
+    if out is not None:
+        lane |= (1 << 12) | ((out & 1) << 11)
+    if oe is not None:
+        lane |= (1 << 14) | ((oe & 1) << 13)
+    if sample:
+        lane |= 1 << 7
+    return lane << 16
 
 
 def run_region(slot: int = 0) -> list[int]:
@@ -737,6 +639,22 @@ def action_load_shift(data: int) -> list[int]:
     return [ACTION_LOAD_SHIFT, data & 0xFF]
 
 
+def action_load_shift_hi(data: int) -> list[int]:
+    return [ACTION_LOAD_SHIFT_HI, data & 0xFF]
+
+
+def action_push_result(high: bool = False, shift: int = 0) -> list[int]:
+    if not 0 <= shift <= 7:
+        raise ValueError("result byte shift must be 0..7")
+    return [ACTION_PUSH_RESULT, (1 if high else 0) | (shift << 1)]
+
+
+def action_load_tx(bits: int = 8, msb_first: bool = True) -> list[int]:
+    if not 1 <= bits <= 16:
+        raise ValueError("transfer width must be 1..16")
+    return [ACTION_LOAD_TX, (bits & 0x1F) | (0x20 if msb_first else 0)]
+
+
 def action_gpio_pulse_program(*, pin: int = 0, delay: int = 4) -> list[int]:
     """Program a 3-slot region: OE+drive high, delay, done — then run/join."""
     region = [
@@ -752,9 +670,15 @@ def action_gpio_pulse_program(*, pin: int = 0, delay: int = 4) -> list[int]:
     ]
 
 
-def action_shift(*, pin: int, shift_in: bool = False, msb_first: bool = False) -> int:
-    """SHIFT action: out (default) or in; LSB-first unless msb_first."""
-    args = (pin & 7) | ((1 if msb_first else 0) << 10) | ((1 if shift_in else 0) << 11)
+def action_shift(*, pin: int, shift_in: bool = False, msb_first: bool = False,
+                 rx_pin: int = 0, duplex: bool = False,
+                 open_drain: bool = False) -> int:
+    """SHIFT action with optional simultaneous receive and open-drain TX."""
+    args = ((pin & 7) | ((rx_pin & 7) << 4) |
+            ((1 if open_drain else 0) << 8) |
+            ((1 if duplex else 0) << 9) |
+            ((1 if msb_first else 0) << 10) |
+            ((1 if shift_in else 0) << 11))
     return action_word(ACT_SHIFT, args)
 
 
@@ -827,7 +751,7 @@ def action_repeat_n_program(*, pin: int = 0, extras: int = 2, pulse: int = 3) ->
 
 
 def action_read_result_program(*, sample_pin: int = 2, marker_pin: int = 3) -> list[int]:
-    """SAMPLE a high pin, READ_RESULT, JNZ marker — proves result → RF path."""
+    """READ_RESULT immediately after launch waits and forwards final result."""
     region = [
         *prog_action(0, action_sample(sample_pin)),
         *prog_action(1, action_done()),
@@ -837,7 +761,6 @@ def action_read_result_program(*, sample_pin: int = 2, marker_pin: int = 3) -> l
         gpio_write(marker_pin, 0),
         *region,
         *run_region(0),
-        wait_region(),
         *read_result(0),
     ]
     # layout: prefix | JNZ(3) | HALT | gpio_write | HALT
@@ -848,4 +771,89 @@ def action_read_result_program(*, sample_pin: int = 2, marker_pin: int = 3) -> l
         HALT,
         gpio_write(marker_pin, 1),
         HALT,
+    ]
+
+
+def action_sample_acc(pin: int, *, msb_first: bool) -> int:
+    return action_word(ACT_SAMPLE, (1 << 11) | ((1 if msb_first else 0) << 10) | (pin & 7))
+
+
+def action_count_djnz_done(target_slot: int) -> int:
+    return action_word(ACT_COUNT, (0b11 << 10) | (1 << 9) | (target_slot & 7))
+
+
+def action_clocked_transfer(
+    *, clk_pin: int, tx_pin: int, rx_pin: int, bit_count: int,
+    half_period: int, msb_first: bool = True, clk_idle: int = 0,
+    sample_phase: int = 0, tx_open_drain: bool = False,
+    clk_open_drain: bool = False, wait_clk_high: bool = False,
+) -> list[int]:
+    """Compile a clocked transfer to eight generic action slots and launch it."""
+    if not 1 <= bit_count <= 16:
+        raise ValueError("bit_count must be 1..16")
+    if not 0 <= half_period <= 0xFF:
+        raise ValueError("half_period must fit in 8 bits")
+    period = max(1, half_period)
+    idle_oe = 0 if clk_open_drain and clk_idle else 1
+    active_oe = 0 if clk_open_drain and not clk_idle else 1
+    idle_out = 0 if clk_open_drain else clk_idle
+    active_out = 0 if clk_open_drain else 1 - clk_idle
+    # COUNT, launch data/idle clock, setup time, active clock, hold time,
+    # sample RX, idle clock, loop-or-done. Data and clock change in parallel.
+    region = [
+        action_count_load(bit_count),
+        action_shift(pin=tx_pin, msb_first=msb_first,
+                     open_drain=tx_open_drain) |
+            action_parallel_gpio(clk_pin, out=idle_out, oe=idle_oe),
+        action_delay(period),
+        action_parallel_gpio(clk_pin, out=active_out, oe=active_oe),
+        action_word(ACT_DELAY, period | ((1 << 11) | ((clk_pin & 7) << 8)
+                                  if wait_clk_high else 0)),
+        action_sample_acc(rx_pin, msb_first=msb_first) |
+            (action_parallel_gpio(clk_pin, out=idle_out, oe=idle_oe)
+             if sample_phase else 0),
+        action_parallel_gpio(clk_pin, out=idle_out, oe=idle_oe)
+            if not sample_phase else action_word(ACT_NOP),
+        action_count_djnz_done(1),
+    ]
+    program = []
+    for slot, word in enumerate(region):
+        program += prog_action(slot, word)
+    program += [*action_load_tx(bit_count, msb_first), *run_region(0)]
+    return program
+
+
+def action_line_drive(state: int, *, pin_a: int = DP_PIN,
+                      pin_b: int = DM_PIN, jk_swap: bool = False) -> list[int]:
+    a, b = {
+        LINE_SE0: (0, 0), LINE_J: (0, 1),
+        LINE_K: (1, 0), LINE_SE1: (1, 1),
+    }[state]
+    if jk_swap and state in (LINE_J, LINE_K):
+        a, b = b, a
+    return [
+        *prog_action(0, action_gpio(pin=pin_a, out=a, oe=1) |
+                     action_parallel_gpio(pin_b, out=b, oe=1)),
+        *prog_action(1, action_done()),
+        *run_region(0), wait_region(),
+    ]
+
+
+def action_line_release(*, pin_a: int = DP_PIN,
+                        pin_b: int = DM_PIN) -> list[int]:
+    return [
+        *prog_action(0, action_gpio(pin=pin_a, oe=0) |
+                     action_parallel_gpio(pin_b, oe=0)),
+        *prog_action(1, action_done()),
+        *run_region(0), wait_region(),
+    ]
+
+
+def action_line_sample(*, pin_a: int = DP_PIN, pin_b: int = DM_PIN,
+                       jk_swap: bool = False) -> list[int]:
+    pair = action_word(0xA, (pin_a & 7) | ((pin_b & 7) << 3) |
+                            ((1 if jk_swap else 0) << 6))
+    return [
+        *prog_action(0, pair), *prog_action(1, action_done()),
+        *run_region(0), wait_region(), *action_push_result(),
     ]

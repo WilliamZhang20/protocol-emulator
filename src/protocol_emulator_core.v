@@ -26,7 +26,6 @@ module protocol_emulator_core (
   wire [7:0] operand_mid;
   wire [7:0] operand_ext;
   wire       operand_ext_valid;
-  wire       idle_clear;
   wire [3:0] opcode;
   wire [3:0] immediate;
 
@@ -40,8 +39,6 @@ module protocol_emulator_core (
   wire timer_load;
   wire timer_async;
   wire timer_count_enable;
-  wire bit_xfer_start;
-  wire [7:0] xfer_half_period;
   wire arm_edges;
   wire wait_event_clear;
   wire crc_setup;
@@ -49,10 +46,6 @@ module protocol_emulator_core (
   wire crc_finalize;
   wire crc_push_lo;
   wire crc_push_hi;
-  wire line_cfg;
-  wire line_drive;
-  wire line_release;
-  wire line_sample;
   wire alu_set;
   wire alu_mov;
   wire alu_op;
@@ -62,6 +55,7 @@ module protocol_emulator_core (
   wire time_rd;
   wire time_wait_active;
   wire ev_stamp;
+  wire ev_detail;
   wire time_satisfied;
   wire sideset_apply;
   wire [2:0] sideset_pin;
@@ -71,28 +65,41 @@ module protocol_emulator_core (
   wire crc_push_b3;
   wire action_wr_lo;
   wire action_wr_hi;
+  wire action_wr_lane_lo;
+  wire action_wr_lane_hi;
   wire action_start;
   wire action_load_shift;
+  wire action_load_shift_hi;
+  wire action_load_tx;
   wire action_read_result;
+  wire action_push_result;
   wire wait_region_active;
   wire wait_region_clear;
   wire action_busy;
+  wire action_table_ready;
   wire action_done;
   wire [15:0] action_result;
   wire action_crc_feed;
   wire [7:0] action_crc_byte;
   wire crc_busy;
 
-  wire bit_xfer_busy;
-  wire bit_xfer_done;
   wire event_wait_matched;
   wire timer_expired;
   wire [7:0] gpio_sampled;
+  wire [7:0] gpio_timed;
   wire [7:0] gpio_rising;
   wire [7:0] gpio_falling;
+  wire cpu_tx_pop;
+  wire cpu_rx_push;
   wire gpio_compare_match;
   wire pin_wait_satisfied =
       gpio_sampled[immediate[2:0]] == immediate[3];
+  // A region reserves its entire pin set at launch. A CPU pin operation
+  // waits at the execute boundary until that region releases its claim.
+  wire cpu_pin_conflict = action_busy &&
+      (((opcode == 4'h2 || opcode == 4'h3 || opcode == 4'h5) &&
+        action_claim[immediate[2:0]]) ||
+       (sideset_apply && action_claim[sideset_pin]));
 
   vm_sequencer sequencer (
       .clk(clk),
@@ -101,8 +108,9 @@ module protocol_emulator_core (
       .instruction_data(instruction_data),
       .tx_empty(tx_empty),
       .rx_full(rx_full),
-      .bit_xfer_busy(bit_xfer_busy),
       .action_busy(action_busy),
+      .action_table_ready(action_table_ready),
+      .cpu_pin_conflict(cpu_pin_conflict),
       .crc_busy(crc_busy),
       .event_wait_matched(event_wait_matched),
       .timer_expired(timer_expired),
@@ -118,7 +126,6 @@ module protocol_emulator_core (
       .operand_ext_valid(operand_ext_valid),
       .halted(halted),
       .instruction_read(instruction_read),
-      .idle_clear(idle_clear),
       .opcode(opcode),
       .immediate(immediate),
       .execute_gpio_write(execute_gpio_write),
@@ -131,21 +138,15 @@ module protocol_emulator_core (
       .timer_load(timer_load),
       .timer_async(timer_async),
       .timer_count_enable(timer_count_enable),
-      .bit_xfer_start(bit_xfer_start),
-      .xfer_half_period(xfer_half_period),
       .arm_edges(arm_edges),
       .wait_event_clear(wait_event_clear),
-      .tx_pop(tx_pop),
-      .rx_push(rx_push),
+      .tx_pop(cpu_tx_pop),
+      .rx_push(cpu_rx_push),
       .crc_setup(crc_setup),
       .crc_feed(crc_feed),
       .crc_finalize(crc_finalize),
       .crc_push_lo(crc_push_lo),
       .crc_push_hi(crc_push_hi),
-      .line_cfg(line_cfg),
-      .line_drive(line_drive),
-      .line_release(line_release),
-      .line_sample(line_sample),
       .alu_set(alu_set),
       .alu_mov(alu_mov),
       .alu_op(alu_op),
@@ -153,6 +154,7 @@ module protocol_emulator_core (
       .time_rd(time_rd),
       .time_wait_active(time_wait_active),
       .ev_stamp(ev_stamp),
+      .ev_detail(ev_detail),
       .time_satisfied(time_satisfied),
       .sideset_apply(sideset_apply),
       .sideset_pin(sideset_pin),
@@ -162,9 +164,14 @@ module protocol_emulator_core (
       .crc_push_b3(crc_push_b3),
       .action_wr_lo(action_wr_lo),
       .action_wr_hi(action_wr_hi),
+      .action_wr_lane_lo(action_wr_lane_lo),
+      .action_wr_lane_hi(action_wr_lane_hi),
       .action_start(action_start),
       .action_load_shift(action_load_shift),
+      .action_load_shift_hi(action_load_shift_hi),
+      .action_load_tx(action_load_tx),
       .action_read_result(action_read_result),
+      .action_push_result(action_push_result),
       .wait_region_active(wait_region_active),
       .wait_region_clear(wait_region_clear)
   );
@@ -272,8 +279,9 @@ module protocol_emulator_core (
     else
       cycle_ctr <= cycle_ctr + 1'b1;
   end
-  // WAIT_UNTIL Rn stalls in TIME_WAIT until ctr[15:0] >= Rn (unsigned).
-  assign time_satisfied = cycle_ctr[15:0] >= rf_rd_b;
+  // WAIT_UNTIL uses modular half-range comparison across 16-bit wrap.
+  // Deadlines must be less than 32768 cycles from the current time.
+  assign time_satisfied = $signed(cycle_ctr[15:0] - rf_rd_b) >= 0;
 
   crc_engine u_crc (
       .clk(clk),
@@ -295,6 +303,9 @@ module protocol_emulator_core (
   wire [7:0] action_oe_value;
   wire [7:0] action_oe_mask;
   wire [7:0] action_claim;
+  wire action_tx_pop;
+  wire action_rx_push;
+  wire [7:0] action_rx_data;
   // E5 RUN_REGION id,count supplies count on the high operand byte.
   wire is_run_region_count = opcode == 4'he && immediate == 4'h5;
   // E4 start samples the slot from instruction_data on LOW_WAIT (operand_low
@@ -308,18 +319,38 @@ module protocol_emulator_core (
       .enable(enable),
       .wr_lo(action_wr_lo),
       .wr_hi(action_wr_hi),
+      .wr_lane_lo(action_wr_lane_lo),
+      .wr_lane_hi(action_wr_lane_hi),
       .wr_slot(operand_low[2:0]),
       .wr_data(instruction_data),
       .load_shift(action_load_shift),
+      .load_shift_hi(action_load_shift_hi),
+      .load_tx(action_load_tx),
+      .tx_data(tx_data),
+      .tx_empty(tx_empty),
+      .tx_pop(action_tx_pop),
+      .rx_full(rx_full),
+      .rx_push(action_rx_push),
+      .rx_data(action_rx_data),
+      .tx_bits(instruction_data[4:0] == 5'd0 ? 5'd16 : instruction_data[4:0]),
+      .tx_msb_first(instruction_data[5]),
       .shift_data(instruction_data),
+      .manual_load(execute_tx_load || execute_shift_clear),
+      .manual_data(execute_tx_load ? tx_data : 8'b0),
+      .manual_shift(execute_shift_out || execute_shift_in),
+      .manual_serial_in(gpio_sampled[immediate[2:0]]),
+      .manual_serial_out(shifter_serial_out),
+      .shift_parallel(shifter_parallel),
       .start(action_start),
       .start_slot(action_start_slot),
       .repeat_count(is_run_region_count ? instruction_data : 8'b0),
       .pin_sampled(gpio_sampled),
+      .pin_timed(gpio_timed),
       .crc_busy(crc_busy),
       .crc_feed(action_crc_feed),
       .crc_byte(action_crc_byte),
       .busy(action_busy),
+      .table_ready(action_table_ready),
       .done_pulse(action_done),
       .result(action_result),
       .drive_enable(action_drive_enable),
@@ -330,70 +361,16 @@ module protocol_emulator_core (
       .claim(action_claim)
   );
 
-  wire [7:0] line_claim;
-  wire line_drive_enable;
-  wire [7:0] line_out_value;
-  wire [7:0] line_out_mask;
-  wire [7:0] line_oe_value;
-  wire [7:0] line_oe_mask;
-  wire [1:0] line_sampled_state;
-  wire [1:0] line_sample_comb;
-  wire line_changed;
-
-  line_pair lines (
-      .clk(clk),
-      .rst_n(rst_n),
-      .cfg_write(line_cfg),
-      .pin_a(instruction_data[2:0]),
-      .pin_b(instruction_data[5:3]),
-      .jk_swap(instruction_data[6]),
-      .drive(line_drive),
-      .drive_state(instruction_data[1:0]),
-      .release_line(line_release),
-      .sample(line_sample),
-      .pin_sampled(gpio_sampled),
-      .claim(line_claim),
-      .drive_enable(line_drive_enable),
-      .drive_out_value(line_out_value),
-      .drive_out_mask(line_out_mask),
-      .drive_oe_value(line_oe_value),
-      .drive_oe_mask(line_oe_mask),
-      .sampled_state(line_sampled_state),
-      .sample_comb(line_sample_comb),
-      .state_changed(line_changed)
-  );
-
-  wire engine_drive_enable;
-  wire [7:0] engine_out_value;
-  wire [7:0] engine_out_mask;
-  wire [7:0] engine_oe_value;
-  wire [7:0] engine_oe_mask;
   wire shifter_serial_out;
   wire [15:0] shifter_parallel;
-  wire shifter_done;
-  wire [7:0] xfer_pin_claim;
+  wire [7:0] action_pin_claim;
   wire gpio_output_write;
   wire [7:0] gpio_value;
   wire [7:0] gpio_output_mask;
   wire [7:0] gpio_oe_value;
   wire [7:0] gpio_oe_mask;
-  wire [7:0] start_claim =
-      (8'b1 << operand_mid[2:0]) | (8'b1 << immediate[2:0]);
 
   gpio_arbiter gpio_arb (
-      .clk(clk),
-      .rst_n(rst_n),
-      .enable(enable),
-      .force_clear(idle_clear),
-      .bit_xfer_start(bit_xfer_start),
-      .bit_xfer_done(bit_xfer_done),
-      .start_claim(start_claim),
-      .line_claim(line_claim),
-      .line_drive_enable(line_drive_enable),
-      .line_out_value(line_out_value),
-      .line_out_mask(line_out_mask),
-      .line_oe_value(line_oe_value),
-      .line_oe_mask(line_oe_mask),
       .action_claim(action_claim),
       .action_drive_enable(action_drive_enable),
       .action_out_value(action_out_value),
@@ -409,12 +386,7 @@ module protocol_emulator_core (
       .sideset_apply(sideset_apply),
       .sideset_pin(sideset_pin),
       .sideset_val(sideset_val),
-      .engine_drive_enable(engine_drive_enable),
-      .engine_out_value(engine_out_value),
-      .engine_out_mask(engine_out_mask),
-      .engine_oe_value(engine_oe_value),
-      .engine_oe_mask(engine_oe_mask),
-      .pin_claim(xfer_pin_claim),
+      .pin_claim(action_pin_claim),
       .gpio_output_write(gpio_output_write),
       .gpio_value(gpio_value),
       .gpio_output_mask(gpio_output_mask),
@@ -439,54 +411,20 @@ module protocol_emulator_core (
       .compare_value(immediate[3] ? (8'b1 << immediate[2:0]) : 8'b0),
       .compare_mask(8'b1 << immediate[2:0]),
       .sampled_value(gpio_sampled),
+      .timed_value(gpio_timed),
       .rising_edges(gpio_rising),
       .falling_edges(gpio_falling),
       .compare_match(gpio_compare_match)
   );
 
-  bit_transfer_engine bit_xfer (
-      .clk(clk),
-      .rst_n(rst_n),
-      .load(execute_tx_load || execute_shift_clear),
-      .shift_enable(execute_shift_out || execute_shift_in),
-      .shift_right(1'b1),
-      .serial_in(gpio_sampled[immediate[2:0]]),
-      .parallel_in(execute_tx_load ? {8'b0, tx_data} : 16'b0),
-      .bit_count(5'd8),
-      .serial_out(shifter_serial_out),
-      .parallel_out(shifter_parallel),
-      .shift_done(shifter_done),
-      .start(bit_xfer_start),
-      .cfg_bit_count_m1(operand_low[3:0]),
-      .cfg_msb_first(operand_low[4]),
-      .cfg_clk_idle(operand_low[5]),
-      .cfg_sample_phase(operand_low[6]),
-      .cfg_tx_open_drain(operand_low[7]),
-      .cfg_clk_open_drain(operand_mid[6]),
-      .cfg_wait_clk_high(operand_mid[7]),
-      .cfg_tx_pin(operand_mid[2:0]),
-      .cfg_rx_pin(operand_mid[5:3]),
-      .cfg_clk_pin(immediate[2:0]),
-      .cfg_half_period(xfer_half_period),
-      .pin_sampled(gpio_sampled),
-      .busy(bit_xfer_busy),
-      .done(bit_xfer_done),
-      .drive_enable(engine_drive_enable),
-      .drive_out_value(engine_out_value),
-      .drive_out_mask(engine_out_mask),
-      .drive_oe_value(engine_oe_value),
-      .drive_oe_mask(engine_oe_mask)
-  );
-
   wire [7:0] event_pending;
+  wire [7:0] event_detail;
 
   event_engine events (
       .clk(clk),
       .rst_n(rst_n),
-      .xfer_done_pulse(bit_xfer_done),
       .timer_done_pulse(timer_done_pulse),
       .region_done_pulse(action_done),
-      .line_changed_pulse(line_changed),
       .arm_edges(arm_edges),
       .rise_enable(operand_low),
       .fall_enable(instruction_data),
@@ -497,6 +435,7 @@ module protocol_emulator_core (
       .wait_clear(wait_event_clear || wait_region_clear),
       .wait_mask(wait_region_active ? 8'h40 : operand_low),
       .pending(event_pending),
+      .event_detail(event_detail),
       .wait_matched(event_wait_matched)
   );
 
@@ -507,6 +446,7 @@ module protocol_emulator_core (
   // Only time_hi is latched: time_lo is read live from cycle_ctr[7:0].
   reg [7:0] stamp_time_hi;
   reg [7:0] stamp_cause;
+  reg [7:0] stamp_detail;
   reg [1:0] stamp_idx;
   // Byte 0 pushes the live counter low byte (the registered latch lands the
   // same cycle, too late for the push); bytes 1-2 use the latched snapshot
@@ -517,11 +457,13 @@ module protocol_emulator_core (
     if (!rst_n || !enable) begin
       stamp_time_hi <= 8'b0;
       stamp_cause <= 8'b0;
+      stamp_detail <= 8'b0;
       stamp_idx <= 2'b0;
     end else if (ev_stamp) begin
       if (stamp_idx == 2'd0) begin
         stamp_time_hi <= cycle_ctr[15:8];
         stamp_cause <= event_pending;
+        stamp_detail <= event_detail;
       end
       if (stamp_idx == 2'd2)
         stamp_idx <= 2'b0;
@@ -531,19 +473,24 @@ module protocol_emulator_core (
   end
 
   assign instruction_address = program_counter;
-  assign rx_data =
+  assign rx_data = action_rx_push ? action_rx_data :
       crc_push_lo ? crc_value[7:0] :
       crc_push_hi ? crc_value[15:8] :
       crc_push_b2 ? crc_value[23:16] :
       crc_push_b3 ? crc_value[31:24] :
-      line_sample ? {6'b0, line_sample_comb} :
+      ev_detail ? stamp_detail :
       ev_stamp ? stamp_byte :
+      action_push_result ? ((instruction_data[0] ? action_result[15:8] :
+                             action_result[7:0]) << instruction_data[4:1]) :
       shifter_parallel[15:8];
+
+  assign tx_pop = cpu_tx_pop || action_tx_pop;
+  assign rx_push = cpu_rx_push || action_rx_push;
 
   wire _unused = &{instruction, opcode, operand_ext, operand_ext_valid,
                    timer_count, timer_busy, gpio_compare_match,
-                   shifter_parallel[7:0], shifter_done, event_pending,
-                   crc_busy, xfer_pin_claim, state, line_sampled_state, 1'b0};
+                   shifter_parallel[7:0], event_pending,
+                   crc_busy, action_pin_claim, state, 1'b0};
 endmodule
 
 `default_nettype wire

@@ -1,4 +1,4 @@
-"""Orchestration tests: nonblocking START_XFER, WAIT_EVENT, overlapped timer.
+"""Orchestration tests: nonblocking RUN_REGION, WAIT_EVENT, overlapped timer.
 
 Black-box only — observes host status and `uio_*` pins (GL-safe).
 """
@@ -17,15 +17,14 @@ from cocotb_tests.common import (
 from cocotb_tests.reference.programs import (
     EV_PIN_RISE,
     EV_TIMER_DONE,
-    EV_XFER_DONE,
+    EV_REGION_DONE,
     HALT,
-    TX_LOAD,
     arm_edges,
     gpio_oe,
     gpio_write,
-    overlap_xfer_timer_program,
+    overlap_region_timer_program,
     start_timer,
-    start_xfer,
+    action_clocked_transfer,
     wait_event,
 )
 
@@ -69,11 +68,11 @@ async def run_until_halt(
 
 
 @cocotb.test()
-async def test_nonblocking_xfer_vm_overlap(dut):
-    """VM toggles a flag while bit-xfer runs; WAIT_EVENT joins both resources."""
+async def test_nonblocking_region_vm_overlap(dut):
+    """VM toggles a flag while region runs; WAIT_EVENT joins both resources."""
     await start_clock(dut)
     await reset_top(dut)
-    await load_program(dut, overlap_xfer_timer_program(half_period=2, timer_cycles=60))
+    await load_program(dut, overlap_region_timer_program(half_period=2, timer_cycles=60))
     await push_tx(dut, 0xA5)
     dut.uio_in.value = 0
     await start_engine(dut)
@@ -93,7 +92,7 @@ async def test_nonblocking_xfer_vm_overlap(dut):
         prev_sclk = sclk if sclk is not None else prev_sclk
 
     await run_until_halt(dut, timeout=2000, on_cycle=on_cycle)
-    assert saw_flag_high_during_xfer, "VM did not run while XFER was clocking"
+    assert saw_flag_high_during_xfer, "VM did not run while region was clocking"
 
 
 @cocotb.test()
@@ -105,12 +104,11 @@ async def test_wait_event_or_timeout(dut):
         gpio_oe(MOSI, 1),
         gpio_oe(SCLK, 1),
         gpio_write(SCLK, 0),
-        TX_LOAD,
-        *start_xfer(clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=4),
+            *action_clocked_transfer(clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=4),
         *start_timer(5),  # timer finishes first
-        *wait_event(EV_XFER_DONE | EV_TIMER_DONE),
+        *wait_event(EV_REGION_DONE | EV_TIMER_DONE),
         gpio_write(MOSI, 1),  # marker: reached after OR wait
-        *wait_event(EV_XFER_DONE),
+        *wait_event(EV_REGION_DONE),
         HALT,
     ]
     await load_program(dut, program)
@@ -159,7 +157,7 @@ async def test_edge_event_wake(dut):
 
 @cocotb.test()
 async def test_gpio_ownership_blocks_vm(dut):
-    """VM GPIO writes to XFER-owned pins are ignored while the engine runs."""
+    """VM GPIO writes to region-owned pins wait until the region completes."""
     await start_clock(dut)
     await reset_top(dut)
     program = [
@@ -167,11 +165,10 @@ async def test_gpio_ownership_blocks_vm(dut):
         gpio_oe(SCLK, 1),
         gpio_write(SCLK, 0),
         gpio_write(MOSI, 0),
-        TX_LOAD,
-        *start_xfer(clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=3),
-        # Attempt to force MOSI high while XFER owns it — should not stick via VM path
+            *action_clocked_transfer(clk_pin=SCLK, tx_pin=MOSI, rx_pin=MISO, bit_count=8, half_period=3),
+        # Attempt to force MOSI high while the region owns it; execution waits.
         gpio_write(MOSI, 1),
-        *wait_event(EV_XFER_DONE),
+        *wait_event(EV_REGION_DONE),
         HALT,
     ]
     await load_program(dut, program)

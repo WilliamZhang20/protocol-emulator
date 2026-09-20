@@ -58,3 +58,33 @@ async def test_crc32_empty_and_short(dut):
     got = await run_crc32(dut, [0x00])
     want = binascii.crc32(bytes([0x00])) & 0xFFFFFFFF
     assert got == want, f"got {got:#010x} want {want:#010x}"
+
+
+@cocotb.test()
+async def test_cpu_crc_waits_for_action_crc_owner(dut):
+    """A CPU feed after RUN_REGION cannot collide with the region feed."""
+    from cocotb_tests.reference.programs import (
+        HALT, ACT_CRC, action_delay, action_done, action_load_shift,
+        action_word, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        0xE1,  # CRC-32 IEEE setup
+        *action_load_shift(0x12),
+        *prog_action(0, action_word(ACT_CRC)),
+        *prog_action(1, action_delay(80)),
+        *prog_action(2, action_done()),
+        *run_region(0),
+        0xA2, 0x34,  # CPU CRC_FEED; must wait for region release
+        wait_region(),
+        0xA3, 0xA4, 0xA5, 0xE2, 0xE3, HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    await wait_until_halted(dut, timeout_cycles=6000)
+    raw = [await pop_rx(dut) for _ in range(4)]
+    got = sum(byte << (8 * i) for i, byte in enumerate(raw))
+    want = binascii.crc32(bytes([0x12, 0x34])) & 0xFFFFFFFF
+    assert got == want, f"CRC collision: got {got:#010x}, want {want:#010x}"

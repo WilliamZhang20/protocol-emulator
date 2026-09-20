@@ -1,4 +1,4 @@
-"""GL-safe tests for line-state smoke, CRC, line_pair, and soft LS ACK TX."""
+"""GL-safe tests for line-state smoke, CRC, action line regions, and soft LS ACK TX."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from cocotb_tests.reference.programs import (
     crc_usb16_demo_program,
     crc_usb16_setup,
     crc_usb5_setup,
-    line_pair_smoke_program,
+    action_line_smoke_program,
     line_state_smoke_program,
     ls_ack_packet_program,
 )
@@ -149,13 +149,13 @@ async def test_crc_usb5_token_residue(dut):
 
 
 @cocotb.test()
-async def test_line_pair_drive_and_sample(dut):
-    """line_pair drives J/K/SE0 and SAMPLE returns idle J after release."""
+async def test_action_line_drive_and_sample(dut):
+    """Action regions drive J/K/SE0 and SAMPLE returns idle J after release."""
     await start_clock(dut)
     await reset_top(dut)
     # While OE released, pull idle J on the bus inputs.
     dut.uio_in.value = (0 << DP_PIN) | (1 << DM_PIN)
-    await load_program(dut, line_pair_smoke_program(bit_cycles=4))
+    await load_program(dut, action_line_smoke_program(bit_cycles=4))
     await start_engine(dut)
 
     seen_states = []
@@ -213,3 +213,38 @@ async def test_ls_soft_ack_packet_tx(dut):
     assert LINE_K in states
     assert LINE_SE0 in states
     assert states.count(LINE_SE0) >= 1
+
+@cocotb.test()
+async def test_action_region_two_pin_levels(dut):
+    """Parallel GPIO actions produce the J/K/SE0 levels in one cycle."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio,
+        action_parallel_gpio, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    region = [
+        *prog_action(0, action_gpio(pin=DP_PIN, out=0, oe=1) |
+                     action_parallel_gpio(DM_PIN, out=1, oe=1)),
+        *prog_action(1, action_delay(5)),
+        *prog_action(2, action_gpio(pin=DP_PIN, out=1, oe=1) |
+                     action_parallel_gpio(DM_PIN, out=0, oe=1)),
+        *prog_action(3, action_delay(5)),
+        *prog_action(4, action_gpio(pin=DP_PIN, out=0, oe=1) |
+                     action_parallel_gpio(DM_PIN, out=0, oe=1)),
+        *prog_action(5, action_delay(5)),
+        *prog_action(6, action_done()),
+    ]
+    await load_program(dut, [*region, *run_region(0), wait_region(), HALT])
+    await start_engine(dut)
+    states = []
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        pair = (driven_level(dut, DP_PIN), driven_level(dut, DM_PIN))
+        if pair in ((0, 1), (1, 0), (0, 0)) and (not states or pair != states[-1]):
+            states.append(pair)
+        if cycle % 64 == 63 and not status_running(await read_status(dut)):
+            break
+    assert states[:3] == [(0, 1), (1, 0), (0, 0)], states
+    await wait_until_halted(dut, timeout_cycles=200)

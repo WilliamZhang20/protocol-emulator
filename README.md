@@ -8,13 +8,17 @@ bytes through TX/RX FIFOs, and starts the engine. Timing, shifting, GPIO output
 and output-enable control, pin mapping, waits, and branches are protocol-neutral;
 UART behavior is supplied entirely by the SRAM image.
 
-The current milestone (Phase A baseline) includes working UART TX and RX
-programs, a synchronous nibble-command host interface, 8×16 RF + ALU +
-branches, configurable GPIO, FIFOs, generic CRC, timer, event scoreboard with
-nonblocking START/WAIT_EVENT orchestration, and the complete SRAM-backed
-fetch/execute path. Bit-transfer and line-pair helpers remain for demos but
-are on the Phase B deprecation path toward a programmable action engine — see
-[architecture.md](docs/architecture.md).
+The RTL includes UART TX/RX, a synchronous host interface, an 8×16 register
+file and ALU, configurable GPIO, TX/RX FIFOs, generic CRC and timer resources,
+and an eight-slot programmable action engine. SPI, I²C, JTAG, and low-speed
+line patterns are action-region programs; the old bit-transfer and line-pair
+blocks and opcodes have been removed. See [architecture.md](docs/architecture.md).
+
+Regions can pull TX bytes and push RX bytes directly, with FIFO backpressure.
+At launch they reserve their pin set; conflicting CPU writes wait while timer,
+ALU, and unrelated GPIO work continues. CRC and action-table accesses are
+serialized against the running region. GPIO mapping remains one-to-one by
+swapping physical assignments.
 
 ## Local verification
 
@@ -34,7 +38,7 @@ make verify
 - a standalone compile/test of the delivered foundry SRAM model;
 - a flattened-synthesis check that requires the LibreLane-visible SRAM instance
   to be named `program_memory.sram`;
-- cocotb smoke, UART, bit-transfer, orchestration, and fuzz tests through the
+- cocotb smoke, UART, clocked-region, orchestration, and fuzz tests through the
   top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   required Metal4 PDN, and the SRAM Metal3 M3.f keepout;

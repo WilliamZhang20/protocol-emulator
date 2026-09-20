@@ -12,18 +12,20 @@ from a small CPU plus reusable datapaths steered by a programmable action
 engine. New ISA and RTL work must not add protocol-shaped instructions or
 FSMs (no further `LINE_*`, SPI/I²C/JTAG modes, USB helpers, etc.).
 
-The first implementation contains one engine. Execution resources and external
-interfaces stay separable so later versions can add engines, event routing, and
-autonomous data movement without replacing the programming model.
+The implementation is a hazard-aware protocol processor: the control CPU
+launches cycle-exact action regions asynchronously, pin and shared-unit
+scoreboards stall conflicting instructions, completed results forward into the
+CPU, and synchronized events join the two execution paths. It contains one
+action engine and no protocol-specific RTL engines.
 
 ## Roadmap (Phases A–D)
 
 | Phase | Goal |
 | --- | --- |
 | **A — baseline** | Lock the reusable core. Keep shipping demos on current RTL. |
-| **B — remove baggage** | Deprecate specialized blocks once the action engine covers them. |
-| **C — action engine** | Tiny programmable action slots replace protocol-shaped FSMs. |
-| **D — CPU ↔ action** | Region launch/join ISA so the CPU can overlap with actions. |
+| **B — remove baggage** | Removed the transfer and line-pair blocks after migrating demos. |
+| **C — action engine** | Eight programmable action slots generate protocol waveforms. |
+| **D — CPU ↔ action** | Region launch/join ISA lets the CPU overlap actions. |
 
 ### Phase A — baseline (locked)
 
@@ -45,57 +47,37 @@ semantics remain frozen as previously characterized. Additive ISA is allowed
 only when it serves the action-engine path (Phases C–D) or fixes baseline
 gaps (e.g. pin-to-reg read). **Do not add protocol-specific instructions.**
 
-### Phase B — remove architectural baggage
+### Phase B — remove architectural baggage (complete)
 
-Eventually remove or deprecate once the action engine can implement the same
-patterns in programs:
-
-| Legacy block | Why it goes |
-| --- | --- |
-| `line_pair` + `LINE_*` (`A6`–`A9`) | Differential SE0/J/K/SE1 is GPIO + timing |
-| SPI-shaped bit-transfer FSM + `START_XFER` | Clocked shift is actions + counter/shifter |
-
-These blocks still work and stay tested until cutover. New programs should
-prefer GPIO/timer/CRC composition (and, once available, action regions) over
-`LINE_*` / `START_XFER`.
-
-Target conceptual silicon:
-
-```text
-BEFORE                              AFTER
-CPU                                 CPU
- ├─ bit-transfer engine              ├─ programmable action engine
- ├─ line-pair engine                 ├─ CRC datapath
- ├─ timer                            └─ generic shift/counter datapath
- └─ CRC
-```
-
-CRC, shifter, and counter become reusable functional units controlled by
-action words, not autonomous protocol-shaped FSMs. A simple timer may remain
-as a counter configuration or a thin CPU-visible wrapper; it must not grow
-into another protocol accelerator.
+The protocol-shaped bit-transfer and line-pair engines and their bytecode
+instructions were removed. SPI, I²C, JTAG, and two-pin line programs now
+compile to action regions. UART and 1-Wire bit-bang instructions use the
+shared action shift register for their manual shift path.
 
 ### Phase C — action engine (start tiny)
 
 Initial shape (implemented):
 
-- **8 action slots** × 16-bit action words
+- **8 action slots** × 32-bit action words
 - **1 action per cycle** (deterministic; `DELAY` holds without advancing)
 
-Each action word is `{op[3:0], args[11:0]}`:
+Each action word has a primary low half `{op[3:0], args[11:0]}` and an independent upper GPIO lane. `EB slot data` and `EC slot data` program upper bytes 0 and 1. The upper lane is `{enable, oe_we, oe_val, out_we, out_val, pin[2:0], sample, reserved[6:0]}`. It can change another pin while the low action shifts or samples on the same clock.
 
 | `op` | Name | Args |
 | --- | --- | --- |
 | `0` | `NOP` | — |
 | `1` | `GPIO` | `[11]=oe_we, [10]=oe_val, [9]=out_we, [8]=out_val, [2:0]=pin` |
-| `2` | `SAMPLE` | `[2:0]=pin` → `result` / `sample_bit` |
-| `3` | `SHIFT` | `[11]=in, [10]=msb_first, [2:0]=pin` |
-| `4` | `COUNT` | `[11:10]=load/inc/dec/djnz`, imm / target slot |
+| `2` | `SAMPLE` | `[11]=accumulate, [10]=msb_first, [2:0]=pin`; updates `result` and `sample_bit` |
+| `3` | `SHIFT` | `[11]=in, [10]=msb_first, [9]=duplex RX, [8]=open-drain TX, [6:4]=RX pin, [2:0]=TX pin` |
+| `4` | `COUNT` | `[11:10]=load/inc/dec/djnz`, `[9]=finish region when DJNZ reaches zero`, imm / target slot |
 | `5` | `CRC` | feed `shift[7:0]` into the shared CRC datapath |
 | `6` | `NEXT` | `[11:8]=cond`, `[2:0]=slot` |
-| `7` | `DELAY` | `[7:0]=cycles` |
+| `7` | `DELAY` | `[7:0]=cycles`; `[11]` also waits for sampled `[10:8]` pin high |
 | `8` | `REPEAT` | `[2:0]=slot` (intra-region jump) |
 | `9` | `DONE` | clear claims; on final pass pulse `EV_REGION_DONE` (repeats first) |
+| `A` | `PAIR` | Sample pins A `[2:0]`, B `[5:3]`, swap J/K `[6]` into SE0/J/K/SE1 result |
+| `B` | `PULL_TX` | Pop TX into the shift register; `[4:0]=bits` (0 means 16), `[5]=MSB first`; stalls on empty |
+| `C` | `PUSH_RX` | Push a result byte; `[0]=high byte`, `[4:1]=left shift`; stalls on full |
 
 That set is enough to generate surprisingly complex protocols (SPI-like
 clocked bytes, open-drain ACK bits, differential line patterns, CRC-framed
@@ -107,65 +89,68 @@ packets) without dedicating RTL to any one of them.
 | --- | --- |
 | `E8 slot data` | `ACTION_WR_LO`: write action `[slot][7:0]` |
 | `E9 slot data` | `ACTION_WR_HI`: write action `[slot][15:8]` |
-| `EA data` | `ACTION_LOAD_SHIFT`: preload shift register low byte |
+| `EA data` / `EE data` | Preload action shift register low/high byte |
 | `E4 id` | `RUN_REGION id` (nonblocking; `id` = start slot) |
 | `E5 id count` | `RUN_REGION id, count` (`count` = extra passes after first) |
 | `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` (bit 6, token-counted) |
 | `E7 rd` | `READ_RESULT Rd`: copy action result into the register file |
+| `C8 cfg` | Pop TX FIFO into action shift register; `cfg={2'b0,msb_first,bits[4:0]}` |
+| `EF select` | Push selected action result byte, optionally shifted |
 
 The CPU runs while a region executes (`RUN_REGION` is nonblocking). Join with
 `WAIT_REGION` or `WAIT_EVENT` mask bit 6. Region completion posts a
 token-counted event so overlapped timeouts and multi-resource joins stay
 expressible.
 
-## System structure (current silicon)
+### Resource and completion hazards
+
+At launch, the action engine scans the programmed region slots and reserves
+every GPIO pin mentioned by a primary or parallel action, including sampled
+pins. The claim stays active across repeats and is released on final
+completion. A CPU GPIO write or side-set to a reserved pin waits at its
+instruction boundary; writes to other pins can overlap. `MAP` swaps the
+requested physical pin with its current logical owner, maintaining a
+permutation, and waits until a region finishes before changing that map.
+Thus distinct logical claims always refer to distinct physical pins.
+
+Action-table writes and shift preloads wait until the region is idle, so the
+running region sees a stable control image. CPU manual shifts use the same
+rule. A slot becomes launch-ready only after its primary high byte, and a
+parallel-lane low byte makes it unready until the lane high byte arrives;
+`RUN_REGION` waits for all programmed slots to be ready. `READ_RESULT` and
+`PUSH_RESULT` wait for completion and then consume the
+finished result. `WAIT_REGION` receives a counted completion token, including
+when the region finished before the CPU reached the wait instruction.
+`HALT` also waits for an outstanding region so the host cannot disable it
+mid-transaction.
+
+The running region owns the shared TX/RX FIFO ports and CRC datapath. CPU FIFO
+and CRC operations wait until that ownership ends; action `PULL_TX` and
+`PUSH_RX` have valid/ready behavior and hold their PC on empty/full. Action
+`CRC` queues one byte and advances the action PC. A second CRC action waits
+for queue space, and region completion waits for the queued byte to commit.
+This serializes shared-unit use while independent CPU timer, ALU, and
+unclaimed-pin instructions continue.
+
+External pins have two sampling paths. A two-flop synchronizer with
+`async_reg` attributes supplies waits, edges, compare, and event capture.
+An explicit action `SAMPLE`, `SHIFT`, or `PAIR` uses the single-clock timed
+sample when protocol timing establishes an input eye; a region's conditional
+delay still checks the synchronized input.
+
+## System structure
 
 ```text
-                         Host control and data
-                                  |
-                         +------------------+
-                         |  Host interface  |
-                         +------------------+
-                           |      |      |
-                    program|    TX|      |RX
-                           v      v      ^
-                    +----------+  +--------+
-                    | Program  |  | FIFOs  |
-                    |   SRAM   |  +--------+
-                    +----------+      |
-                         |             |
-                         v             v
-                    +---------------------+
-                    |   Protocol engine   |
-                    | sequencing + state  |
-                    +---------------------+
-                       |       |       |
-                  +--------+ +-----+ +--------+
-                  | timers | |bit  | | GPIO   |
-                  |counts  | |xfer | | fabric |
-                  +--------+ +-----+ +--------+
-                                          |
-                                   Physical protocol pins
+Host interface ── SRAM program ── Protocol CPU ── Action engine
+     │                                │              │
+   TX/RX FIFOs                      timer       shift / count / GPIO / CRC
+                                                     │
+                                              Physical protocol pins
 ```
 
-Target structure after Phases C–D (baggage removed):
-
-```text
-                    +---------------------+
-                    |   Protocol CPU      |
-                    | RF + ALU + branches |
-                    +----------+----------+
-                               |
-                    +----------v----------+
-                    |  Action engine      |
-                    |  8 slots, 1 act/cyc |
-                    +--+--------+-------+-+
-                       |        |       |
-                  +----v--+ +---v---+ +-v------+
-                  | shift | | CRC   | | GPIO   |
-                  |/count | | path  | | fabric |
-                  +-------+ +-------+ +--------+
-```
+The action engine has eight 32-bit slots. Each slot combines a primary
+operation with an optional parallel GPIO update. A region runs independently
+of the CPU, and completion posts `EV_REGION_DONE`.
 
 The architecture has two conceptual planes:
 
@@ -241,20 +226,15 @@ where applicable:
 | `AB rsrd` | `MOV Rd, Rs`: `rsrd = {Rs[2:0], Rd[2:0]}`, updates zero flag |
 | `AC op rsrd` | ALU `Rd = Rd op Rs`, `op`: 0 ADD, 1 SUB, 2 AND, 3 OR, 4 XOR, 5 SHL, 6 SHR |
 | `AD rd` | `GET_TIME Rd`: `Rd` = global cycle-counter low 16 bits |
-| `AE rn` | `WAIT_UNTIL Rn`: stall until counter `[15:0]` >= `Rn` (unsigned) |
+| `AE rn` | `WAIT_UNTIL Rn`: wait for an absolute 16-bit deadline using modular half-range comparison (deadline within 32767 cycles) |
 | `AF` | `EVENT_STAMP`: push one byte; 3 consecutive stamps = time_lo/time_hi/cause |
 | `9vppp` | Wait until a logical input pin equals `v` |
-| `A0` | Clear the bit-transfer shift register |
+| `A0` | Clear the shared action shift register for manual receive |
 | `A1 cfg poly_lo poly_hi` | `CRC_SETUP`: width/ref/xor/init in `cfg`, 16-bit poly |
 | `A2 data` | `CRC_FEED`: absorb one byte |
 | `A3` | `CRC_FINALIZE`: apply refout/xorout to residue |
 | `A4` / `A5` | Push CRC low/high byte to RX FIFO |
-| `A6 pins` | `LINE_CFG`: `{jk_swap, pin_b[2:0], pin_a[2:0]}` *(legacy; Phase B)* |
-| `A7 state` | `LINE_DRIVE`: `state` in `{SE0,J,K,SE1}` *(legacy; Phase B)* |
-| `A8` | `LINE_RELEASE`: drop OE/claim on the pair *(legacy; Phase B)* |
-| `A9` | `LINE_SAMPLE`: push sampled state code to RX *(legacy; Phase B)* |
-| `Bppp qq` | Map logical pin `ppp` to physical pin `qq` |
-| `Cppp cfg pins half` | `START_XFER`: configure and launch bit-transfer *(legacy; Phase B)* |
+| `Bppp qq` | Swap logical pin `ppp` onto physical pin `qq` (preserves a permutation) |
 | `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
 | `E0 ll hh` | `START_TIMER`: nonblocking timer; sets `EV_TIMER_DONE` on expiry |
 | `E1` | `CRC32_SETUP`: one-pulse IEEE-802.3 CRC-32 init (width 32, poly `0x04C11DB7`) |
@@ -263,64 +243,53 @@ where applicable:
 | `E5 id count` | `RUN_REGION` with `count` extra repeats after the first pass |
 | `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` |
 | `E7 rd` | `READ_RESULT`: action result → `Rd` |
-| `E8 slot data` / `E9 slot data` | Program action slot lo/hi byte |
-| `EA data` | `ACTION_LOAD_SHIFT`: preload action shift register |
+| `E8 slot data` / `E9 slot data` | Program action low half lo/hi byte |
+| `EB slot data` / `EC slot data` | Program parallel lane lo/hi byte |
+| `ED` | Push source and pin detail captured with the most recent `EVENT_STAMP` |
+| `EE data` | Preload action shift register high byte |
+| `EF select` | Push selected action result byte; `[0]` selects high, `[4:1]` left-shifts that byte |
+| `EA data` | Preload action shift register low byte |
+| `C8 cfg` | Pop TX FIFO to action shift register; `cfg={2'b0,msb_first,bits[4:0]}` (`bits=0` means 16) |
 | `F0 rise fall` | `ARM_EDGE`: arm rise/fall masks (`imm0` also arms compare) |
 
 ### Orchestration model
 
-Resources run concurrently with the VM. Launch is nonblocking; joining uses
-events:
+The CPU programs action slots and launches a region with `E4`. A region can
+pull and push payload bytes itself. The CPU can start a timer or update
+unclaimed GPIO while the region runs. `WAIT_REGION` or `WAIT_EVENT` bit 6
+joins completion; `READ_RESULT` and `EF` access the completed result.
 
 ```text
-TX_LOAD
-START_XFER
-START_TIMER        ; VM is free — both resources run
-WAIT_EVENT XFER_DONE
+program action slots
+ACTION_LOAD_TX
+RUN_REGION
+START_TIMER
+WAIT_EVENT REGION_DONE
 WAIT_EVENT TIMER_DONE
-RX_PUSH
+ACTION_PUSH_RESULT
 ```
 
-After Phase D, the preferred pattern is the same shape with regions:
-
-```text
-TX_LOAD
-RUN_REGION spi_byte
-START_TIMER          ; optional overlapped timeout
-; CPU may continue useful work here
-WAIT_REGION          ; or WAIT_EVENT REGION_DONE
-READ_RESULT
-```
-
-`WAIT_EVENT` ORs its mask against a sticky pending vector. `XFER_DONE` and
-`TIMER_DONE` are **token-counted** (so back-to-back completions are not lost);
-edge/compare sources are level-sticky. Typical bits:
+`WAIT_EVENT` ORs its mask against the pending vector. Timer and region
+completions are token-counted; edge and compare sources are sticky.
 
 | Bit | Name | Source |
 | --- | --- | --- |
-| 0 | `EV_XFER_DONE` | bit-transfer engine done pulse *(legacy join)* |
+| 0 | Reserved | — |
 | 1 | `EV_TIMER_DONE` | async timer expiry |
-| 2 | `EV_PIN_RISE` | armed rising edges |
-| 3 | `EV_PIN_FALL` | armed falling edges |
-| 4 | `EV_COMPARE` | armed GPIO compare match |
-| 5 | `EV_LINE_CHANGE` | `line_pair` sampled state changed *(legacy)* |
-| 6 | `EV_REGION_DONE` | action-engine region done pulse |
+| 2 | `EV_PIN_RISE` | armed rising edge |
+| 3 | `EV_PIN_FALL` | armed falling edge |
+| 4 | `EV_COMPARE` | armed GPIO compare |
+| 5 | Reserved | — |
+| 6 | `EV_REGION_DONE` | action region completion |
 
-`WAIT_EVENT(XFER_DONE \| TIMER_DONE)` wakes on the first of the two (timeout-or-
-complete). To require both, issue two waits with single-bit masks (events are
-sticky).
+`EVENT_STAMP` (`AF`) still emits time low, time high, and pending cause in
+three calls. `EVENT_DETAIL` (`ED`) then pushes the detail latched with the
+first stamp: source in bits 7:4 and logical pin in bits 2:0. Source values are
+1 timer, 2 rise, 3 fall, 4 compare, and 6 region; non-pin sources report pin 0.
 
-`START_XFER` claims the TX and CLK pins for the duration of the transfer; VM
-GPIO writes to claimed pins are ignored so two drivers cannot fight. Blocking
-`WAIT16` remains for UART-style bit bang.
-
-`Cppp cfg pins half` operand layout (legacy bit-transfer engine):
-
-| Byte | Fields |
-| --- | --- |
-| `cfg` | `{tx_od, sample_phase, clk_idle, msb_first, bit_count_m1[3:0]}` |
-| `pins` | `{wait_clk_high, clk_od, rx_pin[2:0], tx_pin[2:0]}` |
-| `half` | half-period in engine clocks (`0` means `1`) |
+Action regions claim pins as they drive them. VM writes and side-set updates
+on claimed pins are ignored. The shared 16-bit shift register also serves
+manual UART and 1-Wire bit operations while no region is running.
 
 The synchronous SRAM path has deterministic instruction overhead. In the
 supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
@@ -332,7 +301,7 @@ and every operand byte costs 2 (`REQUEST` + `WAIT`). So single-byte ops
 (`GPIO_WRITE`, `SHIFT_OUT/IN`, `TX_LOAD` hit, `RX_PUSH` hit, `SET`-prefix
 `SIDESET`) cost 3; one-operand ops (`MAP`, `CRC_FEED`, `MOV`, `GET_TIME`,
 `WAIT_UNTIL` entry) cost 5; two-operand ops (`WAIT16`/`START_TIMER`/`ARM_EDGE`
-entry, `JMP`/`JZ`/`JNZ`/`DJNZ`, `SET`, ALU) cost 7; `START_XFER`/`CRC_SETUP`
+entry, `JMP`/`JZ`/`JNZ`/`DJNZ`, `SET`, ALU) cost 7; `CRC_SETUP`
 cost 9 plus resource-busy stall. `WAIT16(N)` totals `N + 11` including the
 following bit operation's fetch. Stalls (`TX` empty, `RX` full, `WAIT_PIN`,
 `WAIT_EVENT`, `WAIT_UNTIL`, `TIMER_WAIT`) add one cycle per waiting clock.
@@ -356,36 +325,27 @@ temporary protocol data, driven by a tiny ALU (`SET`/`MOV`/`ADD`/`SUB`/`AND`/
 `OR`/`XOR`/`SHL`/`SHR`) with a zero flag feeding `JZ`/`JNZ`/`DJNZ` branches.
 Dedicated counters and shift storage handle operations that would otherwise
 require long software sequences while remaining reusable across protocols.
-Phase C folds those dedicated paths under action-word control.
+The action words steer shared shift and count state.
 
-### Bit-transfer engine *(legacy; Phase B)*
+### Clocked transfer regions
 
-Autonomous FSM for repetitive clocked transfers:
-
-`IDLE → DRIVE_DATA → CLOCK_ACTIVE → SAMPLE → CLOCK_IDLE → … → DONE`
-
-Launched with `START_XFER` (nonblocking). Completion is observed through
-`EV_XFER_DONE` and `WAIT_EVENT`. The same resource covers SPI and I²C data
-bytes; framing stays in bytecode. Clock idle/phase, open-drain, and
-stretch-wait bits are generic shift primitives, not SPI/I²C modes.
-
-**Replacement:** action-engine sequences of GPIO / shift / counter / sample /
-done. Until that lands, existing programs and tests may keep using
-`START_XFER`. New demos should not depend on extending this FSM.
+Clocked transfers use an eight-slot template: load count, launch TX and idle
+clock, delay, activate clock, delay or wait for a released clock, accumulate
+RX, restore idle clock, and decrement or finish. The same template expresses
+SPI clock polarity/phase, open-drain I²C, and JTAG. `OP_PAIR` samples a
+SE0/J/K/SE1 two-pin state for differential-style line programs.
 
 ### Event engine
 
 Sticky pending bits from resources and pin activity. `WAIT_EVENT` is the join
 primitive that turns the VM into an orchestrator. Edge and compare sources are
-armed with `ARM_EDGE`. Phase D adds region-done as a first-class join source
-(or reuses a dedicated event bit).
+armed with `ARM_EDGE`. Region completion posts the dedicated bit-6 token.
 
 ### Timers and counters
 
 `WAIT16` remains a blocking delay. `START_TIMER` runs the same counter
-autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts. Longer
-term, count/delay primitives in the action engine should absorb most
-protocol-rate timing that today uses the SPI-shaped transfer FSM.
+autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts. Action
+count and delay primitives handle protocol-rate timing within regions.
 
 ### Configurable GPIO fabric
 
@@ -415,19 +375,10 @@ are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
 `CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
 bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
 
-**Pipelined for timing:** each `CRC_FEED` / reflect-out `CRC_FINALIZE` runs
-bit-serially (one CRC bit per clock) with `busy` asserted. The VM and action
-engine stall on `busy` so the old 8-bit combinational unroll cannot miss the
-20 ns setup budget. Phase C still exposes CRC update as an action primitive.
-
-### Line-pair helper *(legacy; Phase B)*
-
-`line_pair` drives or samples a two-pin state `{SE0, J, K, SE1}` with optional
-J/K polarity swap. Intended for differential-style soft buses (e.g. low-speed
-USB bitbang). Framing, NRZI, and PIDs stay in SRAM programs.
-
-**Replacement:** GPIO value/OE actions (or plain `GPIO_WRITE` + waits today).
-See `line_state_smoke_program` for the CPU-only path already in tree.
+**Pipelined for timing:** `CRC_FEED` processes two bits per clock (four
+cycles per byte). Reflect-out `CRC_FINALIZE` remains bit-serial. The VM
+waits on `busy`; the action engine uses a one-byte issue queue so following
+actions can proceed while the CRC byte is processed.
 
 ## Reprogrammability model
 
@@ -462,45 +413,24 @@ engine and execution resources.
 
 ## Soft low-speed USB (non-compliant demo)
 
-With GPIO/timers alone, or with legacy `line_pair` + `crc_engine`, bytecode can
+With GPIO actions, timers, and the generic CRC datapath, bytecode can
 emit LS line patterns at ~1.5 Mb/s on two `uio` pins. Board notes: wire D+/D−
 to `uio[0]`/`uio[1]`, 1.5 kΩ pull-up on D− for LS device idle J, series
 resistors as needed. Not USB-IF compliant — analyzer / cocotb host only.
-Prefer GPIO-composed programs for new work; retire `LINE_*` with Phase B.
+The LS examples use parallel GPIO actions for J/K/SE0 states.
 
 ## Growth path
 
-### Cutover notes: deprecate, don't delete (until Phase B complete)
+### Further work
 
-The following older blocks still work and stay covered by tests; new
-programs should avoid them:
-
-- `line_pair` + `LINE_*` (`A6`-`A9`): kept for existing USB-LS images.
-  New differential buses should drive pin pairs with `GPIO_WRITE` + `WAIT`
-  (see `line_state_smoke_program`) — and later with action regions.
-- Bit-transfer FSM + `START_XFER` (`Cppp…`): kept for SPI/I²C demos until
-  action-engine shift/counter sequences replace them.
-- Per-instruction `MAP` (`Bppp qq`): configure logical-to-physical bindings
-  once at load time; rebinding mid-program stays legal but is discouraged.
-- Nibble host commands `1`-`B` are extended (not replaced) by level/peek
-  reads `C`/`D` for polled streaming drivers. A true byte-wide streaming
-  mode needs a pinout change and stays future work.
-- A deeper prefetch queue stays deferred (see exact-timing note above).
-
-### What to build next
-
-1. **Action engine MVP (Phase C):** 8 slots, 1 action/cycle, primitives listed
-   above; CRC and shift/counter as shared units under action control.
-2. **CPU interface (Phase D):** `RUN_REGION` / `WAIT_REGION` / `READ_RESULT`
-   with overlapped CPU execution where practical.
-3. **Prove replacements:** reimplement SPI byte, I²C ACK bit, and LS line
-   patterns as action regions; then deprecate `START_XFER` / `LINE_*`.
-4. Only then consider multi-engine, DMA, or richer event routing.
+- Configure logical-to-physical pin bindings once at load time where possible.
+- A byte-wide host streaming mode needs a pinout change.
+- A deeper instruction prefetch queue could reduce VM instruction overhead.
+- Multi-engine event routing and DMA remain future options.
 
 ### Explicit non-goals
 
 - New protocol-specific opcodes or FSMs (USB, 1-Wire, CAN, …).
-- Growing the bit-transfer or line-pair engines with more modes.
 - Specialized accelerators that duplicate what action words + CRC/shift/count
   can already express.
 

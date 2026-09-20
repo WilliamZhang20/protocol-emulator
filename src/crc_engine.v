@@ -5,8 +5,8 @@
 // init/xor ones, refin/refout). Reflect-in on feed, reflect-out/xor applied
 // only when `finalize` pulses.
 //
-// Timing: byte feed and reflect-out finalize are bit-serial (one bit / clock)
-// so the former 8-step combinational unroll cannot miss a 20 ns setup.
+// Timing: byte feed processes two bits per clock; reflect-out finalize
+// remains bit-serial. This avoids the former 8-step combinational path.
 // `busy` stays high while a multi-cycle op runs; the VM / action engine stall.
 module crc_engine (
     input  wire        clk,
@@ -96,22 +96,25 @@ module crc_engine (
     end else begin
       case (phase)
         ST_FEED: begin
-          begin : feed_bit
+          begin : feed_pair
             reg [31:0] c;
-            reg top;
-            reg bit_in;
+            reg feedback;
+            integer bit_index;
             c = state;
-            bit_in = feed_shift[7];
-            top = (|( (c >> top_shift_r) & 32'h00000001 )) ^ bit_in;
-            c = ({c[30:0], 1'b0}) & width_mask_r;
-            if (top)
-              c = (c ^ poly_r) & width_mask_r;
+            // Two CRC steps per cycle; keeps the feedback path short while
+            // halving the byte latency of the former serial implementation.
+            for (bit_index = 7; bit_index >= 6; bit_index = bit_index - 1) begin
+              feedback = c[top_shift_r[4:0]] ^ feed_shift[bit_index];
+              c = {c[30:0], 1'b0} & width_mask_r;
+              if (feedback)
+                c = (c ^ poly_r) & width_mask_r;
+            end
             state <= c;
             crc <= c;
-            feed_shift <= {feed_shift[6:0], 1'b0};
-            if (bits_left == 6'd1)
+            feed_shift <= {feed_shift[5:0], 2'b0};
+            if (bits_left == 6'd2)
               phase <= ST_IDLE;
-            bits_left <= bits_left - 6'd1;
+            bits_left <= bits_left - 6'd2;
           end
         end
         ST_EMIT: begin
