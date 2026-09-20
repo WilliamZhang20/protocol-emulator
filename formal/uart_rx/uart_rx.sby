@@ -5,12 +5,13 @@ cover
 [options]
 bmc: mode bmc
 cover: mode cover
+cover: timeout 120
 depth 300
 multiclock on
 
 [engines]
 bmc: abc bmc3
-cover: smtbmc boolector
+cover: btor btormc
 
 [script]
 read -formal -sv instruction_decoder.v

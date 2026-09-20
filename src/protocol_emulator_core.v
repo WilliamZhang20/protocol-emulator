@@ -412,6 +412,7 @@ module protocol_emulator_core (
       .compare_mask(8'b1 << immediate[2:0]),
       .sampled_value(gpio_sampled),
       .timed_value(gpio_timed),
+      .mapping_snapshot(),
       .rising_edges(gpio_rising),
       .falling_edges(gpio_falling),
       .compare_match(gpio_compare_match)

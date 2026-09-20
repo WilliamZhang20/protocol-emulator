@@ -1,0 +1,27 @@
+[tasks]
+bmc
+prove
+cover
+
+[options]
+bmc: mode bmc
+prove: mode prove
+cover: mode cover
+depth 48
+multiclock on
+
+[engines]
+bmc: abc bmc3
+prove: abc pdr
+cover: btor btormc
+
+[script]
+read -formal -sv instruction_decoder.v
+read -formal -sv vm_sequencer.v
+read -formal -sv shared_resources_properties.sv
+prep -top shared_resources_properties
+
+[files]
+../../src/instruction_decoder.v
+../../src/vm_sequencer.v
+shared_resources_properties.sv

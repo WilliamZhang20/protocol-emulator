@@ -21,6 +21,7 @@ module gpio_datapath (
     input  wire [7:0] compare_mask,
     output wire [7:0] sampled_value,
     output wire [7:0] timed_value,
+    output wire [23:0] mapping_snapshot,
     output wire [7:0] rising_edges,
     output wire [7:0] falling_edges,
     output wire       compare_match
@@ -28,6 +29,12 @@ module gpio_datapath (
   reg [7:0] logical_output;
   reg [7:0] logical_oe;
   reg [2:0] pin_map [0:7];
+  genvar map_export;
+  generate
+    for (map_export = 0; map_export < 8; map_export = map_export + 1) begin : map_view
+      assign mapping_snapshot[3*map_export +: 3] = pin_map[map_export];
+    end
+  endgenerate
   reg [7:0] previous_sample;
   (* async_reg = "true" *) reg [7:0] pin_meta;
   (* async_reg = "true" *) reg [7:0] pin_sync;

@@ -18,6 +18,11 @@ Run an individual target with:
 make -C formal program_memory
 make -C formal uart_tx
 make -C formal uart_rx
+make -C formal byte_fifo
+make -C formal event_engine
+make -C formal gpio_ownership
+make -C formal action_engine
+make -C formal shared_resources
 ```
 
 Results and counterexample traces are written beneath `build/formal/`.
@@ -28,9 +33,28 @@ masked write and synchronous read behavior without expanding all 8192 storage
 bits into the solver.
 
 Each UART target exhaustively checks 300 formal steps for every possible
-8-bit payload and produces a reachable complete-frame cover trace. TX assertions
+8-bit payload and produces a reachable complete-frame cover trace. The cover
+tasks use BTORMC, which finds the RX witness at step 265 and TX at step 274
+without the long SMTBMC search; each also has a 120-second timeout. TX assertions
 check FIFO consumption, output enable, start/data/stop levels, and idle recovery;
 RX assertions check one correctly reconstructed FIFO byte.
+
+The additional targets check the architecture's shared resources directly:
+
+| Target | Proved behavior |
+| --- | --- |
+| `byte_fifo` | Unbounded FIFO count, full/empty, ordering, and simultaneous push/pop against an age-ordered reference queue. |
+| `event_engine` | Unbounded timer/region token counts, sticky edge/compare behavior, consume precedence, and source/pin detail against a reference scoreboard. |
+| `gpio_ownership` | Unbounded one-to-one logical/physical map and action-claim isolation from CPU and side-set writes. |
+| `action_engine` | Bounded and unbounded repeat count, claim lifetime, completion, and immunity to an attempted live table rewrite. |
+| `shared_resources` | CPU stalls during action ownership of FIFO/CRC/shifter/table/map, conflict hold, NOP forward progress, and JZ/JNZ branch polarity. |
+
+Each target also has a cover task so its important scenario is demonstrably
+reachable. `make formal` runs `mutation-check` last. That script makes five
+temporary RTL variants and requires the focused BMC targets to reject a FIFO
+count reversal, event-token decrement reversal, GPIO map alias, dropped
+action pin claim, and JZ branch-polarity flip. The repository RTL is never
+modified by the mutation run.
 
 ## Adding a block
 

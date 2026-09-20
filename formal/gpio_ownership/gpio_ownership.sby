@@ -1,0 +1,27 @@
+[tasks]
+bmc
+prove
+cover
+
+[options]
+bmc: mode bmc
+prove: mode prove
+cover: mode cover
+depth 24
+multiclock on
+
+[engines]
+bmc: abc bmc3
+prove: smtbmc boolector
+cover: btor btormc
+
+[script]
+read -formal -sv gpio_arbiter.v
+read -formal -sv gpio_datapath.v
+read -formal -sv gpio_ownership_properties.sv
+prep -top gpio_ownership_properties
+
+[files]
+../../src/gpio_arbiter.v
+../../src/gpio_datapath.v
+gpio_ownership_properties.sv

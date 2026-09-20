@@ -69,6 +69,14 @@ parallel GPIO drive via 32-bit action words, transfer-bit equivalence, and
 `WAIT_REGION` join. It also checks native FIFO backpressure, pin-claim and
 action-table stalls, physical MAP swaps, and result forwarding (GL-safe).
 
+`test_differential.py` runs 16 seeded, legal action regions through the pure
+Python `reference/region_spec.py` and RTL, then compares every externally
+visible pin transition and its cycle after launch alignment. The reference
+model deliberately rejects action opcodes outside its supported subset
+(`GPIO`, `DELAY`, `COUNT`, `REPEAT`, `DONE`) so a new generated instruction cannot
+silently be scored as a NOP. The test uses only top-level pins and host
+commands, so it is included in gate-level simulation when a netlist is present.
+
 `test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
 `EVENT_STAMP` triples, source/pin detail, wrapped deadlines, and zero-length async timers.
 
