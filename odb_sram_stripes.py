@@ -64,8 +64,12 @@ def lef_tall_metal4_obs():
 
 @click.command()
 @click.option("--layer", default="Metal4", help="Vertical PDN layer")
+@click.option("--min-pairs", default=2, type=int,
+              help="Minimum VPWR/VGND column pairs per SRAM region "
+                   "(array L / band / array R); the macro's internal mesh "
+                   "carries whatever a region is not fed directly")
 @click_odb
-def extend(reader, layer):
+def extend(reader, layer, min_pairs):
     block = reader.block
     tech = reader.tech
     m = tech.findLayer(layer)
@@ -510,10 +514,11 @@ def extend(reader, layer):
 
         complete_pairs()
 
-        # 3. each populated region gets at least one pair; band wants two
-        min_pairs = {"array L": 1, "band": 2, "array R": 1}
+        # 3. every populated region gets at least --min-pairs pairs: one
+        #    contact per region leaves the far end of an array fed only
+        #    through the macro's internal mesh
         for r in regions:
-            need = min_pairs.get(r, 1)
+            need = min_pairs
             while pairs(r) < need:
                 cands = free("VPWR", r)
                 if not cands:
