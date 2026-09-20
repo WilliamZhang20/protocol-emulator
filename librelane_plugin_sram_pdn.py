@@ -15,6 +15,7 @@ after GeneratePDN:
 """
 import os
 
+from librelane.config import Variable
 from librelane.steps import Step
 from librelane.steps.odb import OdbpyStep
 
@@ -26,8 +27,23 @@ class ExtendPowerStripes(OdbpyStep):
     id = "Project.ExtendPowerStripes"
     name = "Extend Power Stripes Over SRAM"
 
+    config_vars = [
+        Variable(
+            "SRAM_PDN_MIN_PAIRS",
+            int,
+            "Minimum VPWR/VGND column pairs the SRAM gets in each of its "
+            "regions (array L / band / array R).",
+            default=2,
+        ),
+    ]
+
     def get_script_path(self):
         return os.path.join(HERE, "odb_sram_stripes.py")
+
+    def get_command(self):
+        return super().get_command() + [
+            "--min-pairs", str(self.config["SRAM_PDN_MIN_PAIRS"]),
+        ]
 
 
 # --- netgen writes IHP SRAM power pin names (VDD!, VSS!, VDDARRAY!) into its
