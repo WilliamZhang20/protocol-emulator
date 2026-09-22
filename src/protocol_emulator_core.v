@@ -60,6 +60,7 @@ module protocol_emulator_core (
   wire sideset_apply;
   wire [2:0] sideset_pin;
   wire sideset_val;
+  wire [7:0] action_claim;
   wire crc_setup32;
   wire crc_push_b2;
   wire crc_push_b3;
@@ -304,7 +305,6 @@ module protocol_emulator_core (
   wire [7:0] action_out_mask;
   wire [7:0] action_oe_value;
   wire [7:0] action_oe_mask;
-  wire [7:0] action_claim;
   wire action_tx_pop;
   wire action_rx_push;
   wire [7:0] action_rx_data;
