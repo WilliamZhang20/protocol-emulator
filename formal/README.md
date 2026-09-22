@@ -21,7 +21,9 @@ make -C formal uart_rx
 make -C formal byte_fifo
 make -C formal event_engine
 make -C formal gpio_ownership
+make -C formal action_dispatcher
 make -C formal action_engine
+make -C formal action_stream
 make -C formal shared_resources
 ```
 
@@ -46,8 +48,10 @@ The additional targets check the architecture's shared resources directly:
 | `byte_fifo` | Unbounded FIFO count, full/empty, ordering, and simultaneous push/pop against an age-ordered reference queue. |
 | `event_engine` | Unbounded timer/region token counts, sticky edge/compare behavior, consume precedence, and source/pin detail against a reference scoreboard. |
 | `gpio_ownership` | Unbounded one-to-one logical/physical map and action-claim isolation from CPU and side-set writes. |
-| `action_engine` | Bounded and unbounded repeat count, claim lifetime, completion, and immunity to an attempted live table rewrite. |
-| `shared_resources` | CPU stalls during action ownership of FIFO/CRC/shifter/table/map, conflict hold, NOP forward progress, and JZ/JNZ branch polarity. |
+| `action_dispatcher` | Atomic pin-conflict admission, selected-lane readiness, exclusive FIFO grants, backpressure, and priority selection. |
+| `action_engine` | Bounded and unbounded lane repeat count, claim lifetime, completion, and immunity to an attempted live table rewrite. |
+| `action_stream` | Bounded checks for exactly one automatic TX pull and RX push per byte, receive ordering, and stable requests across FIFO stalls. |
+| `shared_resources` | CPU stalls during shared FIFO/table/map ownership, pin-conflict hold, NOP forward progress, and JZ/JNZ branch polarity. |
 
 Each target also has a cover task so its important scenario is demonstrably
 reachable. `make formal` runs `mutation-check` last. That script makes five

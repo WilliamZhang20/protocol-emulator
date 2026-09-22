@@ -8,7 +8,8 @@ module event_engine (
     input  wire       clk,
     input  wire       rst_n,
     input  wire       timer_done_pulse,
-    input  wire       region_done_pulse,
+    input  wire [1:0] region_done_count,
+    input  wire       region_done_lane,
     input  wire       arm_edges,
     input  wire [7:0] rise_enable,
     input  wire [7:0] fall_enable,
@@ -104,8 +105,8 @@ module event_engine (
         event_detail <= {4'd3, 1'b0, first_pin(fall_pins)};
       else if (!arm_edges && compare_hit)
         event_detail <= {4'd4, 4'b0};
-      else if (region_done_pulse)
-        event_detail <= {4'd6, 4'b0};
+      else if (region_done_count != 0)
+        event_detail <= {4'd6, 3'b0, region_done_lane};
       else if (timer_done_pulse)
         event_detail <= {4'd1, 4'b0};
 
@@ -122,8 +123,12 @@ module event_engine (
       begin : region_token_update
         reg [2:0] next_region;
         next_region = region_tokens;
-        if (region_done_pulse && next_region != 3'b111)
-          next_region = next_region + 1'b1;
+        if (region_done_count != 0) begin
+          if ({1'b0, next_region} + {2'b0, region_done_count} >= 4'd7)
+            next_region = 3'b111;
+          else
+            next_region = next_region + region_done_count;
+        end
         if (wait_clear && wait_mask[BIT_REGION] && next_region != 3'b0)
           next_region = next_region - 1'b1;
         region_tokens <= next_region;

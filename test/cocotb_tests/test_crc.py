@@ -61,8 +61,8 @@ async def test_crc32_empty_and_short(dut):
 
 
 @cocotb.test()
-async def test_cpu_crc_waits_for_action_crc_owner(dut):
-    """A CPU feed after RUN_REGION cannot collide with the region feed."""
+async def test_cpu_crc_runs_with_lane_local_lfsr(dut):
+    """CPU CRC and a lane-local LFSR update proceed independently."""
     from cocotb_tests.reference.programs import (
         HALT, ACT_CRC, action_delay, action_done, action_load_shift,
         action_word, prog_action, run_region, wait_region,
@@ -77,7 +77,7 @@ async def test_cpu_crc_waits_for_action_crc_owner(dut):
         *prog_action(1, action_delay(80)),
         *prog_action(2, action_done()),
         *run_region(0),
-        0xA2, 0x34,  # CPU CRC_FEED; must wait for region release
+        0xA2, 0x34,  # CPU CRC_FEED overlaps the lane-local update
         wait_region(),
         0xA3, 0xA4, 0xA5, 0xE2, 0xE3, HALT,
     ]
@@ -86,5 +86,5 @@ async def test_cpu_crc_waits_for_action_crc_owner(dut):
     await wait_until_halted(dut, timeout_cycles=6000)
     raw = [await pop_rx(dut) for _ in range(4)]
     got = sum(byte << (8 * i) for i, byte in enumerate(raw))
-    want = binascii.crc32(bytes([0x12, 0x34])) & 0xFFFFFFFF
-    assert got == want, f"CRC collision: got {got:#010x}, want {want:#010x}"
+    want = binascii.crc32(bytes([0x34])) & 0xFFFFFFFF
+    assert got == want, f"independent CPU CRC got {got:#010x}, want {want:#010x}"

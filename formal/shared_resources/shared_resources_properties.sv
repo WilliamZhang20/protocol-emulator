@@ -10,7 +10,8 @@ module shared_resources_properties;
   (* anyseq *) reg tx_empty;
   (* anyseq *) reg rx_full;
   (* anyseq *) reg action_busy;
-  (* anyseq *) reg action_table_ready;
+  (* anyseq *) reg action_control_ready;
+  (* anyseq *) reg action_start_ready;
   (* anyseq *) reg cpu_pin_conflict;
   (* anyseq *) reg crc_busy;
   (* anyseq *) reg event_wait_matched;
@@ -55,7 +56,8 @@ module shared_resources_properties;
       .instruction_data(instruction_data),
       .tx_empty(tx_empty), .rx_full(rx_full),
       .action_busy(action_busy),
-      .action_table_ready(action_table_ready),
+      .action_control_ready(action_control_ready),
+      .action_start_ready(action_start_ready),
       .cpu_pin_conflict(cpu_pin_conflict),
       .crc_busy(crc_busy),
       .event_wait_matched(event_wait_matched),
@@ -93,17 +95,12 @@ module shared_resources_properties;
     past_valid <= 1'b1;
     if (rst_n) begin
       if (action_busy) begin
-        // A live region owns both FIFO ports, CRC, the shared shifter,
-        // action table, result, and physical pin map.
+        // A live lane reserves the shared FIFO ports and physical pin map.
+        // CPU CRC/shift and the other lane's control plane remain independent.
         assert(!tx_pop && !rx_push);
-        assert(!crc_setup && !crc_setup32 && !crc_feed && !crc_finalize);
         assert(!crc_push_lo && !crc_push_hi && !crc_push_b2 && !crc_push_b3);
-        assert(!execute_map && !execute_shift_out && !execute_shift_in &&
-               !execute_shift_clear);
-        assert(!action_wr_lo && !action_wr_hi &&
-               !action_wr_lane_lo && !action_wr_lane_hi);
-        assert(!action_load_shift && !action_load_shift_hi && !action_load_tx);
-        assert(!action_start && !action_read_result && !action_push_result);
+        assert(!execute_map);
+        assert(!action_load_tx && !action_push_result);
       end
       if (past_valid && $past(rst_n && cpu_pin_conflict && state == 4'd3)) begin
         assert(state == 4'd3);

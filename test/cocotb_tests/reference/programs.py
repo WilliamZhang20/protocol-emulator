@@ -588,23 +588,34 @@ def action_push_rx(high: bool = False, shift: int = 0) -> int:
     return action_word(ACT_PUSH, (1 if high else 0) | (shift << 1))
 
 
-def prog_action(slot: int, word: int) -> list[int]:
+def action_target(slot: int, lane: int = 0) -> int:
+    """Pack a two-lane action target: lane[4], slot[3:0]."""
+    if lane not in (0, 1):
+        raise ValueError("action lane must be 0 or 1")
+    if not 0 <= slot < 16:
+        raise ValueError("action slot must be 0..15")
+    return (lane << 4) | slot
+
+
+def prog_action(slot: int, word: int, lane: int = 0) -> list[int]:
     """Write an action slot, including its optional parallel lane."""
     return [
         ACTION_WR_LO,
-        slot & 7,
+        action_target(slot, lane),
         word & 0xFF,
         ACTION_WR_HI,
-        slot & 7,
+        action_target(slot, lane),
         (word >> 8) & 0xFF,
-        *([ACTION_WR_LANE_LO, slot & 7, (word >> 16) & 0xFF,
-           ACTION_WR_LANE_HI, slot & 7, (word >> 24) & 0xFF]
+        *([ACTION_WR_LANE_LO, action_target(slot, lane), (word >> 16) & 0xFF,
+           ACTION_WR_LANE_HI, action_target(slot, lane), (word >> 24) & 0xFF]
           if word >> 16 else []),
     ]
 
 
 def action_parallel_gpio(pin: int, *, out: int | None = None,
-                         oe: int | None = None, sample: bool = False) -> int:
+                         oe: int | None = None, sample: bool = False,
+                         lfsr: bool = False, count: bool = False,
+                         delay: int = 0) -> int:
     """Encode the upper lane of a 32-bit action word."""
     lane = (1 << 15) | ((pin & 7) << 8)
     if out is not None:
@@ -613,26 +624,33 @@ def action_parallel_gpio(pin: int, *, out: int | None = None,
         lane |= (1 << 14) | ((oe & 1) << 13)
     if sample:
         lane |= 1 << 7
+    if lfsr:
+        lane |= 1 << 6
+    if count:
+        lane |= 1 << 5
+    if not 0 <= delay <= 31:
+        raise ValueError("compound action delay must be 0..31")
+    lane |= delay
     return lane << 16
 
 
-def run_region(slot: int = 0) -> list[int]:
-    return [RUN_REGION, slot & 7]
+def run_region(slot: int = 0, lane: int = 0) -> list[int]:
+    return [RUN_REGION, action_target(slot, lane)]
 
 
-def run_region_n(slot: int, count: int) -> list[int]:
+def run_region_n(slot: int, count: int, lane: int = 0) -> list[int]:
     """Start region at `slot`; `count` is extra passes after the first."""
     if not 0 <= count <= 0xFF:
         raise ValueError("region repeat count must fit in 8 bits")
-    return [RUN_REGION_N, slot & 7, count & 0xFF]
+    return [RUN_REGION_N, action_target(slot, lane), count & 0xFF]
 
 
 def wait_region() -> int:
     return WAIT_REGION
 
 
-def read_result(rd: int) -> list[int]:
-    return [READ_RESULT, rd & 7]
+def read_result(rd: int, lane: int = 0) -> list[int]:
+    return [READ_RESULT, (rd & 7) | ((lane & 1) << 7)]
 
 
 def action_load_shift(data: int) -> list[int]:
@@ -643,16 +661,20 @@ def action_load_shift_hi(data: int) -> list[int]:
     return [ACTION_LOAD_SHIFT_HI, data & 0xFF]
 
 
-def action_push_result(high: bool = False, shift: int = 0) -> list[int]:
+def action_push_result(high: bool = False, shift: int = 0,
+                       lane: int = 0) -> list[int]:
     if not 0 <= shift <= 7:
         raise ValueError("result byte shift must be 0..7")
-    return [ACTION_PUSH_RESULT, (1 if high else 0) | (shift << 1)]
+    return [ACTION_PUSH_RESULT, (1 if high else 0) | (shift << 1) |
+            ((lane & 1) << 7)]
 
 
-def action_load_tx(bits: int = 8, msb_first: bool = True) -> list[int]:
+def action_load_tx(bits: int = 8, msb_first: bool = True,
+                   lane: int = 0) -> list[int]:
     if not 1 <= bits <= 16:
         raise ValueError("transfer width must be 1..16")
-    return [ACTION_LOAD_TX, (bits & 0x1F) | (0x20 if msb_first else 0)]
+    return [ACTION_LOAD_TX, (bits & 0x1F) | (0x20 if msb_first else 0) |
+            ((lane & 1) << 7)]
 
 
 def action_gpio_pulse_program(*, pin: int = 0, delay: int = 4) -> list[int]:
@@ -672,9 +694,10 @@ def action_gpio_pulse_program(*, pin: int = 0, delay: int = 4) -> list[int]:
 
 def action_shift(*, pin: int, shift_in: bool = False, msb_first: bool = False,
                  rx_pin: int = 0, duplex: bool = False,
-                 open_drain: bool = False) -> int:
-    """SHIFT action with optional simultaneous receive and open-drain TX."""
+                 open_drain: bool = False, stream: bool = False) -> int:
+    """SHIFT with optional duplex I/O and automatic byte FIFO streaming."""
     args = ((pin & 7) | ((rx_pin & 7) << 4) |
+            ((1 if stream else 0) << 7) |
             ((1 if open_drain else 0) << 8) |
             ((1 if duplex else 0) << 9) |
             ((1 if msb_first else 0) << 10) |
@@ -687,7 +710,7 @@ def action_count_load(value: int) -> int:
 
 
 def action_count_djnz(target_slot: int) -> int:
-    return action_word(ACT_COUNT, ((0b11) << 10) | (target_slot & 7))
+    return action_word(ACT_COUNT, ((0b11) << 10) | (target_slot & 0xF))
 
 
 def action_sample(pin: int) -> int:
@@ -779,7 +802,8 @@ def action_sample_acc(pin: int, *, msb_first: bool) -> int:
 
 
 def action_count_djnz_done(target_slot: int) -> int:
-    return action_word(ACT_COUNT, (0b11 << 10) | (1 << 9) | (target_slot & 7))
+    return action_word(ACT_COUNT, (0b11 << 10) | (1 << 9) |
+                       (target_slot & 0xF))
 
 
 def action_clocked_transfer(

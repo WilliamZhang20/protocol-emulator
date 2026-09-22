@@ -15,6 +15,9 @@ RTL_SOURCES := \
 	src/program_memory.v \
 	src/register_file.v \
 	src/timer_counter.v \
+	src/serial_shifter.v \
+	src/action_dispatcher.v \
+	src/action_lane.v \
 	src/action_engine.v \
 	src/event_engine.v \
 	src/vm_sequencer.v \

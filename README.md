@@ -9,16 +9,17 @@ and output-enable control, pin mapping, waits, and branches are protocol-neutral
 UART behavior is supplied entirely by the SRAM image.
 
 The RTL includes UART TX/RX, a synchronous host interface, an 8×16 register
-file and ALU, configurable GPIO, TX/RX FIFOs, generic CRC and timer resources,
-and an eight-slot programmable action engine. SPI, I²C, JTAG, and low-speed
+file and ALU, configurable GPIO, TX/RX FIFOs, a generic CPU CRC/timer path,
+and two 16-slot real-time action lanes. SPI, I²C, JTAG, and low-speed
 line patterns are action-region programs; the old bit-transfer and line-pair
 blocks and opcodes have been removed. See [architecture.md](docs/architecture.md).
 
-Regions can pull TX bytes and push RX bytes directly, with FIFO backpressure.
-At launch they reserve their pin set; conflicting CPU writes wait while timer,
-ALU, and unrelated GPIO work continues. CRC and action-table accesses are
-serialized against the running region. GPIO mapping remains one-to-one by
-swapping physical assignments.
+Each lane has separate TX/RX shifters, a counter and delay timer, and a local
+configurable CRC/LFSR. A compound action can shift, sample, change a side-set
+pin, update the LFSR, count, and schedule a short delay together. Streaming
+shifts automatically pull and push bytes with FIFO backpressure. The dispatcher
+admits complete pin claims atomically, stalls conflicts, and fairly arbitrates
+the shared FIFO ports. GPIO mapping remains one-to-one by swapping assignments.
 
 ## Local verification
 
@@ -42,8 +43,9 @@ make verify
   top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   required Metal4 PDN, and the SRAM Metal3 M3.f keepout;
-- formal SRAM checks plus exhaustive 300-step UART TX/RX safety checks and
-  complete-frame cover traces.
+- formal SRAM/UART checks plus FIFO ordering, event tokens, GPIO ownership,
+  lane admission, action repeat/claim lifetime, automatic stream handshakes,
+  shared-resource safety, cover traces, and mutation testing.
 
 Individual commands include `make lint`, `make synth-check`,
 `make gds-config-check`, `make memory-test`, `make sim`, and `make formal`.

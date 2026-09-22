@@ -193,6 +193,164 @@ async def test_action_parallel_gpio_lane(dut):
     assert seen, "parallel action never drove the pins"
     await wait_until_halted(dut, timeout_cycles=3000)
 
+
+@cocotb.test()
+async def test_two_action_lanes_execute_concurrently(dut):
+    """Independent pin claims allow both real-time lanes to overlap."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = []
+    for lane, pin in ((0, 0), (1, 1)):
+        program += prog_action(0, action_gpio(pin=pin, out=1, oe=1), lane)
+        program += prog_action(1, action_delay(80), lane)
+        program += prog_action(2, action_done(), lane)
+    program += [*run_region(0, 0), *run_region(0, 1),
+                wait_region(), wait_region(), HALT]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+
+    overlapped = False
+    for _ in range(5000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, 0) == 1 and driven_level(dut, 1) == 1:
+            overlapped = True
+            break
+    assert overlapped, "the two nonconflicting lanes did not overlap"
+    await wait_until_halted(dut, timeout_cycles=5000)
+
+
+@cocotb.test()
+async def test_lane_tx_load_overlaps_other_lane(dut):
+    """C8 for an idle lane must not wait for the other lane to finish."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_delay,
+        action_done, action_gpio, action_load_tx, action_shift,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(0, action_gpio(pin=0, out=1, oe=1), 0),
+        *prog_action(1, action_delay(255), 0),
+        *prog_action(2, action_done(), 0),
+        *prog_action(0, action_count_load(8), 1),
+        *prog_action(1, action_shift(pin=1, msb_first=True), 1),
+        *prog_action(2, action_count_djnz(1), 1),
+        *prog_action(3, action_done(), 1),
+        *run_region(0, 0),
+        *action_load_tx(8, msb_first=True, lane=1),
+        *run_region(0, 1),
+        wait_region(), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x6, 0x5)
+    await host_command(dut, 0x7, 0xA)
+    await host_command(dut, 0x8, 1)
+
+    overlapped = False
+    for _ in range(5000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, 0) == 1 and driven_level(dut, 1) is not None:
+            overlapped = True
+            break
+    assert overlapped, "lane-1 TX load waited for lane 0 to finish"
+    await wait_until_halted(dut, timeout_cycles=5000)
+
+
+@cocotb.test()
+async def test_lane_result_push_overlaps_other_lane(dut):
+    """EF for a completed lane must not wait for the other lane to finish."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_push_result, action_sample,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    dut.uio_in.value = 1 << 2
+    program = [
+        *prog_action(0, action_sample(pin=2), 1),
+        *prog_action(1, action_done(), 1),
+        *prog_action(0, action_sample(pin=0), 0),
+        *prog_action(1, action_delay(255), 0),
+        *prog_action(2, action_done(), 0),
+        *run_region(0, 0),
+        *run_region(0, 1),
+        *action_push_result(lane=1),
+        wait_region(), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    await wait_until_halted(dut, timeout_cycles=5000)
+    await host_command(dut, 0x9)
+    assert int(dut.uo_out.value) == 1, "lane-1 result push was delayed or lost"
+
+
+@cocotb.test()
+async def test_lane_pin_conflict_stalls_launch(dut):
+    """A second lane waits until the first releases an overlapping claim."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio,
+        prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = []
+    program += prog_action(0, action_gpio(pin=0, out=1, oe=1), 0)
+    program += prog_action(1, action_delay(40), 0)
+    program += prog_action(2, action_done(), 0)
+    program += prog_action(0, action_gpio(pin=0, out=0, oe=1), 1)
+    program += prog_action(1, action_delay(4), 1)
+    program += prog_action(2, action_done(), 1)
+    program += [*run_region(0, 0), *run_region(0, 1),
+                wait_region(), wait_region(), HALT]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+
+    sequence = []
+    previous = None
+    for _ in range(5000):
+        await RisingEdge(dut.clk)
+        level = driven_level(dut, 0)
+        if level is not None and level != previous:
+            sequence.append(level)
+            previous = level
+        if len(sequence) >= 2:
+            break
+    assert sequence[:2] == [1, 0], sequence
+    await wait_until_halted(dut, timeout_cycles=5000)
+
+
+@cocotb.test()
+async def test_action_slots_extend_to_sixteen(dut):
+    """Slots 14 and 15 execute without aliasing the original eight slots."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_done, action_gpio, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        *prog_action(14, action_gpio(pin=2, out=1, oe=1)),
+        *prog_action(15, action_done()),
+        *run_region(14), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    saw_high = False
+    for _ in range(3000):
+        await RisingEdge(dut.clk)
+        saw_high |= driven_level(dut, 2) == 1
+    assert saw_high
+    await wait_until_halted(dut, timeout_cycles=3000)
+
 @cocotb.test()
 async def test_action_region_clocked_transfer_bits(dut):
     """A clocked region emits the expected eight MOSI bits on rising SCLK."""
@@ -329,6 +487,38 @@ async def test_region_native_fifo_stalls_and_streams(dut):
     for _ in range(160):
         await RisingEdge(dut.clk)
         assert driven_level(dut, 0) is None, "PULL advanced with empty TX"
+    await host_command(dut, 0x6, 0xA)
+    await host_command(dut, 0x7, 0x5)
+    await wait_until_halted(dut, timeout_cycles=4000)
+    await host_command(dut, 0x9)
+    assert int(dut.uo_out.value) == 0xFF
+
+
+@cocotb.test()
+async def test_shift_autopull_autopush_full_duplex(dut):
+    """A streaming SHIFT pulls TX once and pushes its eighth RX sample."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_count_djnz, action_count_load, action_done,
+        action_shift, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    dut.uio_in.value = 1 << 2
+    program = [
+        *prog_action(0, action_count_load(8)),
+        *prog_action(1, action_shift(
+            pin=0, rx_pin=2, duplex=True, msb_first=True, stream=True,
+        )),
+        *prog_action(2, action_count_djnz(1)),
+        *prog_action(3, action_done()),
+        *run_region(0), wait_region(), HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(120):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, 0) is None, "autopull advanced on empty TX"
     await host_command(dut, 0x6, 0xA)
     await host_command(dut, 0x7, 0x5)
     await wait_until_halted(dut, timeout_cycles=4000)

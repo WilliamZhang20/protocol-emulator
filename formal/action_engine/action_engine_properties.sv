@@ -8,7 +8,7 @@ module action_engine_properties;
   wire rst_n = reset_cycles >= 2;
   reg [3:0] cfg_step = 4'd0;
   (* anyconst *) reg [1:0] extra_passes;
-  wire [2:0] wr_slot = (cfg_step < 4'd2 || cfg_step == 4'd6) ? 3'd0 : 3'd1;
+  wire [3:0] wr_slot = (cfg_step < 4'd2 || cfg_step == 4'd6) ? 4'd0 : 4'd1;
   wire wr_lo = cfg_step == 4'd0 || cfg_step == 4'd2 || cfg_step == 4'd6;
   wire wr_hi = cfg_step == 4'd1 || cfg_step == 4'd3;
   wire [7:0] wr_data = cfg_step == 4'd1 ? 8'h1f :
@@ -20,10 +20,8 @@ module action_engine_properties;
   wire table_ready;
   wire done_pulse;
   wire [15:0] result;
-  wire crc_feed;
-  wire [7:0] crc_byte;
-  wire tx_pop;
-  wire rx_push;
+  wire tx_request;
+  wire rx_request;
   wire [7:0] rx_data;
   wire drive_enable;
   wire [7:0] drive_out_value;
@@ -31,28 +29,24 @@ module action_engine_properties;
   wire [7:0] drive_oe_value;
   wire [7:0] drive_oe_mask;
   wire [7:0] claim;
-  wire manual_serial_out;
-  wire [15:0] shift_parallel;
+  wire [15:0] lfsr_value;
+  wire [7:0] launch_claim;
 
-  action_engine dut (
+  action_lane dut (
       .clk(clk), .rst_n(rst_n), .enable(1'b1),
       .wr_lo(wr_lo), .wr_hi(wr_hi),
-      .wr_lane_lo(1'b0), .wr_lane_hi(1'b0),
+      .wr_bundle_lo(1'b0), .wr_bundle_hi(1'b0),
       .wr_slot(wr_slot), .wr_data(wr_data),
-      .load_shift(1'b0), .load_shift_hi(1'b0), .load_tx(1'b0),
-      .tx_data(8'b0), .tx_empty(1'b1), .tx_pop(tx_pop),
-      .rx_full(1'b0), .rx_push(rx_push), .rx_data(rx_data),
-      .tx_bits(5'd8), .tx_msb_first(1'b0), .shift_data(8'b0),
-      .manual_load(1'b0), .manual_data(8'b0),
-      .manual_shift(1'b0), .manual_serial_in(1'b0),
-      .manual_serial_out(manual_serial_out),
-      .shift_parallel(shift_parallel),
-      .start(start), .start_slot(3'd0),
+      .load_shift_lo(1'b0), .load_shift_hi(1'b0), .load_tx(1'b0),
+      .load_data(8'b0), .load_bits(5'd8), .load_msb_first(1'b0),
+      .start(start), .start_slot(4'd0),
       .repeat_count({6'b0, extra_passes}),
       .pin_sampled(8'b0), .pin_timed(8'b0),
-      .crc_busy(1'b0), .crc_feed(crc_feed), .crc_byte(crc_byte),
-      .busy(busy), .table_ready(table_ready),
-      .done_pulse(done_pulse), .result(result),
+      .tx_request(tx_request), .tx_grant(1'b0), .tx_data(8'b0),
+      .rx_request(rx_request), .rx_grant(1'b0), .rx_data(rx_data),
+      .busy(busy), .table_ready(table_ready), .done_pulse(done_pulse),
+      .result(result), .lfsr_value(lfsr_value),
+      .launch_claim(launch_claim),
       .drive_enable(drive_enable),
       .drive_out_value(drive_out_value),
       .drive_out_mask(drive_out_mask),
@@ -102,9 +96,9 @@ module action_engine_properties;
       cover(busy && wr_lo);
     end
   end
-  wire _unused = &{result, crc_feed, crc_byte, tx_pop, rx_push, rx_data,
+  wire _unused = &{result, tx_request, rx_request, rx_data,
                    drive_enable, drive_out_value, drive_oe_value,
-                   drive_oe_mask, manual_serial_out, shift_parallel, 1'b0};
+                   drive_oe_mask, launch_claim, lfsr_value, 1'b0};
 endmodule
 
 `default_nettype wire

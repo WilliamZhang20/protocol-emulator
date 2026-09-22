@@ -19,8 +19,8 @@ class RegionSpec:
     """One action per clock for GPIO, DELAY, COUNT, REPEAT, and DONE."""
 
     def __init__(self, slots: list[int], *, start: int = 0, extras: int = 0):
-        if not 0 <= start < len(slots) <= 8:
-            raise ValueError("region must contain 1..8 slots and a valid start")
+        if not 0 <= start < len(slots) <= 16:
+            raise ValueError("region must contain 1..16 slots and a valid start")
         if not 0 <= extras <= 255:
             raise ValueError("extra passes must fit in eight bits")
         self.slots = slots
@@ -81,7 +81,7 @@ class RegionSpec:
                     self.pc += 1
                 elif self.counter != 1:
                     self.counter = (self.counter - 1) & 255
-                    self.pc = args & 7
+                    self.pc = args & 15
                 else:
                     self.counter = 0
                     if args & (1 << 9):
@@ -98,7 +98,7 @@ class RegionSpec:
                     self.delay_counter = length - 1
                     self.delaying = True
             elif op == 8:  # REPEAT
-                self.pc = args & 7
+                self.pc = args & 15
             elif op == 9:  # DONE
                 if self.repeats_left:
                     self.repeats_left -= 1

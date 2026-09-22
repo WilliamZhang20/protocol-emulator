@@ -8,7 +8,8 @@ module event_engine_properties;
   wire rst_n = reset_cycles >= 2;
 
   (* anyseq *) reg timer_done_pulse;
-  (* anyseq *) reg region_done_pulse;
+  (* anyseq *) reg [1:0] region_done_count;
+  (* anyseq *) reg region_done_lane;
   (* anyseq *) reg arm_edges;
   (* anyseq *) reg [7:0] rise_enable;
   (* anyseq *) reg [7:0] fall_enable;
@@ -25,7 +26,8 @@ module event_engine_properties;
   event_engine dut (
       .clk(clk), .rst_n(rst_n),
       .timer_done_pulse(timer_done_pulse),
-      .region_done_pulse(region_done_pulse),
+      .region_done_count(region_done_count),
+      .region_done_lane(region_done_lane),
       .arm_edges(arm_edges), .rise_enable(rise_enable),
       .fall_enable(fall_enable), .gpio_rising(gpio_rising),
       .gpio_falling(gpio_falling), .compare_match(compare_match),
@@ -91,8 +93,12 @@ module event_engine_properties;
       timer_count <= next_timer;
 
       next_region = region_count;
-      if (region_done_pulse && next_region != 3'd7)
-        next_region = next_region + 1'b1;
+      if (region_done_count != 0) begin
+        if ({1'b0, next_region} + {2'b0, region_done_count} >= 4'd7)
+          next_region = 3'd7;
+        else
+          next_region = next_region + region_done_count;
+      end
       if (wait_clear && wait_mask[6] && next_region != 0)
         next_region = next_region - 1'b1;
       region_count <= next_region;
@@ -121,13 +127,13 @@ module event_engine_properties;
         last_detail <= {4'd3, 1'b0, lowest_pin(fall_hits)};
       else if (!arm_edges && compare_hit)
         last_detail <= 8'h40;
-      else if (region_done_pulse)
-        last_detail <= 8'h60;
+      else if (region_done_count != 0)
+        last_detail <= {4'd6, 3'b0, region_done_lane};
       else if (timer_done_pulse)
         last_detail <= 8'h10;
 
       cover(timer_done_pulse && wait_clear && wait_mask[1]);
-      cover(region_count == 3'd7 && region_done_pulse);
+      cover(region_count == 3'd7 && region_done_count != 0);
       cover(|rise_hits && |fall_hits);
     end
   end

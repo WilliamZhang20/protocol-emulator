@@ -1,25 +1,22 @@
 [tasks]
 bmc
-prove
 cover
 
 [options]
 bmc: mode bmc
-prove: mode prove
 cover: mode cover
-depth 48
+depth 64
 multiclock on
 
 [engines]
 bmc: abc bmc3
-prove: abc pdr
 cover: btor btormc
 
 [script]
 read -formal -sv action_lane.v
-read -formal -sv action_engine_properties.sv
-prep -top action_engine_properties
+read -formal -sv action_stream_properties.sv
+prep -top action_stream_properties
 
 [files]
 ../../src/action_lane.v
-action_engine_properties.sv
+action_stream_properties.sv

@@ -12,7 +12,7 @@ You can also include images in this folder and reference them in the markdown. E
 The project is an SRAM-programmed deterministic protocol engine. Programs use
 shared timing, shifting, FIFO, CRC, and configurable GPIO resources to
 implement protocols without dedicated UART, SPI, or I2C state machines. The
-architecture uses a reusable CPU and programmable action engine; clocked
+architecture uses a reusable CPU and two programmable real-time lanes; clocked
 transfers and two-pin line states compile to action regions (see architecture.md).
 
 See the [architecture and programming reference](architecture.md) for the host

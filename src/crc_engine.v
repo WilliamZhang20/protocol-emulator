@@ -7,7 +7,8 @@
 //
 // Timing: byte feed processes two bits per clock; reflect-out finalize
 // remains bit-serial. This avoids the former 8-step combinational path.
-// `busy` stays high while a multi-cycle op runs; the VM / action engine stall.
+// `busy` stays high while a multi-cycle CPU operation runs. Real-time lanes
+// own independent LFSRs and do not contend with this datapath.
 module crc_engine (
     input  wire        clk,
     input  wire        rst_n,

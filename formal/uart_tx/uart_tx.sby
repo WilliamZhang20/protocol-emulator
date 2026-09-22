@@ -17,6 +17,9 @@ cover: btor btormc
 read -formal -sv instruction_decoder.v
 read -formal -sv register_file.v
 read -formal -sv timer_counter.v
+read -formal -sv serial_shifter.v
+read -formal -sv action_dispatcher.v
+read -formal -sv action_lane.v
 read -formal -sv action_engine.v
 read -formal -sv event_engine.v
 read -formal -sv vm_sequencer.v
@@ -31,6 +34,9 @@ prep -top uart_tx_properties
 ../../src/instruction_decoder.v
 ../../src/register_file.v
 ../../src/timer_counter.v
+../../src/serial_shifter.v
+../../src/action_dispatcher.v
+../../src/action_lane.v
 ../../src/action_engine.v
 ../../src/event_engine.v
 ../../src/vm_sequencer.v
