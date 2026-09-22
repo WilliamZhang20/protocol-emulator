@@ -97,10 +97,12 @@ module shared_resources_properties;
       if (action_busy) begin
         // A live lane reserves the shared FIFO ports and physical pin map.
         // CPU CRC/shift and the other lane's control plane remain independent.
-        assert(!tx_pop && !rx_push);
+        // Selected-lane C8/EF operations may use the corresponding FIFO
+        // while the other real-time lane remains busy.
+        assert(!tx_pop || action_load_tx);
+        assert(!rx_push || action_push_result);
         assert(!crc_push_lo && !crc_push_hi && !crc_push_b2 && !crc_push_b3);
         assert(!execute_map);
-        assert(!action_load_tx && !action_push_result);
       end
       if (past_valid && $past(rst_n && cpu_pin_conflict && state == 4'd3)) begin
         assert(state == 4'd3);
