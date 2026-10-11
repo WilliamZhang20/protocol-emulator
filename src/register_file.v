@@ -20,7 +20,7 @@ module register_file (
   assign read_data_a = registers[read_address_a];
   assign read_data_b = registers[read_address_b];
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       for (index = 0; index < 8; index = index + 1)
         registers[index] <= 16'b0;

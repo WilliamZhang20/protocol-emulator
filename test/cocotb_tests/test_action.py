@@ -293,6 +293,43 @@ async def test_lane_result_push_overlaps_other_lane(dut):
 
 
 @cocotb.test()
+async def test_cpu_push_never_collides_with_lane_push(dut):
+    """EF in the same cycle as the other lane's PUSH_RX must not drop a byte."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_push_rx, action_push_result,
+        action_sample, prog_action, run_region, run_region_n, wait_region,
+    )
+
+    await start_clock(dut)
+    # Sweep the lane-0 push phase across the CPU's two EF pushes.
+    for delay in range(1, 25):
+        await reset_top(dut)
+        dut.uio_in.value = 1 << 2
+        program = [
+            *prog_action(0, action_sample(pin=2), 1),
+            *prog_action(1, action_done(), 1),
+            *prog_action(0, action_delay(delay), 0),
+            *prog_action(1, action_push_rx(), 0),
+            *prog_action(2, action_done(), 0),
+            *run_region(0, 1),
+            wait_region(),
+            *run_region_n(0, 1, 0),
+            *action_push_result(lane=1),
+            *action_push_result(lane=1),
+            wait_region(), HALT,
+        ]
+        await load_program(dut, program)
+        await host_command(dut, 0x8, 1)
+        await wait_until_halted(dut, timeout_cycles=5000)
+        popped = []
+        for _ in range(5):
+            if not (await read_status(dut)) & 0x10:  # rx_empty
+                await host_command(dut, 0x9)
+                popped.append(int(dut.uo_out.value))
+        assert sorted(popped) == [0, 0, 1, 1], f"delay {delay}: {popped}"
+
+
+@cocotb.test()
 async def test_lane_pin_conflict_stalls_launch(dut):
     """A second lane waits until the first releases an overlapping claim."""
     from cocotb_tests.reference.programs import (

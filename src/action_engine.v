@@ -80,8 +80,11 @@ module action_engine (
   assign rx_push = |lane_rx_grant;
   assign rx_data = lane_rx_grant[1] ? lane_rx_data_1 : lane_rx_data_0;
 
-  always @(posedge clk) begin
-    if (!rst_n || !enable) begin
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      tx_priority <= 1'b0;
+      rx_priority <= 1'b0;
+    end else if (!enable) begin
       tx_priority <= 1'b0;
       rx_priority <= 1'b0;
     end else begin

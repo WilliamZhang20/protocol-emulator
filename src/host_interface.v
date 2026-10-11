@@ -34,28 +34,34 @@ module host_interface (
   reg [7:0] output_register;
   reg engine_enable_register;
   reg program_write_register;
-  reg program_read_register;
   reg tx_push_register;
   reg rx_pop_register;
-  reg read_pending;
+  reg read_bypass;
 
   wire command_valid = host_in != 8'h00 && host_in != last_command;
   wire [3:0] command = host_in[7:4];
   wire [3:0] payload = host_in[3:0];
+  // Command B reads the SRAM in its own cycle, so the byte is on the macro
+  // output when the host samples the response. A same-cycle write wins.
+  wire read_request = command_valid && command == 4'hb &&
+                      !engine_enable_register && !program_write_register;
 
-  assign host_out = output_register;
+  // Bypass the SRAM output to the pins for the cycle after a read, then hold
+  // it in the register, so a read answers with the same latency as status.
+  assign host_out = read_bypass ? program_read_data : output_register;
   assign engine_enable = engine_enable_register;
-  assign program_enable = program_write_register | program_read_register;
+  assign program_enable = program_write_register | read_request;
   assign program_write = program_write_register;
-  assign program_read = program_read_register;
-  assign program_address = access_address_register;
+  assign program_read = read_request;
+  assign program_address = read_request ? address_register :
+                                          access_address_register;
   assign program_write_data = program_data_register;
   assign program_write_mask = 8'hff;
   assign tx_push = tx_push_register;
   assign tx_push_data = tx_data_register;
   assign rx_pop = rx_pop_register;
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       last_command <= 8'h00;
       address_register <= 10'b0;
@@ -65,23 +71,20 @@ module host_interface (
       output_register <= 8'b0;
       engine_enable_register <= 1'b0;
       program_write_register <= 1'b0;
-      program_read_register <= 1'b0;
       tx_push_register <= 1'b0;
       rx_pop_register <= 1'b0;
-      read_pending <= 1'b0;
+      read_bypass <= 1'b0;
     end else begin
       program_write_register <= 1'b0;
-      program_read_register <= 1'b0;
       tx_push_register <= 1'b0;
       rx_pop_register <= 1'b0;
 
       if (engine_halted)
         engine_enable_register <= 1'b0;
 
-      if (read_pending) begin
+      read_bypass <= read_request;
+      if (read_bypass)
         output_register <= program_read_data;
-        read_pending <= 1'b0;
-      end
 
       if (host_in == 8'h00)
         last_command <= 8'h00;
@@ -121,13 +124,6 @@ module host_interface (
           4'ha: output_register <= {
               engine_enable_register, engine_halted, tx_full, rx_empty, 4'b0
           };
-          4'hb: begin
-            if (!engine_enable_register) begin
-              access_address_register <= address_register;
-              program_read_register <= 1'b1;
-              read_pending <= 1'b1;
-            end
-          end
           // Phase 10 (additive streaming aids): FIFO levels for polled
           // drivers, and RX peek without consuming.
           4'hc: output_register <= {
@@ -137,7 +133,7 @@ module host_interface (
             if (!rx_empty)
               output_register <= rx_pop_data;
           end
-          default: output_register <= output_register;
+          default: begin end
         endcase
       end
     end

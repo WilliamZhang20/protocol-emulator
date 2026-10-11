@@ -71,7 +71,7 @@ module gpio_datapath (
   assign compare_match = (logical_sample & compare_mask) ==
                          (compare_value & compare_mask);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       logical_output <= 8'b0;
       logical_oe <= 8'b0;

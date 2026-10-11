@@ -26,7 +26,7 @@ module timer_counter (
 
   wire ticking = (count_enable || async_run) && count != 16'b0;
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       count <= 16'b0;
       async_run <= 1'b0;

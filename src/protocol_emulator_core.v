@@ -93,6 +93,12 @@ module protocol_emulator_core (
   wire [7:0] gpio_falling;
   wire cpu_tx_pop;
   wire cpu_rx_push;
+  wire action_tx_pop;
+  wire action_rx_push;
+  // A lane using a FIFO port this cycle makes it unavailable to the CPU, so
+  // CPU and lane transfers never collide on the single push/pop port.
+  wire cpu_tx_empty = tx_empty || action_tx_pop;
+  wire cpu_rx_full = rx_full || action_rx_push;
   wire gpio_compare_match;
   wire pin_wait_satisfied =
       gpio_sampled[immediate[2:0]] == immediate[3];
@@ -108,8 +114,8 @@ module protocol_emulator_core (
       .rst_n(rst_n),
       .enable(enable),
       .instruction_data(instruction_data),
-      .tx_empty(tx_empty),
-      .rx_full(rx_full),
+      .tx_empty(cpu_tx_empty),
+      .rx_full(cpu_rx_full),
       .action_busy(action_busy),
       .action_control_ready(action_control_ready),
       .action_start_ready(action_start_ready),
@@ -210,6 +216,8 @@ module protocol_emulator_core (
   wire [2:0] alu_set_rd = operand_low[2:0];
   wire [15:0] alu_set_val = {8'b0, instruction_data};
   wire [2:0] alu_mov_rd = instruction_data[2:0];
+  // READ_RESULT writes one cycle after its operand, from the latched copy.
+  wire [2:0] read_result_rd = operand_low[2:0];
   wire [2:0] alu_mov_rs = instruction_data[5:3];
   wire [2:0] alu_op_sel = operand_low[2:0];
   wire [2:0] alu_op_rd = instruction_data[2:0];
@@ -246,7 +254,8 @@ module protocol_emulator_core (
       alu_mov ? alu_a :
       alu_op ? alu_result : 16'b0;
   wire [2:0] rf_waddr = djnz_strobe ? immediate[2:0] :
-      (time_rd || alu_mov || action_read_result) ? alu_mov_rd :
+      action_read_result ? read_result_rd :
+      (time_rd || alu_mov) ? alu_mov_rd :
       alu_set ? alu_set_rd :
       alu_op ? alu_op_rd : 3'b0;
   wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd ||
@@ -267,8 +276,10 @@ module protocol_emulator_core (
       action_read_result ? action_result :
       alu_set ? alu_set_val :
       alu_mov ? alu_a : alu_result;
-  always @(posedge clk) begin
-    if (!rst_n || !enable)
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      zero_flag <= 1'b0;
+    else if (!enable)
       zero_flag <= 1'b0;
     else if (alu_set || alu_mov || alu_op || time_rd || action_read_result)
       zero_flag <= (alu_flag_val == 16'b0);
@@ -276,8 +287,10 @@ module protocol_emulator_core (
   assign alu_zero = zero_flag;
   assign djnz_nonzero = (rf_rd_b != 16'd1);
 
-  always @(posedge clk) begin
-    if (!rst_n || !enable)
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      cycle_ctr <= 32'b0;
+    else if (!enable)
       cycle_ctr <= 32'b0;
     else
       cycle_ctr <= cycle_ctr + 1'b1;
@@ -305,8 +318,6 @@ module protocol_emulator_core (
   wire [7:0] action_out_mask;
   wire [7:0] action_oe_value;
   wire [7:0] action_oe_mask;
-  wire action_tx_pop;
-  wire action_rx_push;
   wire [7:0] action_rx_data;
   // E5 RUN_REGION id,count supplies count on the high operand byte.
   wire is_run_region_count = opcode == 4'he && immediate == 4'h5;
@@ -316,7 +327,9 @@ module protocol_emulator_core (
       is_run_region_count ? operand_low[3:0] : instruction_data[3:0];
   // Target byte bit 4 selects lane 1. Result/push/TX-load operands use bit 7
   // because their low bits retain their existing register/format fields.
-  wire action_target_lane = state == 4'd7 ? operand_low[4] :
+  wire action_target_lane =
+      (action_read_result || action_push_result) ? operand_low[7] :
+      state == 4'd7 ? operand_low[4] :
       (immediate == 4'h4 ? instruction_data[4] :
        ((immediate == 4'h7 || immediate == 4'hf ||
          (opcode == 4'hc && immediate == 4'h8)) ? instruction_data[7] : 1'b0));
@@ -338,7 +351,8 @@ module protocol_emulator_core (
       .tx_data(tx_data),
       .tx_empty(tx_empty),
       .tx_pop(action_tx_pop),
-      .rx_full(rx_full),
+      // A deferred PUSH_RESULT owns the RX port for its cycle.
+      .rx_full(rx_full || action_push_result),
       .rx_push(action_rx_push),
       .rx_data(action_rx_data),
       .tx_bits(instruction_data[4:0] == 5'd0 ? 5'd16 : instruction_data[4:0]),
@@ -469,8 +483,13 @@ module protocol_emulator_core (
   // so the triple is self-consistent.
   wire [7:0] stamp_byte = stamp_idx == 2'd0 ? cycle_ctr[7:0] :
       stamp_idx == 2'd1 ? stamp_time_hi : stamp_cause;
-  always @(posedge clk) begin
-    if (!rst_n || !enable) begin
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      stamp_time_hi <= 8'b0;
+      stamp_cause <= 8'b0;
+      stamp_detail <= 8'b0;
+      stamp_idx <= 2'b0;
+    end else if (!enable) begin
       stamp_time_hi <= 8'b0;
       stamp_cause <= 8'b0;
       stamp_detail <= 8'b0;
@@ -496,8 +515,8 @@ module protocol_emulator_core (
       crc_push_b3 ? crc_value[31:24] :
       ev_detail ? stamp_detail :
       ev_stamp ? stamp_byte :
-      action_push_result ? ((instruction_data[0] ? action_result[15:8] :
-                             action_result[7:0]) << instruction_data[4:1]) :
+      action_push_result ? ((operand_low[0] ? action_result[15:8] :
+                             action_result[7:0]) << operand_low[4:1]) :
       shifter_parallel[15:8];
 
   assign tx_pop = cpu_tx_pop || action_tx_pop;

@@ -94,6 +94,12 @@ module vm_sequencer (
   localparam STATE_TIME_WAIT = 4'd13;
   localparam STATE_REGION_WAIT = 4'd14;
 
+  // READ_RESULT and PUSH_RESULT accept on OPERAND_LOW_WAIT but act one cycle
+  // later from the latched operand, keeping the SRAM output off the lane
+  // result and RX FIFO paths. That cycle is always FETCH_REQUEST.
+  reg read_result_pending;
+  reg push_result_pending;
+
   wire decoder_branch;
   wire decoder_delay;
   wire decoder_gpio;
@@ -237,11 +243,8 @@ module vm_sequencer (
   assign action_load_tx =
       state == STATE_OPERAND_LOW_WAIT && is_action_tx_load && !tx_empty &&
       action_control_ready;
-  assign action_read_result =
-      state == STATE_OPERAND_LOW_WAIT && is_read_result && action_control_ready;
-  assign action_push_result =
-      state == STATE_OPERAND_LOW_WAIT && is_action_push && !rx_full &&
-      action_control_ready;
+  assign action_read_result = read_result_pending;
+  assign action_push_result = push_result_pending;
   assign wait_region_active = state == STATE_REGION_WAIT;
   assign wait_region_clear =
       state == STATE_REGION_WAIT && event_wait_matched;
@@ -252,7 +255,7 @@ module vm_sequencer (
       crc_push_lo || crc_push_hi || ev_stamp ||
       crc_push_b2 || crc_push_b3 || ev_detail || action_push_result;
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       state <= STATE_IDLE;
       program_counter <= 10'b0;
@@ -266,13 +269,22 @@ module vm_sequencer (
       sideset_val_r <= 1'b0;
       sideset_pending <= 1'b0;
       crc_issued <= 1'b0;
+      read_result_pending <= 1'b0;
+      push_result_pending <= 1'b0;
     end else if (!enable) begin
       state <= STATE_IDLE;
       program_counter <= 10'b0;
       halted <= 1'b0;
       sideset_pending <= 1'b0;
       crc_issued <= 1'b0;
+      read_result_pending <= 1'b0;
+      push_result_pending <= 1'b0;
     end else begin
+      read_result_pending <= state == STATE_OPERAND_LOW_WAIT &&
+                             is_read_result && action_control_ready;
+      push_result_pending <= state == STATE_OPERAND_LOW_WAIT &&
+                             is_action_push && !rx_full &&
+                             action_control_ready;
       case (state)
         STATE_IDLE: begin
           program_counter <= 10'b0;

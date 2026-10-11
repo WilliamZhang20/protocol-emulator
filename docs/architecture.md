@@ -58,7 +58,10 @@ independent CPU serial shifter for their manual shift path.
 
 Implemented shape:
 
-- **2 independent lanes**, each with **16 action slots** × 32 bits
+- **2 independent lanes**, each with **16 action slots** × 32 bits, stored in a
+  latch array (one staged write port, one read port; a write is visible to the
+  lane on the next cycle through a staging bypass and lands in the latches
+  one cycle later)
 - separate 16-bit TX and RX shifters per lane
 - local counter, delay timer, sample latch, and configurable 16-bit CRC/LFSR
 - one compound action per cycle (`DELAY` and FIFO backpressure hold the PC)
@@ -116,9 +119,13 @@ expressible.
 
 ### Resource and completion hazards
 
-At launch, the dispatcher scans the selected lane's programmed slots and reserves
-every GPIO pin mentioned by a primary or parallel action, including sampled
-pins. The claim stays active across repeats and is released on final
+At launch, the dispatcher reserves every GPIO pin mentioned by a primary or
+parallel action in the selected lane's programmed slots, including sampled
+pins. Each lane accumulates this claim as slots are written: a slot's pins are
+added when its primary or bundle high byte makes it ready, and a slot-0 low
+write (which starts a new table) clears it. Rewriting a nonzero slot in place
+can therefore only widen the claim until slot 0 is rewritten. Slots outside
+the current table execute as `NOP`. The claim stays active across repeats and is released on final
 completion. A CPU GPIO write or side-set to a reserved pin waits at its
 instruction boundary; writes to other pins can overlap. `MAP` swaps the
 requested physical pin with its current logical owner, maintaining a
@@ -137,7 +144,12 @@ when the region finished before the CPU reached the wait instruction.
 mid-transaction.
 
 The dispatcher gives at most one lane each shared FIFO port per cycle and uses
-round-robin priority when both request it. A grant occurs only with valid data
+round-robin priority when both request it. A lane transfer on a port makes that
+port unavailable to the CPU for the cycle, so a CPU `EF` or `C8`
+retries instead of colliding with the other lane. `READ_RESULT` and
+`PUSH_RESULT` accept on their operand cycle and complete one cycle later from
+the latched operand (the following fetch cycle, so instruction timing is
+unchanged); a deferred push owns the RX port for that cycle. A grant occurs only with valid data
 or available space; the losing or blocked lane holds its action PC. CPU FIFO
 instructions wait while a lane may use the queues. CRC state is not shared:
 each lane updates its local LFSR in parallel with shifting, while the CPU owns
@@ -195,7 +207,7 @@ data:
 | `8` | Bit 0 starts and bit 1 stops the engine |
 | `9` | Pop one RX byte to `uo_out` |
 | `A` | Read engine/FIFO status on `uo_out` |
-| `B` | Read SRAM at the current address to `uo_out` |
+| `B` | Read SRAM at the current address to `uo_out` (same response latency as `A`; address does not advance) |
 | `C` | Read FIFO levels: `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
 | `D` | Peek next RX byte without popping (no-op while empty) |
 

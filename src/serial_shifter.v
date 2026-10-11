@@ -19,8 +19,10 @@ module serial_shifter (
   assign serial_out = data[0];
   assign parallel = data;
 
-  always @(posedge clk) begin
-    if (!rst_n || !enable || clear)
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      data <= 16'b0;
+    else if (!enable || clear)
       data <= 16'b0;
     else if (load)
       data <= {8'b0, load_data};

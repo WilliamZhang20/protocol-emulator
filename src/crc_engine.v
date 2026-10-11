@@ -62,7 +62,7 @@ module crc_engine (
   // the VM issue/wait handshake (feed requires !busy, which then asserts busy).
   assign busy = (phase != ST_IDLE);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       crc <= 32'b0;
       state <= 32'b0;

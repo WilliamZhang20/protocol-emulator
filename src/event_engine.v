@@ -67,7 +67,7 @@ module event_engine (
   assign pending = pending_reg;
   assign wait_matched = |(pending_reg & wait_mask);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       timer_tokens <= 3'b0;
       region_tokens <= 3'b0;

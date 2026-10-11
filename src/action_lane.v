@@ -66,14 +66,17 @@ module action_lane (
   localparam ST_RUN   = 2'd1;
   localparam ST_DELAY = 2'd2;
 
-  reg [31:0] slots [0:15];
+  // Action table: 16 x 32-bit latch array (see action_slot_byte) with one
+  // staged byte-write port and one read port. Latches have no reset; only
+  // slots marked valid are ever observed, others read as NOP.
+  wire [31:0] slots [0:15];
   reg [15:0] slot_valid;
   reg [15:0] slot_ready;
   reg [1:0] state;
   reg [3:0] pc;
   reg [3:0] base_slot;
   reg [7:0] repeats_left;
-  reg [15:0] delay_counter;
+  reg [7:0] delay_counter;
   reg [15:0] counter;
   reg [15:0] tx_shift;
   reg [15:0] rx_shift;
@@ -82,7 +85,10 @@ module action_lane (
   reg [15:0] lfsr_poly;
   reg [2:0] stream_bit;
   reg sample_bit;
-  reg [7:0] reserved_claim;
+  // Union of the pins claimed by every slot written since the last slot-0
+  // rewrite. Accumulated as each slot becomes ready, so launch needs no scan.
+  // An in-place rewrite of a nonzero slot can only widen it.
+  reg [7:0] table_claim;
 
   reg drive_active;
   reg [7:0] out_value;
@@ -94,7 +100,25 @@ module action_lane (
   reg [7:0] bundle_oe_value;
   reg [7:0] bundle_oe_mask;
 
-  wire [31:0] current = slots[pc];
+  wire idle = state == ST_IDLE;
+  // While idle the read port serves table writes; while running it fetches.
+  wire [3:0] read_slot = idle ? wr_slot : pc;
+  // Write staging register (see the write pipeline below).
+  reg [3:0] stage_slot;
+  reg [3:0] stage_bytes;
+  reg [7:0] stage_data;
+  reg stage_clear;
+  wire [7:0] stage_bundle = stage_clear ? 8'b0 : stage_data;
+  wire [31:0] stored = slots[read_slot];
+  // A write becomes visible in the latches one cycle after it is accepted;
+  // until then the read port takes it from the staging register.
+  wire stage_hit = stage_slot == read_slot;
+  wire [31:0] staged = {
+      stage_hit && stage_bytes[3] ? stage_bundle : stored[31:24],
+      stage_hit && stage_bytes[2] ? stage_bundle : stored[23:16],
+      stage_hit && stage_bytes[1] ? stage_data : stored[15:8],
+      stage_hit && stage_bytes[0] ? stage_data : stored[7:0]};
+  wire [31:0] current = slot_valid[read_slot] ? staged : 32'b0;
   wire [15:0] bundle = current[31:16];
   wire [3:0] op = current[15:12];
   wire [11:0] args = current[11:0];
@@ -133,47 +157,106 @@ module action_lane (
     end
   endfunction
 
-  reg [7:0] claim_scan;
-  reg [31:0] scan_word;
-  integer scan_index;
-  always @(*) begin
-    claim_scan = 8'b0;
-    scan_word = 32'b0;
-    for (scan_index = 0; scan_index < 16; scan_index = scan_index + 1) begin
-      scan_word = slots[scan_index];
-      if (slot_valid[scan_index]) begin
-        if (scan_word[31] &&
-            (scan_word[30] || scan_word[28] ||
-             (scan_word[23] && scan_word[15:12] != OP_SAMPLE &&
-                              scan_word[15:12] != OP_SHIFT) ||
-             (scan_word[22] && scan_word[15:12] != OP_SHIFT)))
-          claim_scan[scan_word[26:24]] = 1'b1;
-        case (scan_word[15:12])
-          OP_GPIO, OP_SAMPLE:
-            claim_scan[scan_word[2:0]] = 1'b1;
-          OP_SHIFT: begin
-            claim_scan[scan_word[2:0]] = 1'b1;
-            if (scan_word[9])
-              claim_scan[scan_word[6:4]] = 1'b1;
-          end
-          OP_PAIR: begin
-            claim_scan[scan_word[2:0]] = 1'b1;
-            claim_scan[scan_word[5:3]] = 1'b1;
-          end
-          OP_DELAY:
-            if (scan_word[11]) claim_scan[scan_word[10:8]] = 1'b1;
-          default: begin end
-        endcase
+  // Pins a slot drives or samples, including its side-set bundle.
+  function [7:0] slot_claim;
+    input [31:0] word;
+    begin
+      slot_claim = 8'b0;
+      if (word[31] &&
+          (word[30] || word[28] ||
+           (word[23] && word[15:12] != OP_SAMPLE &&
+                        word[15:12] != OP_SHIFT) ||
+           (word[22] && word[15:12] != OP_SHIFT)))
+        slot_claim[word[26:24]] = 1'b1;
+      case (word[15:12])
+        OP_GPIO, OP_SAMPLE:
+          slot_claim[word[2:0]] = 1'b1;
+        OP_SHIFT: begin
+          slot_claim[word[2:0]] = 1'b1;
+          if (word[9])
+            slot_claim[word[6:4]] = 1'b1;
+        end
+        OP_PAIR: begin
+          slot_claim[word[2:0]] = 1'b1;
+          slot_claim[word[5:3]] = 1'b1;
+        end
+        OP_DELAY:
+          if (word[11]) slot_claim[word[10:8]] = 1'b1;
+        default: begin end
+      endcase
+    end
+  endfunction
+
+  // A slot becomes ready on its primary or bundle high byte; claim the
+  // completed word at that point.
+  wire [7:0] written_claim = slot_claim(wr_bundle_hi ?
+      {wr_data, current[23:0]} :
+      {current[31:16], wr_data, current[7:0]});
+
+  // Byte-lane write port. A primary low-byte write also clears the bundle.
+  wire table_write = idle &&
+      (wr_lo || wr_hi || wr_bundle_lo || wr_bundle_hi);
+  wire [3:0] write_bytes = {wr_lo || wr_bundle_hi, wr_lo || wr_bundle_lo,
+                            wr_hi, wr_lo};
+
+  // Write pipeline: stage on the rising edge, hold across the next falling
+  // edge, then open the selected byte latches for the following high phase.
+  // Latches therefore launch on a rising edge like flops, and the held
+  // address/data stay stable for the whole transparent window.
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      stage_slot <= 4'b0;
+      stage_bytes <= 4'b0;
+      stage_data <= 8'b0;
+      stage_clear <= 1'b0;
+    end else begin
+      stage_bytes <= (enable && table_write) ? write_bytes : 4'b0;
+      if (enable && table_write) begin
+        stage_slot <= wr_slot;
+        stage_data <= wr_data;
+        stage_clear <= wr_lo;
       end
     end
   end
 
-  assign busy = state != ST_IDLE;
+  reg [3:0] hold_slot;
+  reg [3:0] hold_bytes;
+  reg [7:0] hold_data;
+  reg [7:0] hold_bundle;
+  always @(negedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      hold_slot <= 4'b0;
+      hold_bytes <= 4'b0;
+      hold_data <= 8'b0;
+      hold_bundle <= 8'b0;
+    end else begin
+      hold_slot <= stage_slot;
+      hold_bytes <= stage_bytes;
+      hold_data <= stage_data;
+      hold_bundle <= stage_bundle;
+    end
+  end
+
+  genvar slot_index, byte_index;
+  generate
+    for (slot_index = 0; slot_index < 16; slot_index = slot_index + 1) begin : g_slot
+      for (byte_index = 0; byte_index < 4; byte_index = byte_index + 1) begin : g_byte
+        action_slot_byte storage (
+            .gate(clk && hold_bytes[byte_index] && hold_slot == slot_index),
+            .d(byte_index < 2 ? hold_data : hold_bundle),
+            .q(slots[slot_index][byte_index * 8 +: 8])
+        );
+      end
+    end
+  endgenerate
+
+  assign busy = !idle;
   assign table_ready = ~|(slot_valid & ~slot_ready);
   assign result = result_r;
   assign lfsr_value = lfsr;
-  assign launch_claim = claim_scan;
-  assign claim = reserved_claim;
+  assign launch_claim = table_claim;
+  // Table writes wait for idle, so the launch claim is stable while running.
+  assign claim = idle ? 8'b0 : table_claim;
   assign drive_enable = drive_active;
   assign drive_out_value = (out_value & ~bundle_out_mask) |
                            (bundle_out_value & bundle_out_mask);
@@ -189,18 +272,15 @@ module action_lane (
       (args[10] ? rx_shift_next[7:0] : rx_shift_next[15:8]) :
       ((args[0] ? rx_shift[15:8] : rx_shift[7:0]) << args[4:1]);
 
-  integer slot_index;
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      for (slot_index = 0; slot_index < 16; slot_index = slot_index + 1)
-        slots[slot_index] <= 32'b0;
       slot_valid <= 16'b0;
       slot_ready <= 16'b0;
       state <= ST_IDLE;
       pc <= 4'b0;
       base_slot <= 4'b0;
       repeats_left <= 8'b0;
-      delay_counter <= 16'b0;
+      delay_counter <= 8'b0;
       counter <= 16'b0;
       tx_shift <= 16'b0;
       rx_shift <= 16'b0;
@@ -209,7 +289,7 @@ module action_lane (
       lfsr_poly <= 16'h1021;
       stream_bit <= 3'b0;
       sample_bit <= 1'b0;
-      reserved_claim <= 8'b0;
+      table_claim <= 8'b0;
       drive_active <= 1'b0;
       out_value <= 8'b0;
       out_mask <= 8'b0;
@@ -222,7 +302,6 @@ module action_lane (
       done_pulse <= 1'b0;
     end else if (!enable) begin
       state <= ST_IDLE;
-      reserved_claim <= 8'b0;
       drive_active <= 1'b0;
       out_mask <= 8'b0;
       oe_mask <= 8'b0;
@@ -232,27 +311,20 @@ module action_lane (
     end else begin
       done_pulse <= 1'b0;
 
-      if (wr_lo && state == ST_IDLE) begin
-        slots[wr_slot][7:0] <= wr_data;
-        slots[wr_slot][31:16] <= 16'b0;
-        if (wr_slot == 4'b0)
+      if (wr_lo && idle) begin
+        if (wr_slot == 4'b0) begin
           slot_valid <= 16'b1;
-        else
+          table_claim <= 8'b0;
+        end else
           slot_valid[wr_slot] <= 1'b1;
         slot_ready[wr_slot] <= 1'b0;
       end
-      if (wr_hi && state == ST_IDLE) begin
-        slots[wr_slot][15:8] <= wr_data;
+      if ((wr_hi || wr_bundle_hi) && idle) begin
         slot_ready[wr_slot] <= 1'b1;
+        table_claim <= table_claim | written_claim;
       end
-      if (wr_bundle_lo && state == ST_IDLE) begin
-        slots[wr_slot][23:16] <= wr_data;
+      if (wr_bundle_lo && idle)
         slot_ready[wr_slot] <= 1'b0;
-      end
-      if (wr_bundle_hi && state == ST_IDLE) begin
-        slots[wr_slot][31:24] <= wr_data;
-        slot_ready[wr_slot] <= 1'b1;
-      end
       if (load_shift_lo && state == ST_IDLE)
         tx_shift[7:0] <= load_data;
       if (load_shift_hi && state == ST_IDLE)
@@ -266,11 +338,10 @@ module action_lane (
         pc <= start_slot;
         base_slot <= start_slot;
         repeats_left <= repeat_count;
-        delay_counter <= 16'b0;
+        delay_counter <= 8'b0;
         rx_shift <= 16'b0;
         result_r <= 16'b0;
         stream_bit <= 3'b0;
-        reserved_claim <= claim_scan;
         drive_active <= 1'b0;
         out_mask <= 8'b0;
         oe_mask <= 8'b0;
@@ -279,11 +350,11 @@ module action_lane (
       end else begin
         case (state)
           ST_DELAY: begin
-            if (delay_counter == 16'b0 &&
+            if (delay_counter == 8'b0 &&
                 (!args[11] || pin_sampled[args[10:8]])) begin
               state <= ST_RUN;
               pc <= pc + 1'b1;
-            end else if (delay_counter != 16'b0)
+            end else if (delay_counter != 8'b0)
               delay_counter <= delay_counter - 1'b1;
           end
 
@@ -394,7 +465,6 @@ module action_lane (
                         if (args[9]) begin
                           done_pulse <= 1'b1;
                           state <= ST_IDLE;
-                          reserved_claim <= 8'b0;
                           drive_active <= 1'b0;
                           out_mask <= 8'b0;
                           oe_mask <= 8'b0;
@@ -439,8 +509,8 @@ module action_lane (
                       (!args[11] || pin_sampled[args[10:8]]))
                     pc <= pc + 1'b1;
                   else begin
-                    delay_counter <= args[7:0] == 0 ? 16'b0 :
-                                     {8'b0, args[7:0]} - 16'd1;
+                    delay_counter <= args[7:0] == 0 ? 8'b0 :
+                                     args[7:0] - 8'd1;
                     state <= ST_DELAY;
                   end
                 end
@@ -481,7 +551,6 @@ module action_lane (
                   end else begin
                     done_pulse <= 1'b1;
                     state <= ST_IDLE;
-                    reserved_claim <= 8'b0;
                   end
                 end
 
@@ -489,7 +558,7 @@ module action_lane (
               endcase
 
               if (bundle_exec && bundle_delay_ok && bundle[4:0] != 0) begin
-                delay_counter <= {11'b0, bundle[4:0]} - 1'b1;
+                delay_counter <= {3'b0, bundle[4:0]} - 1'b1;
                 state <= ST_DELAY;
               end
             end
@@ -499,6 +568,32 @@ module action_lane (
       end
     end
   end
+endmodule
+
+// One byte of action-table storage: eight transparent-high latches. The
+// LibreLane flow instantiates the IHP latch cell directly so its latch lint
+// stays clean; simulation and other tools use the behavioral equivalent.
+module action_slot_byte (
+    input  wire       gate,
+    input  wire [7:0] d,
+    output wire [7:0] q
+);
+`ifdef __librelane__
+  genvar bit_index;
+  generate
+    for (bit_index = 0; bit_index < 8; bit_index = bit_index + 1) begin : g_bit
+      sg13cmos5l_dlhq_1 latch (.Q(q[bit_index]), .D(d[bit_index]), .GATE(gate));
+    end
+  endgenerate
+`else
+  reg [7:0] value;
+  // verilator lint_off LATCH
+  always @(*)
+    if (gate)
+      value = d;
+  // verilator lint_on LATCH
+  assign q = value;
+`endif
 endmodule
 
 `default_nettype wire
