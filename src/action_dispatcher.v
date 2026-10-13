@@ -1,6 +1,11 @@
 `default_nettype none
 
 // Combinational scoreboard for lane admission and shared FIFO grants.
+// control_ready: the target lane is idle (table writes, loads, results).
+// start_ready:   additionally, its table is complete and its claim does
+//                not overlap the other lane's active claim.
+// tx/rx_grant:   at most one lane per port, only when the FIFO can serve it;
+//                *_priority picks lane 1 when both request.
 module action_dispatcher (
     input  wire       target_lane,
     input  wire [1:0] lane_busy,

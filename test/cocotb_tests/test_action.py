@@ -1,4 +1,4 @@
-"""Action-engine architecture tests (Phases C/D).
+"""Action-engine tests.
 
 Gate-level safe: host commands plus `uio_*` pins and status `0xA` only.
 Covers GPIO regions, CPU↔action overlap, shift+counter loops, region

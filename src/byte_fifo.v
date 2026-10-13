@@ -1,8 +1,8 @@
 `default_nettype none
 
-// Buffers bytes between the host and protocol engine.
-// Decouples host service latency from exact-cycle execution.
-// Reports occupancy and flow-control status at both ends.
+// Byte FIFO between the host and the engine, so host service latency does
+// not disturb exact-cycle execution. A push to a full FIFO is accepted only
+// when a pop happens on the same cycle; otherwise it is dropped.
 module byte_fifo #(
     parameter DEPTH = 4,
     parameter ADDRESS_WIDTH = 2

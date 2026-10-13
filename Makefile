@@ -11,7 +11,6 @@ SIM ?= verilator
 RTL_SOURCES := \
 	src/project.v \
 	src/protocol_emulator_core.v \
-	src/instruction_decoder.v \
 	src/program_memory.v \
 	src/register_file.v \
 	src/timer_counter.v \

@@ -20,7 +20,7 @@ EV_PIN_FALL = 1 << 3
 EV_COMPARE = 1 << 4
 EV_REGION_DONE = 1 << 6
 
-# Action-engine CPU interface (Phase C/D)
+# Action-engine CPU interface
 RUN_REGION = 0xE4
 RUN_REGION_N = 0xE5
 WAIT_REGION = 0xE6
@@ -410,7 +410,7 @@ def line_state_smoke_program(
     dm: int = DM_PIN,
     bit_cycles: int = LS_BIT_CYCLES,
 ) -> list[int]:
-    """Phase-0 smoke: drive J / K / SE0 / J on a pin pair using only GPIO+WAIT16.
+    """Smoke test: drive J / K / SE0 / J on a pin pair using only GPIO+WAIT16.
 
     LS idle is J (D+ = 0, D− = 1) with a board pull-up on D−. No CRC or
     dedicated line resources — proves GPIO timing headroom.

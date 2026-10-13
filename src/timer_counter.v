@@ -1,8 +1,8 @@
 `default_nettype none
 
-// Exact-cycle timer with optional autonomous (nonblocking) mode.
-// Blocking waits keep count_enable high from the VM; async mode self-runs
-// after load until expiry and pulses done_pulse once.
+// 16-bit down-counter. WAIT16 counts while the sequencer holds count_enable;
+// START_TIMER (async_start) runs it on its own and pulses done_pulse once at
+// expiry.
 module timer_counter (
     input  wire        clk,
     input  wire        rst_n,

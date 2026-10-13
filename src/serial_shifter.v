@@ -1,7 +1,8 @@
 `default_nettype none
 
-// Generic CPU-side serial register. Real-time regions use the independent
-// TX/RX shifters in action_lane; this block serves scalar VM instructions.
+// CPU serial register for the 40/5p/6p/70/A0 instructions: load a TX byte,
+// shift LSB first through data[0] (out) and data[15] (in), push data[15:8].
+// Action lanes have their own shifters.
 module serial_shifter (
     input  wire        clk,
     input  wire        rst_n,

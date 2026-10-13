@@ -1,8 +1,8 @@
 `default_nettype none
 
-// Two-lane real-time subsystem. Target bit 4 selects a lane; target bits
-// 3:0 select one of its 16 action slots. The dispatcher admits complete pin
-// claims atomically and arbitrates shared FIFOs fairly.
+// Two action lanes plus the dispatcher that admits region launches and
+// shares the TX/RX FIFO ports between them. target_lane routes CPU table
+// writes, shifter loads, launches, and result reads to one lane.
 module action_engine (
     input wire clk, rst_n, enable, target_lane,
     input wire wr_lo, wr_hi, wr_lane_lo, wr_lane_hi,
@@ -54,7 +54,8 @@ module action_engine (
   assign lfsr_value = target_lane ? lane_lfsr_1 : lane_lfsr_0;
   assign claim = lane_claim_0 | lane_claim_1;
 
-  // Active claims never overlap, so masked OR has explicit collision semantics.
+  // Running lanes never claim the same pin, so OR-merging their drives is
+  // collision-free.
   assign drive_enable = lane_drive_0 | lane_drive_1;
   assign drive_out_mask = lane_out_mask_0 | lane_out_mask_1;
   assign drive_out_value = (lane_out_0 & lane_out_mask_0) |
@@ -63,6 +64,7 @@ module action_engine (
   assign drive_oe_value = (lane_oe_0 & lane_oe_mask_0) |
                           (lane_oe_1 & lane_oe_mask_1);
 
+  // Round-robin per port: the lane granted most recently loses the next tie.
   reg tx_priority, rx_priority;
   action_dispatcher dispatcher (
       .target_lane(target_lane), .lane_busy(lane_busy),

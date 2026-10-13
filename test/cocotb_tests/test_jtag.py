@@ -1,4 +1,4 @@
-"""JTAG Shift-DR loopback (Phase 7): generic shift engine reuse, no RTL change.
+"""JTAG Shift-DR loopback on the generic shift engine.
 
 The DUT drives TCK/TMS/TDI and samples TDO; the testbench ties TDO to the
 driven TDI level every cycle (combinational loopback). The pushed byte must
