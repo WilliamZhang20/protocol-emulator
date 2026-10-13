@@ -152,3 +152,86 @@ async def test_zero_async_timer_posts_completion(dut):
         if cycle % 32 == 31 and not status_running(await read_status(dut)):
             break
     assert not status_running(await read_status(dut)), "zero timer did not complete"
+
+
+@cocotb.test()
+async def test_action_table_writes_leave_timer_alone(dut):
+    """Two-operand group E ops (E8/E9) must not reload a running START_TIMER."""
+    from cocotb_tests.reference.programs import (
+        EV_TIMER_DONE, action_done, prog_action, start_timer, wait_event,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    duration = 300
+    program = [
+        gpio_oe(PIN, 1), gpio_write(PIN, 0),
+        *start_timer(duration),
+        # E8 t 00 / E9 t 90: operands that would load 0x0000 (an instant
+        # completion) and then 0x9000 if they reached the timer.
+        *prog_action(0, action_done()),
+        *wait_event(EV_TIMER_DONE),
+        gpio_write(PIN, 1),
+        HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    fired_at = None
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, PIN) == 1:
+            fired_at = cycle
+            break
+    assert fired_at is not None, "START_TIMER never completed"
+    assert fired_at >= duration, f"timer completed early at {fired_at}"
+    assert fired_at <= duration + 100, f"timer completed late at {fired_at}"
+
+
+@cocotb.test()
+async def test_compare_event_uses_armed_target(dut):
+    """EV_COMPARE tracks the {value, pin} latched by ARM_EDGE, both polarities."""
+    from cocotb_tests.reference.programs import EV_COMPARE, wait_event
+
+    await start_clock(dut)
+    await reset_top(dut)
+    marker_high, marker_low = 4, 5
+    program = [
+        gpio_oe(marker_high, 1), gpio_write(marker_high, 0),
+        gpio_oe(marker_low, 1), gpio_write(marker_low, 0),
+        *arm_edges(0, 0, compare=(EDGE_PIN, 1)),
+        *wait_event(EV_COMPARE),
+        gpio_write(marker_high, 1),
+        *arm_edges(0, 0, compare=(EDGE_PIN, 0)),
+        *wait_event(EV_COMPARE),
+        gpio_write(marker_low, 1),
+        HALT,
+    ]
+    dut.uio_in.value = 0
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+
+    # Every other pin sits low, so a compare that follows the current
+    # instruction's immediate (D0 -> pin 0 low) would fire here.
+    for _ in range(300):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, marker_high) != 1, "compare fired with pin low"
+
+    dut.uio_in.value = 1 << EDGE_PIN
+    for _ in range(100):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, marker_high) == 1:
+            break
+    else:
+        raise AssertionError("compare did not fire when the pin went high")
+
+    for _ in range(300):
+        await RisingEdge(dut.clk)
+        assert driven_level(dut, marker_low) != 1, "low compare fired with pin high"
+
+    dut.uio_in.value = 0
+    for _ in range(100):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, marker_low) == 1:
+            break
+    else:
+        raise AssertionError("compare did not fire when the pin went low")
