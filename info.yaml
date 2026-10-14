@@ -19,7 +19,6 @@ project:
   source_files:
     - "project.v"
     - "protocol_emulator_core.v"
-    - "instruction_decoder.v"
     - "program_memory.v"
     - "register_file.v"
     - "timer_counter.v"

@@ -1,96 +1,67 @@
 # Dynamic verification
 
-The simulation layer uses cocotb for scenarios, monitors, scoreboards, and
-executable protocol models. Verilator and Icarus can both run the RTL tests;
-the Tiny Tapeout gate-level flow continues to use this directory as well.
+The regression uses cocotb with Verilator (default) or Icarus for RTL, and
+the same tests run on the hardened netlist for gate-level simulation.
 
 ## Commands
 
 From the repository root:
 
 ```sh
-make verify
-make sim
-make memory-test
+make sim            # cocotb regression
+make memory-test    # foundry SRAM model test
 make lint
+make verify         # everything, including formal
 ```
 
-Or run the cocotb regression directly:
+Or run cocotb directly:
 
 ```sh
 make -C test clean
-make -C test
+make -C test                 # Verilator
+make -C test SIM=icarus
+make -C test GATES=yes       # after copying the netlist to test/gate_level_netlist.v
 ```
 
-Verilator is the default; set `SIM=icarus` to run the RTL regression with Icarus.
-Gate-level simulation remains available through `make -C test GATES=yes` after
-the hardened netlist has been copied into `test/gate_level_netlist.v`.
+## Gate-level rule
+
+Every module in `COCOTB_TEST_MODULES` must run on the gate-level netlist,
+where the design is flattened. Observe only top-level pins: drive the host
+link on `ui_in`, read `uo_out` (status `0xA`, FIFO data), and use `uio_*`.
+Never reach below `dut.user_project`. See `AGENTS.md` and
+`cocotb_tests/common.py`.
 
 ## Structure
 
-- `cocotb_tests/common.py` owns shared clock and reset behavior.
-- `cocotb_tests/test_*.py` contains discoverable test modules.
-- `cocotb_tests/reference/` contains the ISA and protocol reference models.
-- `models/` contains vendor simulation models only.
+- `cocotb_tests/common.py`: clock, reset, host commands, and status helpers.
+- `cocotb_tests/reference/`: program builders and reference models.
+- `cocotb_tests/test_*.py`: test modules.
+- `models/`: vendor SRAM simulation models.
+- `program_memory_tb.sv`: standalone test of the foundry SRAM model,
+  including masked writes. Formal uses its own SRAM abstraction under
+  `formal/models/`; neither model is synthesized.
 
-Keep drivers and monitors independent of individual tests. Compare externally
-observable events through the common trace vocabulary so the same scoreboards
-can be reused for UART, SPI, I2C, and arbitrary instruction sequences.
+## Test modules
 
-**Gate-level rule:** every module in `COCOTB_TEST_MODULES` must be GL-safe.
-Do not reach below `dut.user_project` (no `core`, `bit_xfer`, etc.). Use host
-commands and `uio_*` / `uo_out` only — see `AGENTS.md` and
-`cocotb_tests/common.py`.
+| Module | Covers |
+| --- | --- |
+| `test_top.py` | Safe reset outputs; SRAM readback with command `B` |
+| `test_uart.py` | UART TX and RX programs loaded through the host link, checked as 8-N-1 frames on the pins |
+| `test_clocked_regions.py` | SPI modes 0 and 3, an I²C byte write with ACK, and I²C clock stretching |
+| `test_orchestrate.py` | Nonblocking `RUN_REGION`, `WAIT_EVENT`, overlapped timers, edge wakeups, pin ownership during a transfer |
+| `test_fuzz.py` | Randomized orchestration (96 trials) with a hang watchdog, RX scoreboarding, and CRC stress |
+| `test_differential.py` | 16 seeded regions compared pin-transition-for-pin-transition, cycle-exact, against `reference/region_spec.py` |
+| `test_action.py` | Lane programming, regions, bundles, streaming and FIFO backpressure, claims and stalls, `MAP`, results, CPU/lane FIFO port sharing |
+| `test_alu_branch.py` | Registers, ALU, zero flag, `JZ`/`JNZ`/`DJNZ` |
+| `test_time_event.py` | `GET_TIME`, `WAIT_UNTIL` (including wrap), `EVENT_STAMP`, event detail, zero-length timers |
+| `test_sideset.py` | Side-set lands on the same cycle as the next instruction's pin change |
+| `test_crc.py` | CRC-32 against zlib; CPU CRC alongside a lane LFSR |
+| `test_usb_ls.py` | USB line states, CRC5/CRC16, bundle GPIO regions, a soft low-speed ACK |
+| `test_jtag.py` | JTAG Shift-DR loopback through a clocked region |
+| `test_onewire.py` | 1-Wire reset, presence, write, and read |
+| `test_manchester.py` | Manchester TX decoded from pin timing |
+| `test_host_stream.py` | FIFO levels (`C`) and RX peek (`D`) |
 
-The standalone `program_memory_tb.sv` verifies the delivered foundry SRAM model,
-including masked writes. Formal verification uses a separate logical SRAM model
-under `formal/models/`; neither model is synthesized into the ASIC.
-
-`test_uart.py` loads distinct TX and RX bytecode images through the real host
-interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins.
-
-`test_clocked_regions.py` exercises action regions with SPI
-mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching case.
-
-`test_orchestrate.py` checks nonblocking `RUN_REGION` / `WAIT_EVENT`, overlapped
-timer joins, edge wakeups, and GPIO ownership while a transfer runs.
-
-`test_fuzz.py` runs a mutational orchestration campaign (96 trials: double region starts,
-OR-joins, edge wake, ownership, CRC pipelines, parallel line actions, CRC-then-region) with a
-hang watchdog, RX scoreboarding, and directed CRC poly stress.
-
-`test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, parallel GPIO action regions, and a soft LS ACK line-pattern TX demo (GL-safe).
-
-`test_alu_branch.py` covers the 8x register file, ALU ops, the zero flag, and
-`JZ`/`JNZ`/`DJNZ` (GL-safe, pins + status only).
-
-`test_action.py` covers the Phase C/D action engine: program slots, `RUN_REGION`,
-parallel GPIO drive via 32-bit action words, transfer-bit equivalence, and
-`WAIT_REGION` join. It also checks native FIFO backpressure, pin-claim and
-action-table stalls, physical MAP swaps, and result forwarding (GL-safe).
-
-`test_differential.py` runs 16 seeded, legal action regions through the pure
-Python `reference/region_spec.py` and RTL, then compares every externally
-visible pin transition and its cycle after launch alignment. The reference
-model deliberately rejects action opcodes outside its supported subset
-(`GPIO`, `DELAY`, `COUNT`, `REPEAT`, `DONE`) so a new generated instruction cannot
-silently be scored as a NOP. The test uses only top-level pins and host
-commands, so it is included in gate-level simulation when a netlist is present.
-
-`test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
-`EVENT_STAMP` triples, source/pin detail, wrapped deadlines, and zero-length async timers.
-
-`test_sideset.py` checks side-set prefixes land on the same cycle as the next
-op's pin transition.
-
-`test_crc.py` checks IEEE-802.3 CRC-32 (`0xE1` setup, 4-byte push) against zlib
-and checks serialized CPU/action feeds of the shared CRC block.
-
-`test_jtag.py` runs a Shift-DR loopback through a clocked action region with
-no RTL change per protocol.
-
-`test_onewire.py` runs a 1-Wire reset + presence + write + read demo on one pin.
-
-`test_manchester.py` decodes a Manchester TX frame purely from pin timing.
-
-`test_host_stream.py` checks FIFO level reads (`0xC`) and RX peek (`0xD`).
+`reference/region_spec.py` supports only `GPIO`, `DELAY`, `COUNT`, `REPEAT`,
+and `DONE`, and rejects other opcodes, so an unsupported generated action
+cannot be silently scored as a `NOP`.

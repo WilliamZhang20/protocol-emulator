@@ -14,6 +14,8 @@ module tt_um_protocol_emulator (
     input  wire       clk,
     input  wire       rst_n
 );
+  // ena is high whenever this design is selected; holding the design in
+  // reset otherwise keeps it quiet.
   wire internal_rst_n = rst_n && ena;
 
   wire engine_enable;
@@ -69,6 +71,8 @@ module tt_um_protocol_emulator (
       .engine_halted(engine_halted)
   );
 
+  // The engine owns the SRAM port while enabled; the host loads and reads
+  // programs only while it is stopped.
   wire memory_owned_by_engine = engine_enable;
   wire memory_enable = memory_owned_by_engine ? instruction_read :
                                                host_program_enable;
@@ -131,8 +135,6 @@ module tt_um_protocol_emulator (
       .gpio_oe(uio_oe),
       .halted(engine_halted)
   );
-
-  wire _unused = 1'b0;
 endmodule
 
 `default_nettype wire

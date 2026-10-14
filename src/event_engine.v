@@ -1,9 +1,10 @@
 `default_nettype none
 
-// Sticky event scoreboard with counted TIMER/REGION completion tokens
-// so back-to-back resource finishes are not lost when WAIT_EVENT has not run
-// yet. Edge/compare sources remain level-sticky. WAIT_EVENT ORs a mask against
-// pending and consumes one token (or clears sticky) per matched bit.
+// Event scoreboard for WAIT_EVENT and WAIT_REGION. Timer and region
+// completions are counted tokens (saturating at 7), so completions that
+// arrive before the wait are not lost; edge and compare sources are sticky
+// flags. A wait matches when (pending & mask) != 0 and then consumes one
+// token, or clears the flag, for every masked source.
 module event_engine (
     input  wire       clk,
     input  wire       rst_n,
@@ -28,6 +29,13 @@ module event_engine (
   localparam BIT_FALL    = 3;
   localparam BIT_COMPARE = 4;
   localparam BIT_REGION  = 6;
+
+  // event_detail source codes; each equals the source's pending bit.
+  localparam [3:0] SRC_TIMER   = 4'd1;
+  localparam [3:0] SRC_RISE    = 4'd2;
+  localparam [3:0] SRC_FALL    = 4'd3;
+  localparam [3:0] SRC_COMPARE = 4'd4;
+  localparam [3:0] SRC_REGION  = 4'd6;
 
   reg [2:0] timer_tokens;
   reg [2:0] region_tokens;
@@ -67,7 +75,7 @@ module event_engine (
   assign pending = pending_reg;
   assign wait_matched = |(pending_reg & wait_mask);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       timer_tokens <= 3'b0;
       region_tokens <= 3'b0;
@@ -97,20 +105,22 @@ module event_engine (
           compare_sticky <= 1'b1;
       end
 
-      // Most recent event detail: source[7:4], logical pin[2:0].
-      // Pin edges take priority when sources coincide on one clock.
+      // Most recent event: {source, 0, lowest logical pin} for edges,
+      // {source, 3'b0, lane} for regions, {source, 0} otherwise. Pin edges
+      // take priority when sources coincide on one clock.
       if (!arm_edges && rise_hit)
-        event_detail <= {4'd2, 1'b0, first_pin(rise_pins)};
+        event_detail <= {SRC_RISE, 1'b0, first_pin(rise_pins)};
       else if (!arm_edges && fall_hit)
-        event_detail <= {4'd3, 1'b0, first_pin(fall_pins)};
+        event_detail <= {SRC_FALL, 1'b0, first_pin(fall_pins)};
       else if (!arm_edges && compare_hit)
-        event_detail <= {4'd4, 4'b0};
+        event_detail <= {SRC_COMPARE, 4'b0};
       else if (region_done_count != 0)
-        event_detail <= {4'd6, 3'b0, region_done_lane};
+        event_detail <= {SRC_REGION, 3'b0, region_done_lane};
       else if (timer_done_pulse)
-        event_detail <= {4'd1, 4'b0};
+        event_detail <= {SRC_TIMER, 4'b0};
 
-      // Produce/consume with a single next-state so same-cycle done+wait nets out.
+      // Produce, then consume, in one next-state so a completion and a
+      // wait on the same cycle net out.
       begin : timer_token_update
         reg [2:0] next_timer;
         next_timer = timer_tokens;

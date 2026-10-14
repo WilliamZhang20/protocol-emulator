@@ -1,6 +1,8 @@
 `default_nettype none
 
-// Merges VM GPIO writes with the action region's claimed pins.
+// Merges CPU GPIO writes, the CPU side-set prefix, and action-lane drives
+// into one masked update for gpio_datapath. CPU writes to pins claimed by a
+// running region are masked off (the sequencer also stalls them).
 module gpio_arbiter (
     input  wire [7:0] action_claim,
     input  wire       action_drive_enable,
@@ -40,18 +42,18 @@ module gpio_arbiter (
   wire [7:0] sideset_out_mask = sideset_apply ?
       (sideset_pin_mask & ~vm_out_mask) : 8'b0;
   wire [7:0] sideset_out_value = sideset_val ? sideset_pin_mask : 8'b0;
-  wire [7:0] res_out_mask = action_drive_enable ? action_out_mask : 8'b0;
-  wire [7:0] res_oe_mask = action_drive_enable ? action_oe_mask : 8'b0;
+  wire [7:0] lane_out_mask = action_drive_enable ? action_out_mask : 8'b0;
+  wire [7:0] lane_oe_mask = action_drive_enable ? action_oe_mask : 8'b0;
 
   assign pin_claim = action_claim;
   assign gpio_output_write = vm_output_write || action_drive_enable || sideset_apply;
   assign gpio_value = (vm_out_value & vm_out_mask) |
-      (action_out_value & res_out_mask) |
+      (action_out_value & lane_out_mask) |
       (sideset_out_value & sideset_out_mask);
-  assign gpio_output_mask = vm_out_mask | res_out_mask | sideset_out_mask;
+  assign gpio_output_mask = vm_out_mask | lane_out_mask | sideset_out_mask;
   assign gpio_oe_value = (vm_oe_value & vm_oe_mask) |
-      (action_oe_value & res_oe_mask);
-  assign gpio_oe_mask = vm_oe_mask | res_oe_mask;
+      (action_oe_value & lane_oe_mask);
+  assign gpio_oe_mask = vm_oe_mask | lane_oe_mask;
 endmodule
 
 `default_nettype wire

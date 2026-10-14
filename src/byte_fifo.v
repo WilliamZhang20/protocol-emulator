@@ -1,8 +1,8 @@
 `default_nettype none
 
-// Buffers bytes between the host and protocol engine.
-// Decouples host service latency from exact-cycle execution.
-// Reports occupancy and flow-control status at both ends.
+// Byte FIFO between the host and the engine, so host service latency does
+// not disturb exact-cycle execution. A push to a full FIFO is accepted only
+// when a pop happens on the same cycle; otherwise it is dropped.
 module byte_fifo #(
     parameter DEPTH = 4,
     parameter ADDRESS_WIDTH = 2
@@ -32,14 +32,19 @@ module byte_fifo #(
   assign full = count == FIFO_DEPTH;
   assign level = count;
 
-  always @(posedge clk) begin
+  // Storage has no reset; only entries below `count` are observable, and
+  // nothing pushes while the pointers are held in reset.
+  always @(posedge clk)
+    if (push_accepted)
+      memory[write_pointer] <= push_data;
+
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       read_pointer <= {ADDRESS_WIDTH{1'b0}};
       write_pointer <= {ADDRESS_WIDTH{1'b0}};
       count <= {(ADDRESS_WIDTH + 1){1'b0}};
     end else begin
       if (push_accepted) begin
-        memory[write_pointer] <= push_data;
         if (write_pointer == LAST_ADDRESS)
           write_pointer <= {ADDRESS_WIDTH{1'b0}};
         else

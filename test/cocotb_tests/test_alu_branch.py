@@ -1,4 +1,4 @@
-"""ALU + conditional branch tests (Phase 1-2).
+"""ALU and conditional branch tests.
 
 Gate-level safe: host commands plus `uio_*` pins and status `0xA` only.
 """

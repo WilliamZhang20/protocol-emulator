@@ -1,8 +1,9 @@
 `default_nettype none
 
-// Maps logical protocol signals onto physical GPIO pins.
-// Applies masked output, output-enable, and compare operations.
-// Captures pin samples and edge events for branching.
+// GPIO fabric. Programs address logical pins; pin_map[logical] gives the
+// physical pin, and MAP swaps entries so the map stays a permutation.
+// Provides masked output/OE updates, synchronized samples with edge and
+// compare detection, and a single-flop timed sample for action lanes.
 module gpio_datapath (
     input  wire       clk,
     input  wire       rst_n,
@@ -36,10 +37,11 @@ module gpio_datapath (
     end
   endgenerate
   reg [7:0] previous_sample;
+  // Two-flop synchronizer for waits, edges, compare, and events.
   (* async_reg = "true" *) reg [7:0] pin_meta;
   (* async_reg = "true" *) reg [7:0] pin_sync;
-  // A separate, single-clock timed sample is used only by explicit action
-  // SAMPLE/SHIFT instructions whose source clock has a known timing eye.
+  // Single-flop sample for action SAMPLE/SHIFT/PAIR, used when the protocol
+  // timing guarantees the input is stable around the sampling edge.
   reg [7:0] pin_timed;
   reg [7:0] physical_output;
   reg [7:0] physical_oe;
@@ -71,7 +73,7 @@ module gpio_datapath (
   assign compare_match = (logical_sample & compare_mask) ==
                          (compare_value & compare_mask);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       logical_output <= 8'b0;
       logical_oe <= 8'b0;

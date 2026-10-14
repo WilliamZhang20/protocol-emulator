@@ -1,4 +1,4 @@
-"""Streaming host aids (Phase 10): FIFO levels (0xC) + RX peek (0xD)."""
+"""Host streaming aids: FIFO levels (0xC) and RX peek (0xD)."""
 
 import cocotb
 

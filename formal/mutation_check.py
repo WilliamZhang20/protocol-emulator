@@ -51,7 +51,7 @@ MUTATIONS = (
     ),
     Mutation(
         "claim_release", "action_engine", "action_lane.v",
-        "assign claim = reserved_claim;",
+        "assign claim = idle ? 8'b0 : table_claim;",
         "assign claim = 8'b0;",
         ("action_lane.v",), "action_engine_properties.sv", "action_engine_properties",
     ),
@@ -59,7 +59,7 @@ MUTATIONS = (
         "branch_polarity", "shared_resources", "vm_sequencer.v",
         "(is_jz && alu_zero) ||",
         "(is_jz && !alu_zero) ||",
-        ("instruction_decoder.v", "vm_sequencer.v"),
+        ("vm_sequencer.v",),
         "shared_resources_properties.sv", "shared_resources_properties",
     ),
 )

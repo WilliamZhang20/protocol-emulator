@@ -1,14 +1,13 @@
 `default_nettype none
 
-// Programmable CRC datapath (protocol-neutral). Width 1..16 via CRC_SETUP,
-// plus one-pulse IEEE-802.3 CRC-32 setup (width 32, poly 0x04C11DB7,
-// init/xor ones, refin/refout). Reflect-in on feed, reflect-out/xor applied
-// only when `finalize` pulses.
+// CPU CRC datapath. CRC_SETUP configures width 1..16, polynomial, init,
+// reflect-in, reflect-out, and xor-out; setup32 loads IEEE 802.3 CRC-32
+// (width 32, poly 0x04C11DB7, init/xor ones, reflected in and out).
+// Reflect-in applies as each byte is fed; reflect-out and xor-out apply only
+// on `finalize`.
 //
-// Timing: byte feed processes two bits per clock; reflect-out finalize
-// remains bit-serial. This avoids the former 8-step combinational path.
-// `busy` stays high while a multi-cycle CPU operation runs. Real-time lanes
-// own independent LFSRs and do not contend with this datapath.
+// A feed takes four cycles (two bits per clock). A reflected finalize emits
+// one bit per clock. `busy` is high while either runs.
 module crc_engine (
     input  wire        clk,
     input  wire        rst_n,
@@ -56,13 +55,17 @@ module crc_engine (
   reg [31:0] fin_src;
   reg [31:0] fin_acc;
 
+  wire xor_out     = cfg_r[2];
+  wire reflect_out = cfg_r[1];
+  wire reflect_in  = cfg_r[0];
+
   wire start_feed = feed && (phase == ST_IDLE);
   wire start_fin  = finalize && (phase == ST_IDLE);
   // Busy tracks in-flight work only. Including the start strobe here deadlocks
   // the VM issue/wait handshake (feed requires !busy, which then asserts busy).
   assign busy = (phase != ST_IDLE);
 
-  always @(posedge clk) begin
+  always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       crc <= 32'b0;
       state <= 32'b0;
@@ -128,7 +131,7 @@ module crc_engine (
             fin_acc <= next_acc;
             fin_src <= {1'b0, fin_src[31:1]};
             if (bits_left == 6'd1) begin
-              crc <= (cfg_r[2] ? (next_acc ^ width_mask_r) : next_acc)
+              crc <= (xor_out ? (next_acc ^ width_mask_r) : next_acc)
                   & width_mask_r;
               phase <= ST_IDLE;
             end
@@ -137,12 +140,12 @@ module crc_engine (
         end
         default: begin // ST_IDLE
           if (start_feed) begin
-            feed_shift <= cfg_r[0] ? rev8(feed_byte) : feed_byte;
+            feed_shift <= reflect_in ? rev8(feed_byte) : feed_byte;
             bits_left <= 6'd8;
             phase <= ST_FEED;
           end else if (start_fin) begin
-            if (!cfg_r[1]) begin
-              crc <= (cfg_r[2] ? (state ^ width_mask_r) : state) & width_mask_r;
+            if (!reflect_out) begin
+              crc <= (xor_out ? (state ^ width_mask_r) : state) & width_mask_r;
             end else begin
               fin_src <= state & width_mask_r;
               fin_acc <= 32'b0;

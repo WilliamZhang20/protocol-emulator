@@ -86,7 +86,7 @@ def line_levels(state: int) -> tuple[int, int]:
 
 @cocotb.test()
 async def test_line_state_gpio_smoke(dut):
-    """Phase 0: GPIO+WAIT16 can toggle J/K/SE0 at LS bit time."""
+    """GPIO+WAIT16 can toggle J/K/SE0 at LS bit time."""
     await start_clock(dut)
     await reset_top(dut)
     await load_program(dut, line_state_smoke_program(bit_cycles=8))
