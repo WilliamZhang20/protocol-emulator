@@ -149,7 +149,7 @@ their operand bytes in order.
 | `2x` | `PIN_WRITE` | Drive logical pin `x[2:0]` to `x[3]` |
 | `3x` | `OE_WRITE` | Set output enable of pin `x[2:0]` to `x[3]` |
 | `9x` | `WAIT_PIN` | Wait until synchronized pin `x[2:0]` equals `x[3]` |
-| `Bx qq` | `MAP` | Swap logical pin `x[2:0]` onto physical pin `qq[2:0]`; the map stays a permutation |
+| `Bx qq` | `MAP` | Swap logical pin `x[2:0]` onto physical pin `qq[2:0]`; the map stays a permutation. Waits for idle lanes |
 | `40` | `TX_LOAD` | Pop a TX byte into the CPU shifter; waits for data and idle lanes |
 | `5p` | `SHIFT_OUT` | Drive pin `p` with the shifter LSB, then shift right |
 | `6p` | `SHIFT_IN` | Shift synchronized pin `p` into the shifter MSB |
@@ -191,7 +191,7 @@ starts at zero when the engine is started.
 
 | Encoding | Name | Operation |
 | --- | --- | --- |
-| `Fx rise fall` | `ARM_EDGE` | Arm rising/falling-edge pin masks and clear edge/compare flags; `x[0]` also arms the compare source |
+| `Fx rise fall` | `ARM_EDGE` | Arm rising/falling-edge pin masks and clear edge/compare flags. A nonzero `x` also arms the compare on logical pin `x[2:0]` reading `x[3]`; `F0` disarms it, so "pin 0 low" cannot be a compare target |
 | `D0 mask` | `WAIT_EVENT` | Wait until `pending & mask` is nonzero, then consume the matched sources |
 | `AF` | `EVENT_STAMP` | Push one byte; three consecutive stamps give time bits 7:0, time bits 15:8, and the pending vector, captured together |
 | `ED` | `EVENT_DETAIL` | Push the event detail captured with the most recent stamp |
@@ -309,7 +309,8 @@ finishes, across repeats.
   the selected lane is idle.
 - `TX_LOAD`, `RX_PUSH`, CRC pushes, and event stamps wait until both lanes
   are idle, since a running lane may use the FIFOs.
-- `HALT` waits until both lanes are idle.
+- `MAP` and `HALT` wait until both lanes are idle, since a running lane
+  drives and samples through the pin map.
 - The CPU timer, ALU, CRC, and shifter continue while regions run.
 
 **FIFO ports.** Each FIFO has one port. The dispatcher grants it to at most
@@ -335,7 +336,7 @@ the wait are not lost. Edge and compare sources are sticky flags, cleared by
 | 1 | `EV_TIMER_DONE` | `START_TIMER` expiry |
 | 2 | `EV_PIN_RISE` | Armed rising edge |
 | 3 | `EV_PIN_FALL` | Armed falling edge |
-| 4 | `EV_COMPARE` | Armed GPIO compare |
+| 4 | `EV_COMPARE` | Armed pin compare: set while the target latched by `ARM_EDGE` matches (level, re-asserts after a wait if still matching) |
 | 6 | `EV_REGION_DONE` | Region completion (both lanes finishing together post two tokens) |
 
 Bits 0, 5, and 7 are always zero.
@@ -374,20 +375,6 @@ SE0) at about 1.5 Mb/s on two `uio` pins. Wire D+/D− to `uio[0]`/`uio[1]`,
 add a 1.5 kΩ pull-up on D− for a low-speed device's idle J, and add series
 resistors as needed. This is not USB-compliant and is intended for an
 analyzer or the cocotb host model.
-
-## Known issues
-
-These behaviors exist in the current RTL and are not yet fixed:
-
-- **`MAP` during a region is dropped.** `MAP` advances without waiting for
-  idle lanes, but the map update is suppressed while any lane is busy.
-- **Two-operand action instructions start the timer.** The timer load decodes
-  only the opcode, so `E5`, `E8`, `E9`, `EB`, and `EC` load the timer with
-  `{second operand, first operand}` and start it asynchronously. This
-  overwrites a running `START_TIMER` and can post a spurious `EV_TIMER_DONE`.
-- **The compare source is not latched.** `ARM_EDGE` arms the compare, but
-  its pin and value come from the low nibble of whichever instruction is
-  executing, every cycle.
 
 ## Future work
 

@@ -487,8 +487,19 @@ module protocol_emulator_core (
       .gpio_oe_mask(gpio_oe_mask)
   );
 
-  // The compare source takes {value, pin} from the immediate of whichever
-  // instruction is current, every cycle.
+  // ARM_EDGE (Fx) latches the compare target {value, pin} = x. A nonzero x
+  // arms the compare, so the target "pin 0 low" cannot be selected.
+  reg [3:0] compare_target;
+  wire compare_arm = immediate != 4'h0;
+  wire [7:0] compare_pin_mask = 8'b1 << compare_target[2:0];
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      compare_target <= 4'h0;
+    else if (arm_edges)
+      compare_target <= immediate;
+  end
+
   gpio_datapath gpio (
       .clk(clk),
       .rst_n(rst_n),
@@ -503,8 +514,8 @@ module protocol_emulator_core (
       .output_mask(gpio_output_mask),
       .oe_value(gpio_oe_value),
       .oe_mask(gpio_oe_mask),
-      .compare_value(immediate[3] ? (8'b1 << immediate[2:0]) : 8'b0),
-      .compare_mask(8'b1 << immediate[2:0]),
+      .compare_value(compare_target[3] ? compare_pin_mask : 8'b0),
+      .compare_mask(compare_pin_mask),
       .sampled_value(gpio_sampled),
       .timed_value(gpio_timed),
       .mapping_snapshot(),
@@ -531,7 +542,7 @@ module protocol_emulator_core (
       .gpio_rising(gpio_rising),
       .gpio_falling(gpio_falling),
       .compare_match(gpio_compare_match),
-      .compare_arm(immediate[0]),
+      .compare_arm(compare_arm),
       .wait_clear(wait_event_clear || wait_region_clear),
       // WAIT_REGION waits on bit 6 (EV_REGION_DONE) only.
       .wait_mask(wait_region_active ? 8'h40 : operand_low),

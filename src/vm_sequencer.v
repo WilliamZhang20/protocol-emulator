@@ -177,6 +177,7 @@ module vm_sequencer (
   wire is_wait_until  = group_a && immediate == A_WAIT_UNTIL;
   wire is_ev_stamp    = group_a && immediate == A_EVENT_STAMP;
 
+  wire is_start_timer       = group_e && immediate == E_START_TIMER;
   wire is_crc32_setup       = group_e && immediate == E_CRC32_SETUP;
   wire is_crc32_b2          = group_e && immediate == E_CRC_PUSH_B2;
   wire is_crc32_b3          = group_e && immediate == E_CRC_PUSH_B3;
@@ -256,12 +257,10 @@ module vm_sequencer (
       in_execute && opcode == OP_TX_LOAD && !tx_empty && !action_busy;
   assign execute_map = in_low_wait && opcode == OP_MAP && !action_busy;
 
-  // Timer and events. The timer decode checks only the opcode, so the
-  // two-operand group E action ops (E5, E8, E9, EB, EC) also load and start
-  // the asynchronous timer on their second operand.
-  assign timer_load = in_high_wait &&
-                      (opcode == OP_WAIT16 || opcode == OP_GROUP_E);
-  assign timer_async = in_high_wait && opcode == OP_GROUP_E;
+  // Timer and events. Only WAIT16 and START_TIMER load the timer; the other
+  // group E ops that reach OPERAND_HIGH_WAIT leave it alone.
+  assign timer_load = in_high_wait && (opcode == OP_WAIT16 || is_start_timer);
+  assign timer_async = in_high_wait && is_start_timer;
   assign timer_count_enable = state == STATE_TIMER_WAIT;
   assign arm_edges = in_high_wait && opcode == OP_ARM_EDGE;
   assign wait_event_clear = state == STATE_EVENT_WAIT && event_wait_matched;
@@ -472,8 +471,12 @@ module vm_sequencer (
               advance(STATE_FETCH_REQUEST);
           end else if (is_crc_feed) begin
             crc_handshake;
-          end else if (opcode == OP_MAP || is_alu_mov || is_get_time) begin
-            // MAP does not wait for a busy lane; execute_map is suppressed.
+          end else if (opcode == OP_MAP) begin
+            // A running lane may be driving through the map, so MAP waits
+            // for every lane to go idle (execute_map is gated the same way).
+            if (!action_busy)
+              advance(STATE_FETCH_REQUEST);
+          end else if (is_alu_mov || is_get_time) begin
             advance(STATE_FETCH_REQUEST);
           end else if (is_read_result || is_action_load_sh ||
                        is_action_load_hi) begin

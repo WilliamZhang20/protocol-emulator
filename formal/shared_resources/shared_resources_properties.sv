@@ -37,6 +37,8 @@ module shared_resources_properties;
   wire crc_push_b2;
   wire crc_push_b3;
   wire execute_map;
+  wire timer_load;
+  wire timer_async;
   wire execute_shift_out;
   wire execute_shift_in;
   wire execute_shift_clear;
@@ -74,6 +76,7 @@ module shared_resources_properties;
       .crc_push_lo(crc_push_lo), .crc_push_hi(crc_push_hi),
       .crc_push_b2(crc_push_b2), .crc_push_b3(crc_push_b3),
       .execute_map(execute_map),
+      .timer_load(timer_load), .timer_async(timer_async),
       .execute_shift_out(execute_shift_out),
       .execute_shift_in(execute_shift_in),
       .execute_shift_clear(execute_shift_clear),
@@ -131,7 +134,20 @@ module shared_resources_properties;
             {$past(instruction_data[1:0]), $past(operand_low)} :
             ($past(program_counter) + 1'b1)));
       end
+      // MAP holds in OPERAND_LOW_WAIT, without advancing, while any lane is
+      // busy, so a map update is never skipped.
+      if (past_valid && $past(rst_n && state == 4'd5 && opcode == 4'hb &&
+                              action_busy)) begin
+        assert(state == 4'd5);
+        assert(program_counter == $past(program_counter));
+      end
+      // Only WAIT16 (1x) and START_TIMER (E0) touch the timer.
+      if (timer_load)
+        assert(opcode == 4'h1 || (opcode == 4'he && immediate == 4'h0));
+      if (timer_async)
+        assert(timer_load && opcode == 4'he);
       cover(action_busy && state == 4'd3 && opcode == 4'ha);
+      cover(action_busy && state == 4'd5 && opcode == 4'hb);
       cover(cpu_pin_conflict && state == 4'd3);
     end
   end

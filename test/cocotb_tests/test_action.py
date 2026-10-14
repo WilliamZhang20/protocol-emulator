@@ -616,6 +616,47 @@ async def test_map_swaps_physical_pins(dut):
 
 
 @cocotb.test()
+async def test_map_waits_for_region(dut):
+    """MAP issued while a region runs stalls until the lane is idle, then applies."""
+    from cocotb_tests.reference.programs import (
+        HALT, action_delay, action_done, action_gpio, gpio_oe, gpio_write,
+        map_pin, prog_action, run_region, wait_region,
+    )
+
+    await start_clock(dut)
+    await reset_top(dut)
+    program = [
+        gpio_oe(CPU_PIN, 1),
+        *prog_action(0, action_gpio(pin=ACTION_PIN, out=1, oe=1)),
+        *prog_action(1, action_delay(100)),
+        *prog_action(2, action_gpio(pin=ACTION_PIN, out=0, oe=1)),
+        *prog_action(3, action_done()),
+        *run_region(0),
+        *map_pin(SAMPLE_PIN, MARKER_PIN),
+        gpio_write(CPU_PIN, 1),  # marker after MAP
+        wait_region(),
+        gpio_oe(SAMPLE_PIN, 1), gpio_write(SAMPLE_PIN, 1),
+        HALT,
+    ]
+    await load_program(dut, program)
+    await host_command(dut, 0x8, 1)
+    for _ in range(2000):
+        await RisingEdge(dut.clk)
+        if driven_level(dut, ACTION_PIN) == 1:
+            break
+    else:
+        raise AssertionError("region did not start")
+    while driven_level(dut, ACTION_PIN) == 1:
+        assert driven_level(dut, CPU_PIN) == 0, "CPU passed MAP while busy"
+        await RisingEdge(dut.clk)
+    await wait_until_halted(dut, timeout_cycles=4000)
+    assert driven_level(dut, CPU_PIN) == 1
+    # The map took effect: logical SAMPLE_PIN now drives physical MARKER_PIN.
+    assert driven_level(dut, MARKER_PIN) == 1, "MAP was dropped"
+    assert driven_level(dut, SAMPLE_PIN) is None
+
+
+@cocotb.test()
 async def test_action_table_write_waits_for_region(dut):
     """CPU cannot alter a live action word or advance past that write."""
     from cocotb_tests.reference.programs import (
