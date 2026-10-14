@@ -1,4 +1,4 @@
-"""1-Wire master demo (Phase 10): reset + presence + write + read, one core."""
+"""1-Wire master demo: reset, presence, write, and read on one pin."""
 
 import cocotb
 from cocotb.triggers import RisingEdge

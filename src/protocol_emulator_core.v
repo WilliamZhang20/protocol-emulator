@@ -1,6 +1,9 @@
 `default_nettype none
 
-// Top-level protocol engine: wires the sequencer to shared resources.
+// Protocol engine: the control CPU (vm_sequencer) and the shared resources it
+// steers -- register file and ALU, cycle counter, timer, CPU CRC, CPU serial
+// shifter, event scoreboard, GPIO fabric, and the two-lane action engine.
+// The program SRAM and the TX/RX FIFOs live one level up in project.v.
 module protocol_emulator_core (
     input  wire       clk,
     input  wire       rst_n,
@@ -19,6 +22,19 @@ module protocol_emulator_core (
     output wire [7:0] gpio_oe,
     output wire       halted
 );
+  // Sequencer encodings decoded outside the sequencer. These must match
+  // vm_sequencer.
+  localparam SEQ_OPERAND_HIGH_WAIT = 4'd7;
+  localparam OP_PIN_WRITE  = 4'h2;
+  localparam OP_OE_WRITE   = 4'h3;
+  localparam OP_SHIFT_OUT  = 4'h5;
+  localparam OP_BRANCH     = 4'h8;
+  localparam OP_GROUP_C    = 4'hc;
+  localparam OP_GROUP_E    = 4'he;
+
+  // ---------------------------------------------------------------------------
+  // Control CPU
+  // ---------------------------------------------------------------------------
   wire [3:0] state;
   wire [9:0] program_counter;
   wire [7:0] instruction;
@@ -42,28 +58,24 @@ module protocol_emulator_core (
   wire arm_edges;
   wire wait_event_clear;
   wire crc_setup;
+  wire crc_setup32;
   wire crc_feed;
   wire crc_finalize;
   wire crc_push_lo;
   wire crc_push_hi;
+  wire crc_push_b2;
+  wire crc_push_b3;
   wire alu_set;
   wire alu_mov;
   wire alu_op;
   wire djnz_strobe;
-  wire alu_zero;
-  wire djnz_nonzero;
   wire time_rd;
   wire time_wait_active;
   wire ev_stamp;
   wire ev_detail;
-  wire time_satisfied;
   wire sideset_apply;
   wire [2:0] sideset_pin;
   wire sideset_val;
-  wire [7:0] action_claim;
-  wire crc_setup32;
-  wire crc_push_b2;
-  wire crc_push_b3;
   wire action_wr_lo;
   wire action_wr_hi;
   wire action_wr_lane_lo;
@@ -76,37 +88,37 @@ module protocol_emulator_core (
   wire action_push_result;
   wire wait_region_active;
   wire wait_region_clear;
+  wire cpu_tx_pop;
+  wire cpu_rx_push;
+
+  // Status fed back into the sequencer.
+  wire alu_zero;
+  wire djnz_nonzero;
+  wire time_satisfied;
+  wire timer_expired;
+  wire crc_busy;
+  wire event_wait_matched;
   wire action_busy;
   wire action_control_ready;
   wire action_start_ready;
-  wire action_done;
-  wire [1:0] action_done_count;
-  wire action_done_lane;
-  wire [15:0] action_result;
-  wire crc_busy;
-
-  wire event_wait_matched;
-  wire timer_expired;
+  wire [7:0] action_claim;
   wire [7:0] gpio_sampled;
-  wire [7:0] gpio_timed;
-  wire [7:0] gpio_rising;
-  wire [7:0] gpio_falling;
-  wire cpu_tx_pop;
-  wire cpu_rx_push;
-  wire action_tx_pop;
-  wire action_rx_push;
+
   // A lane using a FIFO port this cycle makes it unavailable to the CPU, so
   // CPU and lane transfers never collide on the single push/pop port.
+  wire action_tx_pop;
+  wire action_rx_push;
   wire cpu_tx_empty = tx_empty || action_tx_pop;
   wire cpu_rx_full = rx_full || action_rx_push;
-  wire gpio_compare_match;
-  wire pin_wait_satisfied =
-      gpio_sampled[immediate[2:0]] == immediate[3];
-  // A region reserves its entire pin set at launch. A CPU pin operation
-  // waits at the execute boundary until that region releases its claim.
+
+  wire pin_wait_satisfied = gpio_sampled[immediate[2:0]] == immediate[3];
+
+  // A region reserves its entire pin set at launch. A CPU pin write, OE
+  // write, shift-out, or side-set to a reserved pin waits in EXECUTE until
+  // the region releases its claim.
   wire cpu_pin_conflict = action_busy &&
-      (((opcode == 4'h2 || opcode == 4'h3 || opcode == 4'h5) &&
-        action_claim[immediate[2:0]]) ||
+      (((opcode == OP_PIN_WRITE || opcode == OP_OE_WRITE ||
+         opcode == OP_SHIFT_OUT) && action_claim[immediate[2:0]]) ||
        (sideset_apply && action_claim[sideset_pin]));
 
   vm_sequencer sequencer (
@@ -126,6 +138,7 @@ module protocol_emulator_core (
       .pin_wait_satisfied(pin_wait_satisfied),
       .alu_zero(alu_zero),
       .djnz_nonzero(djnz_nonzero),
+      .time_satisfied(time_satisfied),
       .state(state),
       .program_counter(program_counter),
       .instruction(instruction),
@@ -164,7 +177,6 @@ module protocol_emulator_core (
       .time_wait_active(time_wait_active),
       .ev_stamp(ev_stamp),
       .ev_detail(ev_detail),
-      .time_satisfied(time_satisfied),
       .sideset_apply(sideset_apply),
       .sideset_pin(sideset_pin),
       .sideset_val(sideset_val),
@@ -185,6 +197,115 @@ module protocol_emulator_core (
       .wait_region_clear(wait_region_clear)
   );
 
+  assign instruction_address = program_counter;
+
+  // ---------------------------------------------------------------------------
+  // Cycle counter (GET_TIME, WAIT_UNTIL, EVENT_STAMP)
+  // ---------------------------------------------------------------------------
+  // Counts from engine enable, so time is deterministic per program.
+  reg [31:0] cycle_ctr;
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      cycle_ctr <= 32'b0;
+    else if (!enable)
+      cycle_ctr <= 32'b0;
+    else
+      cycle_ctr <= cycle_ctr + 1'b1;
+  end
+
+  // ---------------------------------------------------------------------------
+  // Register file and ALU
+  // ---------------------------------------------------------------------------
+  // Register fields, by instruction:
+  //   AA rd imm      SET         rd = operand_low[2:0]
+  //   AB {rs,rd}     MOV         rs, rd = instruction_data[5:3], [2:0]
+  //   AC op {rs,rd}  ALU         op = operand_low[2:0], rs/rd as MOV
+  //   AD rd          GET_TIME    rd = instruction_data[2:0]
+  //   AE rn          WAIT_UNTIL  rn = operand_low[2:0], read in TIME_WAIT
+  //   88+n           DJNZ Rn     n = immediate[2:0]
+  //   E7 select      READ_RESULT rd = operand_low[2:0], one cycle later
+  wire [15:0] rs_value;
+  wire [15:0] rd_value;
+  wire [2:0] rs_index = instruction_data[5:3];
+  wire [2:0] rd_index =
+      time_wait_active      ? operand_low[2:0] :
+      (opcode == OP_BRANCH) ? immediate[2:0] :
+                              instruction_data[2:0];
+  wire [2:0] alu_function = operand_low[2:0];
+
+  reg [15:0] alu_result;
+  always @(*) begin
+    case (alu_function)
+      3'd0: alu_result = rd_value + rs_value;
+      3'd1: alu_result = rd_value - rs_value;
+      3'd2: alu_result = rd_value & rs_value;
+      3'd3: alu_result = rd_value | rs_value;
+      3'd4: alu_result = rd_value ^ rs_value;
+      3'd5: alu_result = rd_value << rs_value[3:0];
+      3'd6: alu_result = rd_value >> rs_value[3:0];
+      default: alu_result = rd_value + rs_value;
+    endcase
+  end
+
+  wire [15:0] set_value = {8'b0, instruction_data};
+  wire [15:0] action_result;
+
+  wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd ||
+      action_read_result;
+  wire [2:0] rf_waddr =
+      djnz_strobe          ? immediate[2:0] :
+      action_read_result   ? operand_low[2:0] :
+      (time_rd || alu_mov) ? instruction_data[2:0] :
+      alu_set              ? operand_low[2:0] :
+      alu_op               ? instruction_data[2:0] :
+                             3'b0;
+  wire [15:0] rf_wdata =
+      djnz_strobe          ? rd_value - 16'd1 :
+      time_rd              ? cycle_ctr[15:0] :
+      action_read_result   ? action_result :
+      alu_set              ? set_value :
+      alu_mov              ? rs_value :
+      alu_op               ? alu_result :
+                             16'b0;
+
+  register_file regs (
+      .clk(clk),
+      .rst_n(rst_n),
+      .read_address_a(rs_index),
+      .read_address_b(rd_index),
+      .read_data_a(rs_value),
+      .read_data_b(rd_value),
+      .write_enable(rf_we),
+      .write_address(rf_waddr),
+      .write_data(rf_wdata)
+  );
+
+  // Zero flag for JZ/JNZ, updated by every register write except DJNZ.
+  reg zero_flag;
+  wire [15:0] flag_value =
+      time_rd            ? cycle_ctr[15:0] :
+      action_read_result ? action_result :
+      alu_set            ? set_value :
+      alu_mov            ? rs_value :
+                           alu_result;
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      zero_flag <= 1'b0;
+    else if (!enable)
+      zero_flag <= 1'b0;
+    else if (alu_set || alu_mov || alu_op || time_rd || action_read_result)
+      zero_flag <= (flag_value == 16'b0);
+  end
+  assign alu_zero = zero_flag;
+  assign djnz_nonzero = rd_value != 16'd1;
+
+  // WAIT_UNTIL compares modulo 2^16 over a half range: deadlines must be
+  // less than 32768 cycles ahead of the current time.
+  assign time_satisfied = $signed(cycle_ctr[15:0] - rd_value) >= 0;
+
+  // ---------------------------------------------------------------------------
+  // Timer (WAIT16 blocking, START_TIMER asynchronous)
+  // ---------------------------------------------------------------------------
   wire [15:0] timer_count;
   wire timer_busy;
   wire timer_done_pulse;
@@ -202,109 +323,21 @@ module protocol_emulator_core (
       .done_pulse(timer_done_pulse)
   );
 
+  // ---------------------------------------------------------------------------
+  // CPU CRC (A1 cfg poly_lo poly_hi; poly_hi arrives in OPERAND_EXT_WAIT)
+  // ---------------------------------------------------------------------------
   wire [31:0] crc_value;
-  wire [7:0] crc_cfg = operand_low;
   wire [15:0] crc_poly = {
       (operand_ext_valid ? operand_ext : instruction_data),
       operand_mid
   };
-
-  // Phase 1-2: central 8x16 register file + tiny ALU + zero flag.
-  // Encodings are additive: 0xAA SET Rd,imm8 / 0xAB MOV Rd,Rs /
-  // 0xAC ALU op,Rd,Rs. Branches 0x81 JZ / 0x82 JNZ / 0x88-0x8F DJNZ Rn
-  // reuse the 2-byte jump operand format; 0x80 stays unconditional.
-  wire [2:0] alu_set_rd = operand_low[2:0];
-  wire [15:0] alu_set_val = {8'b0, instruction_data};
-  wire [2:0] alu_mov_rd = instruction_data[2:0];
-  // READ_RESULT writes one cycle after its operand, from the latched copy.
-  wire [2:0] read_result_rd = operand_low[2:0];
-  wire [2:0] alu_mov_rs = instruction_data[5:3];
-  wire [2:0] alu_op_sel = operand_low[2:0];
-  wire [2:0] alu_op_rd = instruction_data[2:0];
-  // ALU Rs shares instruction_data[5:3] with MOV Rs (alu_mov_rs).
-  wire is_branch_op = opcode == 4'h8;
-  wire [2:0] rf_ra = alu_mov_rs;
-  wire [2:0] rf_rb = time_wait_active ? operand_low[2:0] :
-      is_branch_op ? immediate[2:0] :
-      (alu_op ? alu_op_rd : alu_mov_rd);
-  wire [15:0] rf_rd_a;
-  wire [15:0] rf_rd_b;
-  wire [15:0] alu_a = rf_rd_a;
-  wire [15:0] alu_b = rf_rd_b;
-  reg [15:0] alu_result;
-  // Phase 3: free-running global cycle counter, deterministic from enable.
-  // Declared before RF write mux so Icarus can bind the reference.
-  reg [31:0] cycle_ctr;
-  always @(*) begin
-    case (alu_op_sel)
-      3'd0: alu_result = alu_b + alu_a;
-      3'd1: alu_result = alu_b - alu_a;
-      3'd2: alu_result = alu_b & alu_a;
-      3'd3: alu_result = alu_b | alu_a;
-      3'd4: alu_result = alu_b ^ alu_a;
-      3'd5: alu_result = alu_b << alu_a[3:0];
-      3'd6: alu_result = alu_b >> alu_a[3:0];
-      default: alu_result = alu_b + alu_a;
-    endcase
-  end
-  wire [15:0] rf_wdata = djnz_strobe ? (rf_rd_b - 16'd1) :
-      time_rd ? cycle_ctr[15:0] :
-      action_read_result ? action_result :
-      alu_set ? alu_set_val :
-      alu_mov ? alu_a :
-      alu_op ? alu_result : 16'b0;
-  wire [2:0] rf_waddr = djnz_strobe ? immediate[2:0] :
-      action_read_result ? read_result_rd :
-      (time_rd || alu_mov) ? alu_mov_rd :
-      alu_set ? alu_set_rd :
-      alu_op ? alu_op_rd : 3'b0;
-  wire rf_we = alu_set || alu_mov || alu_op || djnz_strobe || time_rd ||
-      action_read_result;
-  register_file regs (
-      .clk(clk),
-      .rst_n(rst_n),
-      .read_address_a(rf_ra),
-      .read_address_b(rf_rb),
-      .read_data_a(rf_rd_a),
-      .read_data_b(rf_rd_b),
-      .write_enable(rf_we),
-      .write_address(rf_waddr),
-      .write_data(rf_wdata)
-  );
-  reg zero_flag;
-  wire [15:0] alu_flag_val = time_rd ? cycle_ctr[15:0] :
-      action_read_result ? action_result :
-      alu_set ? alu_set_val :
-      alu_mov ? alu_a : alu_result;
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
-      zero_flag <= 1'b0;
-    else if (!enable)
-      zero_flag <= 1'b0;
-    else if (alu_set || alu_mov || alu_op || time_rd || action_read_result)
-      zero_flag <= (alu_flag_val == 16'b0);
-  end
-  assign alu_zero = zero_flag;
-  assign djnz_nonzero = (rf_rd_b != 16'd1);
-
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n)
-      cycle_ctr <= 32'b0;
-    else if (!enable)
-      cycle_ctr <= 32'b0;
-    else
-      cycle_ctr <= cycle_ctr + 1'b1;
-  end
-  // WAIT_UNTIL uses modular half-range comparison across 16-bit wrap.
-  // Deadlines must be less than 32768 cycles from the current time.
-  assign time_satisfied = $signed(cycle_ctr[15:0] - rf_rd_b) >= 0;
 
   crc_engine u_crc (
       .clk(clk),
       .rst_n(rst_n),
       .setup(crc_setup),
       .setup32(crc_setup32),
-      .cfg(crc_cfg),
+      .cfg(operand_low),
       .poly(crc_poly),
       .feed(crc_feed),
       .feed_byte(instruction_data),
@@ -313,26 +346,43 @@ module protocol_emulator_core (
       .busy(crc_busy)
   );
 
+  // ---------------------------------------------------------------------------
+  // Action engine
+  // ---------------------------------------------------------------------------
   wire action_drive_enable;
   wire [7:0] action_out_value;
   wire [7:0] action_out_mask;
   wire [7:0] action_oe_value;
   wire [7:0] action_oe_mask;
   wire [7:0] action_rx_data;
-  // E5 RUN_REGION id,count supplies count on the high operand byte.
-  wire is_run_region_count = opcode == 4'he && immediate == 4'h5;
-  // E4 start samples the slot from instruction_data on LOW_WAIT (operand_low
-  // has not updated yet). E5 start uses the already-latched operand_low.
+  wire [7:0] gpio_timed;
+  wire action_done;
+  wire [1:0] action_done_count;
+  wire action_done_lane;
+
+  // E5 RUN_REGION target,count: the target is already in operand_low and
+  // the count is on instruction_data. E4 RUN_REGION target starts while its
+  // target is still on instruction_data (operand_low updates on that edge).
+  wire is_run_region_count = opcode == OP_GROUP_E && immediate == 4'h5;
   wire [3:0] action_start_slot =
       is_run_region_count ? operand_low[3:0] : instruction_data[3:0];
-  // Target byte bit 4 selects lane 1. Result/push/TX-load operands use bit 7
-  // because their low bits retain their existing register/format fields.
+
+  // Lane select for the action operation issuing this cycle. Target bytes
+  // use bit 4; select/config bytes use bit 7 because their low bits carry
+  // other fields. Only the immediate is decoded, which is safe because the
+  // value matters only while an action strobe is active.
   wire action_target_lane =
+      // E7 READ_RESULT / EF PUSH_RESULT, one cycle after their operand.
       (action_read_result || action_push_result) ? operand_low[7] :
-      state == 4'd7 ? operand_low[4] :
-      (immediate == 4'h4 ? instruction_data[4] :
-       ((immediate == 4'h7 || immediate == 4'hf ||
-         (opcode == 4'hc && immediate == 4'h8)) ? instruction_data[7] : 1'b0));
+      // E5 count, E8/E9/EB/EC data: the target byte is already latched.
+      (state == SEQ_OPERAND_HIGH_WAIT) ? operand_low[4] :
+      // E4 target on instruction_data.
+      (immediate == 4'h4) ? instruction_data[4] :
+      // E7/EF acceptance and C8 config on instruction_data.
+      (immediate == 4'h7 || immediate == 4'hf ||
+       (opcode == OP_GROUP_C && immediate == 4'h8)) ? instruction_data[7] :
+      // EA/EE shift preloads always target lane 0.
+      1'b0;
 
   action_engine u_action (
       .clk(clk),
@@ -381,22 +431,37 @@ module protocol_emulator_core (
       .claim(action_claim)
   );
 
+  // ---------------------------------------------------------------------------
+  // CPU serial shifter (40 load, 5p/6p shift out/in, 70 push, A0 clear)
+  // ---------------------------------------------------------------------------
   wire shifter_serial_out;
   wire [15:0] shifter_parallel;
+
   serial_shifter cpu_shifter (
-      .clk(clk), .rst_n(rst_n), .enable(enable),
+      .clk(clk),
+      .rst_n(rst_n),
+      .enable(enable),
       .clear(execute_shift_clear),
-      .load(execute_tx_load), .load_data(tx_data),
+      .load(execute_tx_load),
+      .load_data(tx_data),
       .shift(execute_shift_out || execute_shift_in),
       .serial_in(gpio_sampled[immediate[2:0]]),
-      .serial_out(shifter_serial_out), .parallel(shifter_parallel)
+      .serial_out(shifter_serial_out),
+      .parallel(shifter_parallel)
   );
+
+  // ---------------------------------------------------------------------------
+  // GPIO: CPU/lane merge, then the logical-to-physical fabric
+  // ---------------------------------------------------------------------------
   wire [7:0] action_pin_claim;
   wire gpio_output_write;
   wire [7:0] gpio_value;
   wire [7:0] gpio_output_mask;
   wire [7:0] gpio_oe_value;
   wire [7:0] gpio_oe_mask;
+  wire [7:0] gpio_rising;
+  wire [7:0] gpio_falling;
+  wire gpio_compare_match;
 
   gpio_arbiter gpio_arb (
       .action_claim(action_claim),
@@ -422,6 +487,8 @@ module protocol_emulator_core (
       .gpio_oe_mask(gpio_oe_mask)
   );
 
+  // The compare source takes {value, pin} from the immediate of whichever
+  // instruction is current, every cycle.
   gpio_datapath gpio (
       .clk(clk),
       .rst_n(rst_n),
@@ -446,6 +513,9 @@ module protocol_emulator_core (
       .compare_match(gpio_compare_match)
   );
 
+  // ---------------------------------------------------------------------------
+  // Event scoreboard (WAIT_EVENT, WAIT_REGION, ARM_EDGE)
+  // ---------------------------------------------------------------------------
   wire [7:0] event_pending;
   wire [7:0] event_detail;
 
@@ -463,26 +533,30 @@ module protocol_emulator_core (
       .compare_match(gpio_compare_match),
       .compare_arm(immediate[0]),
       .wait_clear(wait_event_clear || wait_region_clear),
+      // WAIT_REGION waits on bit 6 (EV_REGION_DONE) only.
       .wait_mask(wait_region_active ? 8'h40 : operand_low),
       .pending(event_pending),
       .event_detail(event_detail),
       .wait_matched(event_wait_matched)
   );
 
-  // Phase 4: timestamped event capture alongside the sticky scoreboard.
-  // EVENT_STAMP (0xAF) pushes 3 bytes cycling time_lo/time_hi/cause.
-  // The timestamp + pending vector latch on the first byte so the triple
-  // is self-consistent. Index resets when the engine stops.
-  // Only time_hi is latched: time_lo is read live from cycle_ctr[7:0].
+  // ---------------------------------------------------------------------------
+  // EVENT_STAMP (AF) and EVENT_DETAIL (ED)
+  // ---------------------------------------------------------------------------
+  // Three consecutive AF pushes emit time_lo, time_hi, and the pending
+  // vector. The first push sends the live counter low byte (the snapshot
+  // registers load on that same edge, too late for it) and snapshots
+  // time_hi, pending, and detail so the triple is self-consistent. ED pushes
+  // the detail snapshot. The index resets when the engine stops.
   reg [7:0] stamp_time_hi;
   reg [7:0] stamp_cause;
   reg [7:0] stamp_detail;
   reg [1:0] stamp_idx;
-  // Byte 0 pushes the live counter low byte (the registered latch lands the
-  // same cycle, too late for the push); bytes 1-2 use the latched snapshot
-  // so the triple is self-consistent.
-  wire [7:0] stamp_byte = stamp_idx == 2'd0 ? cycle_ctr[7:0] :
-      stamp_idx == 2'd1 ? stamp_time_hi : stamp_cause;
+  wire [7:0] stamp_byte =
+      stamp_idx == 2'd0 ? cycle_ctr[7:0] :
+      stamp_idx == 2'd1 ? stamp_time_hi :
+                          stamp_cause;
+
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       stamp_time_hi <= 8'b0;
@@ -507,25 +581,30 @@ module protocol_emulator_core (
     end
   end
 
-  assign instruction_address = program_counter;
-  assign rx_data = action_rx_push ? action_rx_data :
-      crc_push_lo ? crc_value[7:0] :
-      crc_push_hi ? crc_value[15:8] :
-      crc_push_b2 ? crc_value[23:16] :
-      crc_push_b3 ? crc_value[31:24] :
-      ev_detail ? stamp_detail :
-      ev_stamp ? stamp_byte :
-      action_push_result ? ((operand_low[0] ? action_result[15:8] :
-                             action_result[7:0]) << operand_low[4:1]) :
-      shifter_parallel[15:8];
+  // ---------------------------------------------------------------------------
+  // FIFO ports
+  // ---------------------------------------------------------------------------
+  wire [7:0] push_result_byte =
+      (operand_low[0] ? action_result[15:8] : action_result[7:0]) <<
+      operand_low[4:1];
+
+  assign rx_data =
+      action_rx_push     ? action_rx_data :
+      crc_push_lo        ? crc_value[7:0] :
+      crc_push_hi        ? crc_value[15:8] :
+      crc_push_b2        ? crc_value[23:16] :
+      crc_push_b3        ? crc_value[31:24] :
+      ev_detail          ? stamp_detail :
+      ev_stamp           ? stamp_byte :
+      action_push_result ? push_result_byte :
+                           shifter_parallel[15:8];
 
   assign tx_pop = cpu_tx_pop || action_tx_pop;
   assign rx_push = cpu_rx_push || action_rx_push;
 
-  wire _unused = &{instruction, opcode, operand_ext, operand_ext_valid,
-                   timer_count, timer_busy, gpio_compare_match,
-                   shifter_parallel[7:0], event_pending,
-                   crc_busy, action_pin_claim, state, 1'b0};
+  wire _unused = &{instruction, operand_ext, timer_count, timer_busy,
+                   shifter_parallel[7:0], action_pin_claim, action_done,
+                   1'b0};
 endmodule
 
 `default_nettype wire

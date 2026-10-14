@@ -1,8 +1,7 @@
 `default_nettype none
 
-// Stores the engine's working values (8x16, additive growth from 4x16).
-// Supplies two read operands and one write port.
-// Holds protocol state without dedicated controllers.
+// CPU register file: eight 16-bit registers, two asynchronous read ports and
+// one write port.
 module register_file (
     input  wire        clk,
     input  wire        rst_n,

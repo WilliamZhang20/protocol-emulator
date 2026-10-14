@@ -1,4 +1,4 @@
-"""Side-set tests (Phase 6).
+"""Side-set tests.
 
 Gate-level safe: host commands plus `uio_*` pins and status `0xA` only.
 """

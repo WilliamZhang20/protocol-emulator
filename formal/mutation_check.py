@@ -59,7 +59,7 @@ MUTATIONS = (
         "branch_polarity", "shared_resources", "vm_sequencer.v",
         "(is_jz && alu_zero) ||",
         "(is_jz && !alu_zero) ||",
-        ("instruction_decoder.v", "vm_sequencer.v"),
+        ("vm_sequencer.v",),
         "shared_resources_properties.sv", "shared_resources_properties",
     ),
 )

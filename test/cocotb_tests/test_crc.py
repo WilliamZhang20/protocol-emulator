@@ -1,4 +1,4 @@
-"""CRC-32 tests (Phase 8): IEEE-802.3 residue via 0xE1 setup + 4-byte push."""
+"""CRC-32 tests: IEEE 802.3 residue via 0xE1 setup and a 4-byte push."""
 
 import binascii
 
