@@ -3,7 +3,7 @@ project:
   title:        "SRAM-Programmed Protocol Emulator"      # Project title
   author:       "William Zhang"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "A deterministic programmable engine for bit-level hardware protocols"      # One line description of what your project does
+  description:  "A spatial, reconfigurable tile fabric for bit-level hardware protocols"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
@@ -19,19 +19,10 @@ project:
   source_files:
     - "project.v"
     - "protocol_emulator_core.v"
-    - "instruction_decoder.v"
+    - "px8_controller.v"
+    - "fabric_timer.v"
+    - "fabric_shifter.v"
     - "program_memory.v"
-    - "register_file.v"
-    - "timer_counter.v"
-    - "serial_shifter.v"
-    - "action_dispatcher.v"
-    - "action_lane.v"
-    - "action_engine.v"
-    - "event_engine.v"
-    - "vm_sequencer.v"
-    - "gpio_arbiter.v"
-    - "gpio_datapath.v"
-    - "crc_engine.v"
     - "byte_fifo.v"
     - "host_interface.v"
 

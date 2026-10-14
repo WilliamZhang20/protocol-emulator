@@ -1,453 +1,242 @@
-# Protocol emulator architecture
+# Spatial protocol fabric
 
-## Purpose
+## Idea
 
-The chip is a deterministic, SRAM-programmed protocol engine. Protocol behavior
-is expressed as programs that manipulate shared timing, serial, FIFO, and GPIO
-resources. UART, SPI, and I2C are demonstrations of the programming model, not
-fixed-function peripherals in the hardware.
+Most programmable protocol engines are temporal: a processor executes one
+instruction after another and protocol timing is the sum of instruction
+latencies. This design is spatial. Bit-level behavior is built by wiring
+small hardware tiles together once, and the configured circuit then runs
+every clock cycle with no instruction fetch at all.
 
-**Direction:** stop growing specialized accelerators. Protocols should compose
-from a small CPU plus reusable datapaths steered by a programmable action
-engine. New ISA and RTL work must not add protocol-shaped instructions or
-FSMs (no further `LINE_*`, SPI/I²C/JTAG modes, USB helpers, etc.).
+- **Tiles** do the bit-level work: timers make clocks, baud ticks and
+  timeouts; shifters frame, serialize, sample and deserialize; pin cells
+  route a tile to a pad as push-pull or open-drain.
+- **A registered event bus** connects them. A tile's trigger inputs are
+  5-bit selects onto 32 event lines, so "SCK falling edge advances the
+  shifter" is a configuration value, not code.
+- **A small controller (PX8)** writes the configuration and makes
+  transaction-level decisions (I2C START/STOP/ACK handling, byte counts).
+  It never touches bit timing.
 
-The implementation is a hazard-aware protocol processor: the control CPU
-launches cycle-exact action regions asynchronously, pin and shared-unit
-scoreboards stall conflicting instructions, completed results forward into the
-CPU, and synchronized events join the execution paths. It contains two
-heterogeneous real-time lanes and no protocol-specific RTL engines.
-
-## Roadmap (Phases A–D)
-
-| Phase | Goal |
-| --- | --- |
-| **A — baseline** | Lock the reusable core. Keep shipping demos on current RTL. |
-| **B — remove baggage** | Removed the transfer and line-pair blocks after migrating demos. |
-| **C — action lanes** | Two lanes with 16 programmable action slots generate protocol waveforms. |
-| **D — CPU ↔ action** | Region launch/join ISA lets the CPU overlap actions. |
-
-### Phase A — baseline (locked)
-
-Keep and maintain:
-
-| Resource | Role |
-| --- | --- |
-| 8×16 register file | Working values, loop state, protocol temporaries |
-| Tiny ALU + zero flag | `SET`/`MOV`/`ADD`/`SUB`/`AND`/`OR`/`XOR`/`SHL`/`SHR` |
-| Conditional branches / `DJNZ` | `JZ`/`JNZ`/`DJNZ Rn` |
-| SRAM programs | Foundry 1024×8 program memory |
-| TX/RX FIFOs | Host payload decoupling |
-| Generic CRC datapath | Width/poly/reflect/xor; not protocol modes |
-| Configurable GPIO fabric | Value, OE, map, sample, edges/compare |
-| Global clock / cycle counter | `GET_TIME`, `WAIT_UNTIL`, blocking `WAIT16` |
-
-Host link, exact fetch timing (`+11` UART overhead), and sticky event-engine
-semantics remain frozen as previously characterized. Additive ISA is allowed
-only when it serves the action-engine path (Phases C–D) or fixes baseline
-gaps (e.g. pin-to-reg read). **Do not add protocol-specific instructions.**
-
-### Phase B — remove architectural baggage (complete)
-
-The protocol-shaped bit-transfer and line-pair engines and their bytecode
-instructions were removed. SPI, I²C, JTAG, and two-pin line programs now
-compile to action regions. UART and 1-Wire bit-bang instructions use an
-independent CPU serial shifter for their manual shift path.
-
-### Phase C — real-time lanes
-
-Implemented shape:
-
-- **2 independent lanes**, each with **16 action slots** × 32 bits
-- separate 16-bit TX and RX shifters per lane
-- local counter, delay timer, sample latch, and configurable 16-bit CRC/LFSR
-- one compound action per cycle (`DELAY` and FIFO backpressure hold the PC)
-
-Each action word has a primary low half `{op[3:0], args[11:0]}` and an
-orthogonal upper bundle. `EB target data` and `EC target data` program its two
-bytes. The bundle is `{enable, oe_we, oe_val, out_we, out_val, pin[2:0],
-sample, lfsr_update, count_dec, delay[4:0]}`. Its GPIO side-set, LFSR update,
-counter decrement, and short post-delay occur with the primary operation.
-
-| `op` | Name | Args |
-| --- | --- | --- |
-| `0` | `NOP` | — |
-| `1` | `GPIO` | `[11]=oe_we, [10]=oe_val, [9]=out_we, [8]=out_val, [2:0]=pin` |
-| `2` | `SAMPLE` | `[11]=accumulate, [10]=msb_first, [2:0]=pin`; updates `result` and `sample_bit` |
-| `3` | `SHIFT` | `[11]=in, [10]=msb_first, [9]=duplex RX, [8]=open-drain TX, [7]=byte stream, [6:4]=RX pin, [2:0]=TX pin` |
-| `4` | `COUNT` | `[11:10]=load/inc/dec/djnz`, `[9]=finish region when DJNZ reaches zero`, imm / target slot |
-| `5` | `LFSR` | `[11:10]`: step/configure polynomial/configure state/read result; `[9]` selects high config byte |
-| `6` | `NEXT` | `[11:8]=cond`, `[3:0]=slot` |
-| `7` | `DELAY` | `[7:0]=cycles`; `[11]` also waits for sampled `[10:8]` pin high |
-| `8` | `REPEAT` | `[3:0]=slot` (intra-region jump) |
-| `9` | `DONE` | clear claims; on final pass pulse `EV_REGION_DONE` (repeats first) |
-| `A` | `PAIR` | Sample pins A `[2:0]`, B `[5:3]`, swap J/K `[6]` into SE0/J/K/SE1 result |
-| `B` | `PULL_TX` | Pop TX into the shift register; `[4:0]=bits` (0 means 16), `[5]=MSB first`; stalls on empty |
-| `C` | `PUSH_RX` | Push a result byte; `[0]=high byte`, `[4:1]=left shift`; stalls on full |
-
-With `SHIFT[7]`, the first transmitted bit pops a byte from TX and the eighth
-received bit pushes the complete RX byte. The action holds if either operation
-cannot proceed. TX and RX updates happen together, so full duplex streaming
-uses one action per bit and needs no explicit `PULL_TX` or `PUSH_RX` actions.
-Those explicit actions remain useful for non-byte framing.
-
-That set generates complex protocols (SPI-like
-clocked bytes, open-drain ACK bits, differential line patterns, CRC-framed
-packets) without dedicating RTL to any one of them.
-
-### Phase D — CPU ↔ action interface (implemented)
-
-| Encoding | Operation |
-| --- | --- |
-| `E8 target data` | `ACTION_WR_LO`: write action `[lane][slot][7:0]` |
-| `E9 target data` | `ACTION_WR_HI`: write action `[lane][slot][15:8]` |
-| `EA data` / `EE data` | Preload lane 0 TX shifter low/high byte |
-| `E4 target` | `RUN_REGION` (nonblocking; `target[4]=lane`, `[3:0]=start slot`) |
-| `E5 target count` | `RUN_REGION` with `count` extra passes after the first |
-| `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` (bit 6, token-counted) |
-| `E7 select` | `READ_RESULT`: `[7]=lane`, `[2:0]=Rd` |
-| `C8 cfg` | Pop TX FIFO into selected lane TX shifter; `[7]=lane`, `[5]=msb_first`, `[4:0]=bits` |
-| `EF select` | Push selected lane result byte; `[7]=lane`, `[0]=high`, `[4:1]=shift` |
-
-The CPU runs while a region executes (`RUN_REGION` is nonblocking). Join with
-`WAIT_REGION` or `WAIT_EVENT` mask bit 6. Region completion posts a
-token-counted event so overlapped timeouts and multi-resource joins stay
-expressible.
-
-### Resource and completion hazards
-
-At launch, the dispatcher scans the selected lane's programmed slots and reserves
-every GPIO pin mentioned by a primary or parallel action, including sampled
-pins. The claim stays active across repeats and is released on final
-completion. A CPU GPIO write or side-set to a reserved pin waits at its
-instruction boundary; writes to other pins can overlap. `MAP` swaps the
-requested physical pin with its current logical owner, maintaining a
-permutation, and waits until a region finishes before changing that map.
-Thus distinct logical claims always refer to distinct physical pins.
-
-Action-table writes and shift preloads wait until their selected lane is idle,
-so each running lane sees a stable control image. The independent CPU serial
-shifter can continue while lanes run. A slot becomes launch-ready only after its primary high byte, and a
-parallel-lane low byte makes it unready until the lane high byte arrives;
-`RUN_REGION` waits for all programmed slots to be ready. `READ_RESULT` and
-`PUSH_RESULT` wait for completion and then consume the
-finished result. `WAIT_REGION` receives a counted completion token, including
-when the region finished before the CPU reached the wait instruction.
-`HALT` also waits for all outstanding regions so the host cannot disable them
-mid-transaction.
-
-The dispatcher gives at most one lane each shared FIFO port per cycle and uses
-round-robin priority when both request it. A grant occurs only with valid data
-or available space; the losing or blocked lane holds its action PC. CPU FIFO
-instructions wait while a lane may use the queues. CRC state is not shared:
-each lane updates its local LFSR in parallel with shifting, while the CPU owns
-the independent 32-bit configurable CRC engine. CPU timer, ALU, CRC, manual
-shift, and unclaimed-pin instructions can continue during a region.
-
-External pins have two sampling paths. A two-flop synchronizer with
-`async_reg` attributes supplies waits, edges, compare, and event capture.
-An explicit action `SAMPLE`, `SHIFT`, or `PAIR` uses the single-clock timed
-sample when protocol timing establishes an input eye; a region's conditional
-delay still checks the synchronized input.
-
-## System structure
+UART, SPI, and I2C differ only in configuration words held in SRAM. There is
+no protocol-specific RTL.
 
 ```text
-Host ── SRAM ── Protocol CPU ── scoreboard / dispatcher
-  │                 │                    │
-TX/RX FIFOs       timer/CRC       lane 0 ─── lane 1
-                                    │          │
-                              TX/RX shift, timer/count,
-                              sample, side-set, local LFSR
-                                    └──── GPIO ────┘
+                         host link (ui/uo) ── SRAM 1024x8 ── PX8 controller
+                                   │                             │ cfg / rd / wait
+                                TX FIFO   RX FIFO                ▼
+                                   │        ▲        ┌──── config registers ────┐
+                                   ▼        │        ▼                          ▼
+ events[31:0] ◀─ reg ◀─┬─ timer 0..3  (rise/fall)   shifter 0..1 (start/done)
+     │                 └─ pin 0..7 rise/fall (2-flop synchronized)
+     └──────▶ every tile's start / stop / shift / sample select
+                                   │                      │
+                                pin cells: source × {input, push-pull, open-drain}
+                                   │ (registered)
+                                 uio[7:0]
 ```
 
-Each lane has sixteen 32-bit slots. A slot combines a primary operation with
-orthogonal side effects. Both lanes run independently of the CPU and each
-completion contributes an `EV_REGION_DONE` token in the same cycle.
+## Why spatial
 
-The architecture has two conceptual planes:
+| Property | Temporal CPU (previous `cmos5l`) | Spatial fabric |
+| --- | --- | --- |
+| Bit timing | instruction-count accounting (`+11` per UART bit) | timer reload value, exact |
+| Concurrency | CPU + 2 lanes sharing pins, with claim scoreboards | every tile runs in parallel; ownership fixed by config |
+| Hazard logic | pin claims, launch scan, FIFO round-robin, stall rules | none needed; one pin cell selects one source |
+| Generic cells (yosys `synth`) | 18,961 | **4,363** (−77%) |
 
-- The host plane loads programs, starts and observes execution, and exchanges
-  payload bytes through queues.
-- The protocol plane runs deterministically from the chip clock and controls
-  external pins without depending on host response time.
+Two protocols at once falls out naturally: the full-duplex UART test runs an
+independent transmitter (timer 0 + shifter 0) and receiver (timer 1 +
+shifter 1) concurrently with the controller idle.
 
-## Major components
+## Timing model
 
-### Host interface
+Everything is synchronous to `clk` (50 MHz target).
 
-The host interface is the control boundary of the chip. It provides access to
-program loading, execution control, status, and queued payload data. Host
-transactions are deliberately kept out of the exact-cycle execution path.
+- **One cycle per hop.** Every event line is registered, so a tile reacts one
+  cycle after the event it selects. A configuration cannot form a
+  combinational loop, and every latency is a fixed number of cycles.
+- **Registered pins.** Pin outputs and output enables are registered after the
+  source mux: one cycle of uniform latency and glitch-free pads.
+- **Synchronized inputs.** Pins pass through a two-flop synchronizer; pin rise
+  and fall events come from the synchronized value.
 
-The implemented host link accepts one command byte on `ui_in` for one clock,
-followed by `8'h00`. The upper nibble is the command and the lower nibble is
-data:
+Programs absorb these fixed latencies in timer phase values. For example, the
+UART transmitter uses `phase = bit − 3` so that the start-bit length equals
+every other bit, and the receiver uses `phase = bit/2 − 2` to sample
+mid-bit after synchronizer and hop delays. `test_uart_tx_bit_period_is_exact`
+checks every edge interval of a frame to the cycle.
+
+## Tiles
+
+All tile registers are 16 bits wide and written by the controller (`WCF`).
+Program reload, phase and ctl only while the tile is stopped. A start always
+uses the previously written phase.
+
+### Timer tile (×4)
+
+A reload counter. After a start, the first tick comes `phase + 1` cycles
+later and then one every `reload + 1` cycles. In toggle mode the output flips
+on each tick and the tick is reported as a rise or fall event; in pulse mode
+the output stays idle and every tick is a rise event.
+
+| Reg | Field |
+| --- | --- |
+| 0 | `reload` (period − 1) |
+| 1 | `phase` (first interval − 1) |
+| 2 | `[4:0]` start select, `[9:5]` stop select, `[10]` idle level, `[11]` pulse mode, `[14:12]` hold pin, `[15]` hold enable |
+| 3 | `[0]` start now, `[1]` stop now (strobes) |
+
+Stop has priority over start and tick. **Hold** implements clock stretching
+generically: while the output is high but the selected pin still reads low,
+the counter freezes, so a high phase is never shorter than programmed.
+
+### Shifter tile (×2)
+
+Emits and captures one framed word: `[pre bits][data bits][parity][post bits]`.
+The frame index advances on the shift event; the input pin is captured on the
+sample event. Separate shift and sample selects give every CPOL/CPHA
+combination and full duplex.
+
+| Reg | Field |
+| --- | --- |
+| 0 | transmit word (ignored while active) |
+| 1 | `[3:0]` length − 1 (1..16), `[5:4]` pre count, `[6]` pre value, `[8:7]` post count, `[9]` post value, `[11:10]` parity (none/even/odd), `[12]` MSB first, `[13]` lead, `[14]` end on sample, `[15]` idle level |
+| 2 | `[4:0]` shift select, `[9:5]` sample select, `[14:10]` start select |
+| 3 | `[2:0]` input pin, `[3]` auto-pull TX FIFO, `[4]` auto-push RX FIFO, `[5]` start now (strobe) |
+
+- Data bits land in `rx_data` at their natural bit position, so an 8-bit word
+  is always `rx_data[7:0]` whatever the bit order. Parity and post bits (UART
+  stop bit, I2C ACK) are captured into `status[3:0]`, newest in bit 0.
+- **Lead** makes the first shift event present bit 0 (CPHA = 1). **End on
+  sample** finishes the frame on the last sample instead of the last shift.
+- With auto-pull and start select 0, the shifter starts whenever the TX FIFO
+  has a byte, so streams run back to back without controller involvement.
+- A completed receive waits in a one-byte push slot until the RX FIFO accepts
+  it. A second completion before then sets `status[14]` (overrun).
+
+### Pin cells (×8)
+
+Config `0x18 + p`: `[2:0]` source (0 controller, 1–4 timer 0–3, 5–6
+shifter 0–1, 7 zero) and `[4:3]` mode (0 input, 1 push-pull, 2 open-drain).
+Open-drain drives low for 0 and releases for 1. Pins reset to input and
+return to input whenever the engine is disabled.
+
+### Event bus
+
+| Index | Event |
+| --- | --- |
+| 0 | never |
+| 1 | always |
+| 2, 3 | controller `FIRE 0/1` |
+| 4 + 2k, 5 + 2k | timer k rise, fall |
+| 12, 13 | shifter 0 start, done |
+| 14, 15 | shifter 1 start, done |
+| 16 + p | pin p rise |
+| 24 + p | pin p fall |
+
+The controller sees the bus through 32 sticky flags: `WEV e` waits for flag
+`e` and consumes it; `CLREV` clears all of them.
+
+## PX8 controller
+
+One-byte instructions `{op[3:0], n[3:0]}`. Wider operands are built with
+Transputer-style prefixes: `opnd = O | n`, `PFIX` does `O = opnd << 4`, and
+every other instruction clears `O`. Each instruction takes 2 cycles (fetch +
+execute) plus any stall.
+
+| op | Name | Effect |
+| --- | --- | --- |
+| 0 | `PFIX` | `O = (O \| n) << 4` |
+| 1 | `LDC` | `A = opnd` |
+| 2 | `ADC` | `A = A + opnd` |
+| 3 | `XRC` | `A = A ^ opnd` |
+| 4 | `J` | `pc = opnd` |
+| 5 | `JZ` | if `A == 0`: `pc = opnd` |
+| 6 | `DJNZ` | `C -= 1`; if `C != 0`: `pc = opnd` |
+| 7 | `SETC` | `C = opnd` |
+| 8 | `WCF` | `cfg[opnd] = A` |
+| 9 | `RD` | `A = rd[opnd]` |
+| A | `WEV` | wait for sticky event `opnd`, consume it |
+| B | `FIRE` | pulse controller event `opnd[0]` |
+| C | `PIN` | controller pin `n[2:0]` := `n[3]` |
+| D | `DLY` | stall `opnd` extra cycles |
+| E | `OPR` | `0` NOP, `1` HALT, `2` PULL (`A` = TX byte), `3` PUSH (RX = `A[7:0]`), `4` CLREV, `5` `A = C`, `6` `C = A` |
+| F | `ANDC` | `A = A & opnd` |
+
+Readback (`RD`): 0 pins, 1/3 shifter 0/1 data, 2/4 shifter 0/1 status
+`{active, overrun, push pending, 9'b0, post bits[3:0]}`, 5 timers running,
+6/7 sticky flags `[15:0]`/`[31:16]`.
+
+Configuration addresses: `0x00–0x0F` timer `addr[3:2]` register `addr[1:0]`,
+`0x10–0x17` shifter `addr[2]` register `addr[1:0]`, `0x18–0x1F` pin cells.
+
+## Protocol mappings
+
+These live in `test/cocotb_tests/protocols.py`, built with the assembler in
+`test/cocotb_tests/fabric.py`.
+
+**UART 8N1, full duplex.** TX: shifter 0 auto-pulls, frame `pre 1×0`,
+`post 1×1`, LSB first; its start event starts timer 0 (pulse mode), whose
+ticks shift. RX: a falling edge on the RX pin starts timer 1 (first tick
+mid-start-bit) and shifter 1. Each tick samples and shifts, and the frame
+auto-pushes. The controller just spins.
+
+**SPI master, modes 0–3.** Timer 0 is SCK (toggle mode, idle = CPOL), started
+and stopped by shifter 0's start/done events. CPHA 0 samples on the leading
+edge and shifts on the trailing edge. CPHA 1 uses lead mode and ends on the
+last sample. The controller drives CS and counts done events.
+
+**I2C master.** Timer 0 drives SCL open-drain, with hold on the SCL pin for
+clock stretching. Shifter 0 drives SDA open-drain, shifts on the timer fall,
+and samples on the *observed* SCL rise event (pin 1 rise). A 9-bit frame (8
+data + 1 post bit) carries the ACK both ways: post value 1 releases SDA so the
+slave's ACK is captured in `status[0]`, and post value 0/1 sends ACK/NACK
+after a read. START, repeated START and STOP are controller pin sequences
+that hand the pins back and forth by rewriting pin-cell sources. Releasing SCL
+waits for the SCL rise event, so a stretching slave is honored there too.
+
+## Host interface (unchanged boundary)
+
+The Tiny Tapeout host link, 1024×8 SRAM macro, and 4-deep TX/RX FIFOs keep
+their existing behavior. A command byte is presented on `ui_in` for one
+clock, followed by `8'h00`; the upper nibble is the command:
 
 | Command | Operation |
 | --- | --- |
-| `1`, `2`, `3` | Set address bits 3:0, 7:4, and 9:8 |
-| `4` | Stage the low program-data nibble |
-| `5` | Stage the high nibble, write SRAM, and increment the address |
-| `6` | Stage the low TX-data nibble |
-| `7` | Stage the high nibble and push the TX FIFO |
-| `8` | Bit 0 starts and bit 1 stops the engine |
-| `9` | Pop one RX byte to `uo_out` |
-| `A` | Read engine/FIFO status on `uo_out` |
-| `B` | Read SRAM at the current address to `uo_out` |
-| `C` | Read FIFO levels: `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
-| `D` | Peek next RX byte without popping (no-op while empty) |
+| `1`, `2`, `3` | Set address bits 3:0, 7:4, 9:8 |
+| `4`, `5` | Stage program low nibble; high nibble + write + increment |
+| `6`, `7` | Stage TX low nibble; high nibble + push |
+| `8` | bit 0 start, bit 1 stop |
+| `9` | Pop RX byte to `uo_out` |
+| `A` | Status `{running, halted, tx_full, rx_empty, 4'b0}` |
+| `B` | Read SRAM at the current address |
+| `C` | FIFO levels `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
+| `D` | Peek RX without popping |
 
-Program reads and writes are rejected while the engine runs. This keeps host
-traffic from perturbing instruction timing. Status is
-`{running, halted, tx_full, rx_empty, 4'b0}`.
+`HALT` makes the host clear `enable`, which returns every tile and pin to
+idle. Program memory is host-accessible only while stopped.
 
-### Program memory
+## Verification
 
-A foundry SRAM macro stores protocol programs. SRAM contents define pin timing,
-framing, branches, waits, and data movement, allowing behavior to change after
-fabrication.
+- `make dead-check`: Verilator `-Wall` unused/undriven signals plus yosys
+  constant/never-active flip-flop detection. Currently 0 findings.
+- cocotb (pins and host commands only, so gate-level safe): exact UART bit
+  period, UART streaming, full-duplex UART, SPI modes 0–3 against a reference
+  slave, I2C write + repeated START + read, I2C clock stretching, I2C NACK.
+- Formal (`make formal`): timer tile against an independent cycle-count
+  model; shifter tile against an independently built frame model with a
+  loopback round-trip check; FIFO and SRAM proofs. `mutation_check.py`
+  confirms the harnesses reject six representative RTL bugs.
 
-The memory is wrapped behind a technology-independent program-memory interface.
-This isolates the engine from foundry-specific controls and permits a logical
-model in simulation and formal verification.
+## Known limits and next steps
 
-### Protocol engine
-
-The protocol engine owns instruction sequencing (`vm_sequencer`) and
-coordinates shared resources. Pin claim/merge lives in `gpio_arbiter`. The
-engine advances only when the current operation's timing and flow-control
-conditions are satisfied.
-
-The bytecode is intentionally small and embeds a logical pin number in bits 2:0
-where applicable:
-
-| Encoding | Operation |
-| --- | --- |
-| `00`, `01` | NOP, HALT |
-| `02`-`0F` | `SIDESET`: `imm = {val, pin[2:0]}` latched, applied atomically at next `EXECUTE` |
-| `10 ll hh` | WAIT16, blocking little-endian cycle count |
-| `2vppp`, `3vppp` | Write logical GPIO, write its output enable |
-| `40` | Load a byte from TX FIFO; stall while empty |
-| `5p`, `6p` | Shift one bit out or in, LSB first |
-| `70` | Push the received byte; stall while RX FIFO is full |
-| `80 ll hh` | Jump to a 10-bit SRAM address |
-| `81 ll hh` | `JZ`: jump if ALU zero flag set (`80` stays unconditional) |
-| `82 ll hh` | `JNZ`: jump if ALU zero flag clear |
-| `88+n ll hh` | `DJNZ Rn`: decrement `Rn` (0..7), jump if result != 0 |
-| `AA rd ii` | `SET Rd, imm8`: zero-extended load, updates zero flag |
-| `AB rsrd` | `MOV Rd, Rs`: `rsrd = {Rs[2:0], Rd[2:0]}`, updates zero flag |
-| `AC op rsrd` | ALU `Rd = Rd op Rs`, `op`: 0 ADD, 1 SUB, 2 AND, 3 OR, 4 XOR, 5 SHL, 6 SHR |
-| `AD rd` | `GET_TIME Rd`: `Rd` = global cycle-counter low 16 bits |
-| `AE rn` | `WAIT_UNTIL Rn`: wait for an absolute 16-bit deadline using modular half-range comparison (deadline within 32767 cycles) |
-| `AF` | `EVENT_STAMP`: push one byte; 3 consecutive stamps = time_lo/time_hi/cause |
-| `9vppp` | Wait until a logical input pin equals `v` |
-| `A0` | Clear the CPU serial register for manual receive |
-| `A1 cfg poly_lo poly_hi` | `CRC_SETUP`: width/ref/xor/init in `cfg`, 16-bit poly |
-| `A2 data` | `CRC_FEED`: absorb one byte |
-| `A3` | `CRC_FINALIZE`: apply refout/xorout to residue |
-| `A4` / `A5` | Push CRC low/high byte to RX FIFO |
-| `Bppp qq` | Swap logical pin `ppp` onto physical pin `qq` (preserves a permutation) |
-| `D0 mask` | `WAIT_EVENT`: stall until any pending event in `mask`; clear matches |
-| `E0 ll hh` | `START_TIMER`: nonblocking timer; sets `EV_TIMER_DONE` on expiry |
-| `E1` | `CRC32_SETUP`: one-pulse IEEE-802.3 CRC-32 init (width 32, poly `0x04C11DB7`) |
-| `E2` / `E3` | Push CRC residue byte 2 / byte 3 (`A4`/`A5` push bytes 0/1) |
-| `E4 target` | `RUN_REGION`: `[4]=lane`, `[3:0]=start slot` (nonblocking) |
-| `E5 target count` | `RUN_REGION` with `count` extra repeats after the first pass |
-| `E6` | `WAIT_REGION`: join on `EV_REGION_DONE` |
-| `E7 select` | `READ_RESULT`: selected lane result → `Rd`; `[7]=lane`, `[2:0]=Rd` |
-| `E8 target data` / `E9 target data` | Program action low half lo/hi byte; `[4]=lane`, `[3:0]=slot` |
-| `EB target data` / `EC target data` | Program compound bundle lo/hi byte |
-| `ED` | Push source and pin detail captured with the most recent `EVENT_STAMP` |
-| `EE data` | Preload lane 0 TX shifter high byte |
-| `EF select` | Push lane result byte; `[7]=lane`, `[0]=high, `[4:1]=left shift` |
-| `EA data` | Preload selected lane TX shifter low byte |
-| `C8 cfg` | Pop TX FIFO to lane TX shifter; `[7]=lane`, `[5]=msb_first`, `[4:0]=bits` |
-| `F0 rise fall` | `ARM_EDGE`: arm rise/fall masks (`imm0` also arms compare) |
-
-### Orchestration model
-
-The CPU programs lane action slots and launches a region with `E4`. A region
-can stream payload bytes itself. The CPU can start a timer or update
-unclaimed GPIO while the region runs. `WAIT_REGION` or `WAIT_EVENT` bit 6
-joins completion; `READ_RESULT` and `EF` access the completed result.
-
-```text
-program action slots
-ACTION_LOAD_TX
-RUN_REGION
-START_TIMER
-WAIT_EVENT REGION_DONE
-WAIT_EVENT TIMER_DONE
-ACTION_PUSH_RESULT
-```
-
-`WAIT_EVENT` ORs its mask against the pending vector. Timer and region
-completions are token-counted; edge and compare sources are sticky.
-
-| Bit | Name | Source |
-| --- | --- | --- |
-| 0 | Reserved | — |
-| 1 | `EV_TIMER_DONE` | async timer expiry |
-| 2 | `EV_PIN_RISE` | armed rising edge |
-| 3 | `EV_PIN_FALL` | armed falling edge |
-| 4 | `EV_COMPARE` | armed GPIO compare |
-| 5 | Reserved | — |
-| 6 | `EV_REGION_DONE` | action region completion |
-
-`EVENT_STAMP` (`AF`) still emits time low, time high, and pending cause in
-three calls. `EVENT_DETAIL` (`ED`) then pushes the detail latched with the
-first stamp: source in bits 7:4 and logical pin in bits 2:0. Source values are
-1 timer, 2 rise, 3 fall, 4 compare, and 6 region; non-pin sources report pin 0.
-
-Action regions claim every pin they drive or sample. Conflicting VM GPIO and
-side-set instructions stall until the claim is released. Manual UART and
-1-Wire shifts use an independent CPU shifter and can overlap lane execution
-when their GPIO claims do not conflict.
-
-The synchronous SRAM path has deterministic instruction overhead. In the
-supplied UART programs each symbol lasts `WAIT16 + 11` engine clocks. At
-50 MHz, a wait operand of 423 yields approximately 115,207 baud.
-
-Exact per-opcode cost (engine clocks, excluding stall cycles): every
-instruction byte costs 3 cycles (`FETCH_REQUEST` + `FETCH_WAIT` + `EXECUTE`)
-and every operand byte costs 2 (`REQUEST` + `WAIT`). So single-byte ops
-(`GPIO_WRITE`, `SHIFT_OUT/IN`, `TX_LOAD` hit, `RX_PUSH` hit, `SET`-prefix
-`SIDESET`) cost 3; one-operand ops (`MAP`, `CRC_FEED`, `MOV`, `GET_TIME`,
-`WAIT_UNTIL` entry) cost 5; two-operand ops (`WAIT16`/`START_TIMER`/`ARM_EDGE`
-entry, `JMP`/`JZ`/`JNZ`/`DJNZ`, `SET`, ALU) cost 7; `CRC_SETUP`
-cost 9 plus resource-busy stall. `WAIT16(N)` totals `N + 11` including the
-following bit operation's fetch. Stalls (`TX` empty, `RX` full, `WAIT_PIN`,
-`WAIT_EVENT`, `WAIT_UNTIL`, `TIMER_WAIT`) add one cycle per waiting clock.
-
-A deeper prefetch queue is intentionally deferred: fetching ahead during
-`EXECUTE` would change every count above and invalidate the characterized
-baud rates, so it is scheduled after the streaming-host cutover when all
-programs are re-timed together.
-
-Baseline lock (Phase A): this `+11` overhead, the single-port 1024x8 SRAM
-behind `program_memory.sram`, the nibble host commands `1`-`B` (extended by
-level/peek reads `C`/`D`), the sticky `event_engine` semantics, and the keep
-list above are frozen. New ISA work serves Phases C–D or baseline gaps only —
-not new protocol-specific accelerators. `make verify` must stay green after
-every phase.
-
-### Register and state storage
-
-An 8x16 register file holds working values, flags, loop state, addresses, and
-temporary protocol data, driven by a tiny ALU (`SET`/`MOV`/`ADD`/`SUB`/`AND`/
-`OR`/`XOR`/`SHL`/`SHR`) with a zero flag feeding `JZ`/`JNZ`/`DJNZ` branches.
-Dedicated counters and shift storage handle operations that would otherwise
-require long software sequences while remaining reusable across protocols.
-The action words steer lane-local TX/RX shift, count, delay, and LFSR state.
-
-### Clocked transfer regions
-
-The supplied clocked transfers use an eight-slot template: load count, launch TX and idle
-clock, delay, activate clock, delay or wait for a released clock, accumulate
-RX, restore idle clock, and decrement or finish. The same template expresses
-SPI clock polarity/phase, open-drain I²C, and JTAG. `OP_PAIR` samples a
-SE0/J/K/SE1 two-pin state for differential-style line programs.
-
-### Event engine
-
-Sticky pending bits from resources and pin activity. `WAIT_EVENT` is the join
-primitive that turns the VM into an orchestrator. Edge and compare sources are
-armed with `ARM_EDGE`. Region completion posts the dedicated bit-6 token.
-
-### Timers and counters
-
-`WAIT16` remains a blocking delay. `START_TIMER` runs the same counter
-autonomously and posts `EV_TIMER_DONE`, enabling overlapped timeouts. Action
-count and delay primitives handle protocol-rate timing within regions.
-
-### Configurable GPIO fabric
-
-The GPIO fabric is the engine's protocol-facing datapath. It provides sampled
-inputs, output values, independent output-enable control, masked comparisons,
-edge observations, and logical-to-physical pin mapping.
-
-Independent output-enable control is essential for bidirectional and open-drain
-interfaces such as I2C. Pin mapping lets the same SRAM program bind its logical
-signals to different physical pins.
-
-### TX and RX FIFOs
-
-Small transmit and receive FIFOs decouple payload traffic from deterministic
-execution. A running program can consume or produce bytes at protocol timing
-while the host services data at a less predictable rate.
-
-Programs may wait or branch on FIFO state. The engine must define explicit
-behavior for empty and full conditions so host latency cannot silently corrupt
-a transfer.
-
-### CRC engine
-
-Protocol-neutral residue datapath (`crc_engine`): programmable width 1..16,
-poly, init-ones, reflect-in on feed, reflect-out/xor on finalize. USB CRC5/CRC16
-are configurations, not dedicated modes. IEEE-802.3 CRC-32 is a one-pulse
-`CRC32_SETUP` (`E1`) configuration of the same datapath widened to 32 bits;
-bytes 2/3 push out via `E2`/`E3`. Ethernet/ZIP CRCs are configurations too.
-
-**Pipelined for timing:** CPU `CRC_FEED` processes two bits per clock (four
-cycles per byte). Reflect-out `CRC_FINALIZE` remains bit-serial. The VM waits
-on `busy`. Each real-time lane instead owns a local configurable 16-bit LFSR
-that can update in the same clock as a shift or sample.
-
-## Reprogrammability model
-
-Programming occurs in a configuration phase before execution begins. The host
-loads the SRAM image, configures logical pin bindings, supplies initial payload
-data, and starts the engine. During execution, the host exchanges data through
-the FIFOs and reads status without modifying timing-critical engine state.
-
-Protocol programs define:
-
-- pin levels and output-enable changes;
-- timing intervals and repeated cycles;
-- input sampling, edge handling, and masked conditions;
-- serial bit order and transfer length;
-- framing decisions and conditional branches; and
-- movement of payload bytes to and from the host queues.
-
-UART, SPI, and I2C therefore differ primarily in SRAM contents and configuration.
-No module is designated as a UART controller, SPI controller, or I2C controller.
-
-## Initial demonstrations
-
-- UART transmit and receive establish accurate asynchronous bit timing and
-  framing.
-- SPI master transfer establishes programmable clock phase, polarity, and
-  simultaneous shifting.
-- I2C master transactions establish bidirectional open-drain control,
-  acknowledgements, and conditional waits.
-
-Loopback or paired endpoints will verify that each demonstration uses the same
-engine and execution resources.
-
-## Soft low-speed USB (non-compliant demo)
-
-With GPIO actions, timers, and the generic CRC datapath, bytecode can
-emit LS line patterns at ~1.5 Mb/s on two `uio` pins. Board notes: wire D+/D−
-to `uio[0]`/`uio[1]`, 1.5 kΩ pull-up on D− for LS device idle J, series
-resistors as needed. Not USB-IF compliant — analyzer / cocotb host only.
-The LS examples use parallel GPIO actions for J/K/SE0 states.
-
-## Growth path
-
-### Further work
-
-- Configure logical-to-physical pin bindings once at load time where possible.
-- A byte-wide host streaming mode needs a pinout change.
-- A deeper instruction prefetch queue could reduce VM instruction overhead.
-- DMA and richer completion routing remain future options.
-
-### Explicit non-goals
-
-- New protocol-specific opcodes or FSMs (USB, 1-Wire, CAN, …).
-- Specialized accelerators that duplicate what action words + CRC/shift/count
-  can already express.
-
-Component boundaries still allow later versions to add DMA and debug/trace on
-top of the CPU, dispatcher, and real-time lane structure.
+- Tile counts (4 timers, 2 shifters) are a starting point. At about 4.4k
+  generic cells there is room for more tiles inside 6×4.
+- Both shifters share one TX/RX FIFO pair (fixed priority). Two simultaneous
+  streaming protocols need per-tile FIFO channels plus a host channel select.
+- Candidate generic tiles: CRC/LFSR fed by a shifter's bit stream (USB CRC5/16,
+  Ethernet CRC32), a run-length/pattern matcher (USB bit stuffing, 1-Wire
+  presence), and an NRZI/Manchester line coder.
+- The tile formal targets are BMC + cover. Unbounded PDR proofs did not
+  converge on the 16-bit counters within 15 minutes.

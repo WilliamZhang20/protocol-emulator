@@ -28,69 +28,32 @@ the hardened netlist has been copied into `test/gate_level_netlist.v`.
 
 ## Structure
 
-- `cocotb_tests/common.py` owns shared clock and reset behavior.
+- `cocotb_tests/common.py` owns shared clock, reset, and host status helpers.
+- `cocotb_tests/fabric.py` contains the PX8 assembler, fabric configuration
+  helpers, host load/push/pop helpers, and the wired-AND `Bus` pin model.
+- `cocotb_tests/protocols.py` builds UART, SPI, and I²C programs as fabric
+  configurations.
 - `cocotb_tests/test_*.py` contains discoverable test modules.
-- `cocotb_tests/reference/` contains the ISA and protocol reference models.
 - `models/` contains vendor simulation models only.
 
-Keep drivers and monitors independent of individual tests. Compare externally
-observable events through the common trace vocabulary so the same scoreboards
-can be reused for UART, SPI, I2C, and arbitrary instruction sequences.
-
 **Gate-level rule:** every module in `COCOTB_TEST_MODULES` must be GL-safe.
-Do not reach below `dut.user_project` (no `core`, `bit_xfer`, etc.). Use host
-commands and `uio_*` / `uo_out` only — see `AGENTS.md` and
-`cocotb_tests/common.py`.
+Do not reach below `dut.user_project`. Use host commands and `uio_*` /
+`uo_out` only. See `AGENTS.md` and `cocotb_tests/common.py`.
 
 The standalone `program_memory_tb.sv` verifies the delivered foundry SRAM model,
 including masked writes. Formal verification uses a separate logical SRAM model
 under `formal/models/`; neither model is synthesized into the ASIC.
 
-`test_uart.py` loads distinct TX and RX bytecode images through the real host
-interface and SRAM, then checks complete 8-N-1 frames at the top-level GPIO pins.
+`test_top.py` checks that a reset engine leaves every protocol pin undriven.
 
-`test_clocked_regions.py` exercises action regions with SPI
-mode 0, SPI mode 3, an I²C byte write plus ACK, and an I²C clock-stretching case.
+`test_uart.py` checks that every edge of a UART frame lands exactly one bit
+period apart, streams four bytes through a reference receiver, and runs TX and
+RX concurrently (full duplex) with frames deliberately misaligned.
 
-`test_orchestrate.py` checks nonblocking `RUN_REGION` / `WAIT_EVENT`, overlapped
-timer joins, edge wakeups, and GPIO ownership while a transfer runs.
+`test_spi.py` runs a three-byte full-duplex transfer in each of SPI modes 0–3
+against a reference slave and checks both directions.
 
-`test_fuzz.py` runs a mutational orchestration campaign (96 trials: double region starts,
-OR-joins, edge wake, ownership, CRC pipelines, parallel line actions, CRC-then-region) with a
-hang watchdog, RX scoreboarding, and directed CRC poly stress.
-
-`test_usb_ls.py` covers GPIO line-state smoke, programmable CRC5/CRC16, parallel GPIO action regions, and a soft LS ACK line-pattern TX demo (GL-safe).
-
-`test_alu_branch.py` covers the 8x register file, ALU ops, the zero flag, and
-`JZ`/`JNZ`/`DJNZ` (GL-safe, pins + status only).
-
-`test_action.py` covers the Phase C/D action engine: program slots, `RUN_REGION`,
-parallel GPIO drive via 32-bit action words, transfer-bit equivalence, and
-`WAIT_REGION` join. It also checks native FIFO backpressure, pin-claim and
-action-table stalls, physical MAP swaps, and result forwarding (GL-safe).
-
-`test_differential.py` runs 16 seeded, legal action regions through the pure
-Python `reference/region_spec.py` and RTL, then compares every externally
-visible pin transition and its cycle after launch alignment. The reference
-model deliberately rejects action opcodes outside its supported subset
-(`GPIO`, `DELAY`, `COUNT`, `REPEAT`, `DONE`) so a new generated instruction cannot
-silently be scored as a NOP. The test uses only top-level pins and host
-commands, so it is included in gate-level simulation when a netlist is present.
-
-`test_time_event.py` covers `GET_TIME`/`WAIT_UNTIL` scheduling and timestamped
-`EVENT_STAMP` triples, source/pin detail, wrapped deadlines, and zero-length async timers.
-
-`test_sideset.py` checks side-set prefixes land on the same cycle as the next
-op's pin transition.
-
-`test_crc.py` checks IEEE-802.3 CRC-32 (`0xE1` setup, 4-byte push) against zlib
-and checks serialized CPU/action feeds of the shared CRC block.
-
-`test_jtag.py` runs a Shift-DR loopback through a clocked action region with
-no RTL change per protocol.
-
-`test_onewire.py` runs a 1-Wire reset + presence + write + read demo on one pin.
-
-`test_manchester.py` decodes a Manchester TX frame purely from pin timing.
-
-`test_host_stream.py` checks FIFO level reads (`0xC`) and RX peek (`0xD`).
+`test_i2c.py` runs START, two writes, repeated START, and two reads (ACK, then
+NACK) against an open-drain reference slave. It checks that no SCL phase is
+shorter than the half period, that a slave stretching SCL for 20 half periods
+is honored, and that an absent address reads back NACK.

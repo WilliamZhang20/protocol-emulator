@@ -132,7 +132,6 @@ module tt_um_protocol_emulator (
       .halted(engine_halted)
   );
 
-  wire _unused = 1'b0;
 endmodule
 
 `default_nettype wire

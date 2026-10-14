@@ -16,15 +16,9 @@ Run an individual target with:
 
 ```sh
 make -C formal program_memory
-make -C formal uart_tx
-make -C formal uart_rx
 make -C formal byte_fifo
-make -C formal event_engine
-make -C formal gpio_ownership
-make -C formal action_dispatcher
-make -C formal action_engine
-make -C formal action_stream
-make -C formal shared_resources
+make -C formal fabric_timer
+make -C formal fabric_shifter
 ```
 
 Results and counterexample traces are written beneath `build/formal/`.
@@ -34,31 +28,21 @@ trace. Its formal macro is a tracked arbitrary-address abstraction, which proves
 masked write and synchronous read behavior without expanding all 8192 storage
 bits into the solver.
 
-Each UART target exhaustively checks 300 formal steps for every possible
-8-bit payload and produces a reachable complete-frame cover trace. The cover
-tasks use BTORMC, which finds the RX witness at step 265 and TX at step 274
-without the long SMTBMC search; each also has a 120-second timeout. TX assertions
-check FIFO consumption, output enable, start/data/stop levels, and idle recovery;
-RX assertions check one correctly reconstructed FIFO byte.
-
-The additional targets check the architecture's shared resources directly:
-
-| Target | Proved behavior |
+| Target | Checked behavior |
 | --- | --- |
 | `byte_fifo` | Unbounded FIFO count, full/empty, ordering, and simultaneous push/pop against an age-ordered reference queue. |
-| `event_engine` | Unbounded timer/region token counts, sticky edge/compare behavior, consume precedence, and source/pin detail against a reference scoreboard. |
-| `gpio_ownership` | Unbounded one-to-one logical/physical map and action-claim isolation from CPU and side-set writes. |
-| `action_dispatcher` | Atomic pin-conflict admission, selected-lane readiness, exclusive FIFO grants, backpressure, and priority selection. |
-| `action_engine` | Bounded and unbounded lane repeat count, claim lifetime, completion, and immunity to an attempted live table rewrite. |
-| `action_stream` | Bounded checks for exactly one automatic TX pull and RX push per byte, receive ordering, and stable requests across FIFO stalls. |
-| `shared_resources` | CPU stalls during shared FIFO/table/map ownership, pin-conflict hold, NOP forward progress, and JZ/JNZ branch polarity. |
+| `fabric_timer` | Bounded: running state and every tick match an independent cycle-count model (first tick after `phase + 1`, then every `reload + 1`), hold freezes time, stop wins, and the output moves only on a toggle tick or to idle. |
+| `fabric_shifter` | Bounded: `out` equals an independently built frame (pre/data in both bit orders/parity/post, lead mode), done timing, and with the input looped back a fully sampled frame reproduces the word in `rx_data` and the RX push; FIFO requests hold until granted and overrun is flagged. |
+
+The tile targets are BMC + cover. Unbounded PDR did not converge on their
+16-bit counters within 15 minutes, so no proof is claimed for them.
 
 Each target also has a cover task so its important scenario is demonstrably
-reachable. `make formal` runs `mutation-check` last. That script makes five
+reachable. `make formal` runs `mutation-check` last. That script makes six
 temporary RTL variants and requires the focused BMC targets to reject a FIFO
-count reversal, event-token decrement reversal, GPIO map alias, dropped
-action pin claim, and JZ branch-polarity flip. The repository RTL is never
-modified by the mutation run.
+count reversal, a timer reload off-by-one, an ignored clock-stretch hold, a
+shifter bit-order bug, a parity polarity flip, and a lost overrun flag. The
+repository RTL is never modified by the mutation run.
 
 ## Adding a block
 

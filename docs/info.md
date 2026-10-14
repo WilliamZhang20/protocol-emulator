@@ -9,28 +9,28 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-The project is an SRAM-programmed deterministic protocol engine. Programs use
-shared timing, shifting, FIFO, CRC, and configurable GPIO resources to
-implement protocols without dedicated UART, SPI, or I2C state machines. The
-architecture uses a reusable CPU and two programmable real-time lanes; clocked
-transfers and two-pin line states compile to action regions (see architecture.md).
+A spatial protocol engine. Instead of a CPU that times bits with
+instructions, the chip contains a small fabric of generic hardware tiles
+(4 timers, 2 shifters, 8 pin cells) connected by a registered 32-line event
+bus. A protocol is a configuration: which events start, stop, shift and
+sample each tile, and which tile drives each pin. Once configured, the fabric
+runs every clock with cycle-exact timing. A tiny prefix-encoded controller
+(PX8), executing from on-chip SRAM, writes the configuration and handles
+transaction-level decisions such as I2C START/STOP and ACK checks.
 
-See the [architecture and programming reference](architecture.md) for the host
-commands, bytecode, component structure, roadmap (Phases A–D), and
-reprogrammability model.
+UART (full duplex), SPI (all four modes) and I2C (with clock stretching) are
+SRAM programs. There is no protocol-specific logic. See the
+[architecture reference](architecture.md) for the tile registers, event map,
+controller ISA and protocol mappings.
 
 ## How to test
 
-Run `make verify` for lint, foundry SRAM compilation/testing, cocotb, and formal
-checks. The UART tests load separate TX and RX programs through `ui_in`, execute
-them from SRAM, and observe an 8-N-1 frame through `uio[0]`. The action-region clocked-transfer tests exercise the same autonomous engine for SPI mode 0/3 and I²C write/ACK
-with clock stretching.
+Load a program and payload over the nibble host link on `ui_in`, start the
+engine, and observe the protocol on `uio[7:0]`. Run `make verify` for lint,
+dead-logic detection, cocotb protocol tests, and formal checks.
 
 ## External hardware
 
-The basic loopback demonstrations require only suitable pin connections. Paired
-endpoint tests may use a microcontroller, FPGA, or protocol analyzer.
-
-Soft low-speed USB demos (non-compliant) use two `uio` pins as D+/D−. For an LS
-device idle-J, add a 1.5 kΩ pull-up from D− to 3.3 V and series resistors on
-both lines; do not expect USB-IF compliance without a real PHY.
+UART needs only a TX/RX connection. SPI and I2C need a target device or a
+microcontroller or FPGA acting as one; I2C needs pull-up resistors on SCL
+and SDA.

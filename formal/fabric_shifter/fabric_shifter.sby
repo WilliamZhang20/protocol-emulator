@@ -1,0 +1,22 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 30
+multiclock on
+
+[engines]
+bmc: smtbmc boolector
+cover: btor btormc
+
+[script]
+read -formal -sv fabric_shifter.v
+read -formal -sv fabric_shifter_properties.sv
+prep -top fabric_shifter_properties
+
+[files]
+../../src/fabric_shifter.v
+fabric_shifter_properties.sv
