@@ -70,9 +70,20 @@ def wait_event(mask: int) -> list[int]:
     return [0xD0, mask & 0xFF]
 
 
-def arm_edges(rise_mask: int, fall_mask: int, compare: bool = False) -> list[int]:
-    """Arm pin-edge / compare events for WAIT_EVENT."""
-    return [0xF0 | (1 if compare else 0), rise_mask & 0xFF, fall_mask & 0xFF]
+def arm_edges(rise_mask: int, fall_mask: int,
+              compare: tuple[int, int] | None = None) -> list[int]:
+    """Arm pin-edge events for WAIT_EVENT, plus an optional level compare.
+
+    `compare` is `(pin, value)`: EV_COMPARE is set while logical `pin` reads
+    `value`. `(0, 0)` cannot be encoded because `F0` means "no compare".
+    """
+    target = 0
+    if compare is not None:
+        pin, value = compare
+        target = ((value & 1) << 3) | (pin & 7)
+        if target == 0:
+            raise ValueError("compare target pin 0 low is not encodable")
+    return [0xF0 | target, rise_mask & 0xFF, fall_mask & 0xFF]
 
 
 def gpio_write(pin: int, value: int) -> int:
