@@ -3,8 +3,8 @@
 import cocotb
 from cocotb.triggers import ClockCycles
 
-from cocotb_tests.common import host_command, reset_top, start_clock
-from cocotb_tests.fabric import load_program
+from cocotb_tests.common import host_command, reset_top, start_clock, wait_until_halted
+from cocotb_tests.fabric import Px8, load_program, pop_rx, push_tx, select_channel, start_engine
 
 
 async def read_sram(dut, address: int) -> int:
@@ -69,3 +69,34 @@ async def test_half_changed_byte_is_ignored(dut):
     # Command 5 commits {payload, staged low nibble} = 0xAA.
     assert await read_sram(dut, 0x2A0) == 0xAA
     assert await read_sram(dut, 0x2A1) == 0xAA
+
+
+@cocotb.test()
+async def test_fifo_channels_are_separate(dut):
+    """Host pushes and pops reach only the selected channel, and the
+    controller's TXP and PUSH reach only the channel their operand names."""
+    await start_clock(dut)
+    await reset_top(dut)
+    await select_channel(dut, 1)
+    await push_tx(dut, 0x11)
+    assert await fifo_levels(dut) == 0b01_001_000   # ch1: tx_level 1, rx empty
+    await select_channel(dut, 0)
+    assert await fifo_levels(dut) == 0b01_000_000   # ch0 untouched
+
+    p = Px8()
+    p.ldc(0x5A)
+    p.txp(channel=0)
+    p.ldc(0xC3)
+    p.push(channel=1)
+    p.ldc(0x3C)
+    p.push(channel=0)
+    p.halt()
+    await load_program(dut, p.assemble())
+    await start_engine(dut)
+    await wait_until_halted(dut)
+
+    assert await fifo_levels(dut) == 0b00_001_001   # ch0: TXP byte, one RX byte
+    assert await pop_rx(dut) == 0x3C
+    await select_channel(dut, 1)
+    assert await fifo_levels(dut) == 0b00_001_001   # ch1: host byte, one RX byte
+    assert await pop_rx(dut) == 0xC3

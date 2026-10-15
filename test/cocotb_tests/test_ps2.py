@@ -5,7 +5,7 @@ import cocotb
 from cocotb.triggers import ClockCycles
 
 from cocotb_tests.common import reset_top, start_clock
-from cocotb_tests.fabric import Bus, drain_rx, load_program, start_engine
+from cocotb_tests.fabric import Bus, drain_rx, load_program, select_channel, start_engine
 from cocotb_tests.protocols import PS2_CLK, PS2_DATA, ps2_receive
 
 HALF = 200   # scaled-down device clock half period
@@ -39,6 +39,7 @@ async def test_ps2_scan_codes(dut):
             await device_send(dut, bus, code)
             await ClockCycles(dut.clk, 3 * HALF)
 
+    await select_channel(dut, 1)                 # shifter 1's channel
     sender = cocotb.start_soon(device())
     received = await drain_rx(dut, len(codes))
     await sender

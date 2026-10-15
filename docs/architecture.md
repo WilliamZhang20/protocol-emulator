@@ -27,8 +27,8 @@ configurations in SRAM. There is no protocol-specific RTL.
 ```text
 host link (ui/uo) ── SRAM 1024x8 ── PX8 controller ── cfg / readback / wait
         │                                   │
-     TX FIFO ─────┐               ┌─────────┴──────────┐
-     RX FIFO ◀──┐ │               ▼                    ▼
+  TX FIFO ×2 ────┐              ┌─────────┴──────────┐
+  RX FIFO ×2 ◀──┐ │              ▼                    ▼
                 │ │   ┌───────────── 64-line signal space ─────────────┐
                 │ └──▶│ timers ×4   shifters ×2   counters ×2   CRC ×1 │
                 └─────│ glue cells ×8 (LUT4+FF)   pin rise/fall/level  │
@@ -136,6 +136,8 @@ pulse mode reports every tick as a rise.
 - A new frame can start in the same cycle the previous one ends, so streams
   are gapless. A start line of 0 with auto-pull means "start whenever the TX
   FIFO has a byte". A start line of 1 means "run continuously".
+- Shifter k owns FIFO channel k: it pulls from TX FIFO k and pushes to RX
+  FIFO k, so the two shifters never contend.
 - A received word waits in a one-byte slot for the RX FIFO. A second word
   before then sets `status[14]` (overrun).
 
@@ -198,8 +200,12 @@ One-byte instructions `{op, n}`. Wider operands are built with
 Transputer-style prefixes (`opnd = O | n`; `PFIX` does `O = opnd << 4`).
 Each instruction takes 2 cycles plus any stall; `LDM` takes 3. `LDM` and
 `TXP` let a program stream data stored in SRAM after its code (for example
-an Ethernet frame) into the TX FIFO at about 25 cycles per byte. While a
-program feeds the TX FIFO, the host must not push.
+an Ethernet frame) into a TX FIFO at about 25 cycles per byte. While a
+program feeds a TX FIFO, the host must not push to that channel.
+
+`PULL`, `PUSH` and `TXP` act on FIFO channel `opnd[4]` (a `PFIX 1` prefix
+selects channel 1). On a cycle where the shifter that owns the channel
+also wants it, the shifter goes first and the controller stalls.
 
 | op | Name | Effect |
 | --- | --- | --- |
@@ -217,7 +223,7 @@ program feeds the TX FIFO, the host must not push.
 | B | `FIRE` | pulse line `2 + opnd[0]` |
 | C | `PIN` | controller pin `n[2:0]` := `n[3]` |
 | D | `DLY` | stall `opnd` extra cycles |
-| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A`, 7 TXP (TX FIFO = `A`), 8 LDM (`A = SRAM[C]`, `C += 1`) |
+| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A`, 7 TXP (TX FIFO = `A`), 8 LDM (`A = SRAM[C]`, `C += 1`); PULL/PUSH/TXP use channel `opnd[4]` |
 | F | `ANDC` | `A = A & opnd` |
 
 Readback: 0 pins, 1/3 shifter data, 2/4 shifter status, 5/6 counter
@@ -280,8 +286,8 @@ any CRC up to 32 bits. CAN (equal-bit stuffing, CRC15), JTAG, SWD and
 - **Long frames:** frames longer than 16 bits without controller refill.
 - **Bit-time arbitration:** CAN or I2C multi-master arbitration is
   composable from glue cells but untested.
-- **Capacity:** more than 2 simultaneous streams. Both shifters share one
-  FIFO pair, and per-tile FIFO channels are the next step.
+- **Capacity:** more than 2 simultaneous streams (one FIFO channel per
+  shifter).
 - **Fast front ends:** anything that needs more than 2 samples per half bit
   at the clock rate.
 
@@ -296,10 +302,11 @@ any CRC up to 32 bits. CAN (equal-bit stuffing, CRC15), JTAG, SWD and
 - **Generality:** the eight glue cells buy back most of the eFPGA's
   flexibility for the per-bit logic coarse tiles miss.
 
-## Host interface (unchanged boundary)
+## Host interface
 
-The Tiny Tapeout host link, 1024×8 SRAM macro, and 4-deep TX/RX FIFOs keep
-their command set. `ui_in` passes a two-flop synchronizer, and a byte
+The Tiny Tapeout host link, 1024×8 SRAM macro, and two FIFO channels (a
+4-deep TX and RX FIFO per shifter). Command `E` selects the channel that
+the TX, RX, status and level commands use (0 after reset). `ui_in` passes a two-flop synchronizer, and a byte
 counts only once it is stable for two cycles, so the host may drive the
 pins asynchronously. Hold each command byte, and the `8'h00` that follows
 it, for at least 2 clocks (see [hardware.md](hardware.md)):
@@ -311,10 +318,11 @@ it, for at least 2 clocks (see [hardware.md](hardware.md)):
 | `6`, `7` | Stage TX low nibble; high nibble + push |
 | `8` | bit 0 start, bit 1 stop |
 | `9` | Pop RX byte to `uo_out` |
-| `A` | Status `{running, halted, tx_full, rx_empty, 4'b0}` |
+| `A` | Status `{running, halted, tx_full, rx_empty, 4'b0}` (FIFO bits: selected channel) |
 | `B` | Read SRAM at the current address |
-| `C` | FIFO levels `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
+| `C` | Selected channel levels `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
 | `D` | Peek RX without popping |
+| `E` | Select FIFO channel `payload[0]` |
 
 Every command must be followed by `8'h00`. A command held for several
 cycles acts once, and `8'h00` re-arms the decoder. A byte seen for a single
@@ -359,5 +367,3 @@ idle.
 - **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
   did not converge on the 16-bit counters, and counter saturation at 255 is
   beyond the BMC depth.
-- **Parallel streams:** per-shifter FIFO channels with a host channel select
-  would allow two independent streaming protocols at once.

@@ -48,15 +48,17 @@ module protocol_emulator_core (
     output wire [9:0] instruction_address,
     output wire       instruction_read,
     input  wire [7:0] instruction_data,
-    input  wire [7:0] tx_data,
-    input  wire       tx_empty,
-    output wire       tx_pop,
-    input  wire       tx_full,
-    output wire       tx_push,
-    output wire [7:0] tx_push_data,
-    output wire [7:0] rx_data,
-    output wire       rx_push,
-    input  wire       rx_full,
+    // FIFO channel k = {TX FIFO k, RX FIFO k}, k = 0..1; bytes are packed
+    // with channel 1 in the upper half.
+    input  wire [15:0] tx_data,
+    input  wire [1:0]  tx_empty,
+    output wire [1:0]  tx_pop,
+    input  wire [1:0]  tx_full,
+    output wire [1:0]  tx_push,
+    output wire [7:0]  tx_push_data,
+    output wire [15:0] rx_data,
+    output wire [1:0]  rx_push,
+    input  wire [1:0]  rx_full,
     input  wire [7:0] gpio_in,
     output wire [7:0] gpio_out,
     output wire [7:0] gpio_oe,
@@ -91,8 +93,10 @@ module protocol_emulator_core (
   wire        cpu_pin_we;
   wire [2:0]  cpu_pin_index;
   wire        cpu_pin_value;
+  wire        cpu_channel;
   wire        cpu_tx_request;
   wire        cpu_rx_request;
+  wire        cpu_tx_push;
   wire [7:0]  cpu_rx_data;
 
   // ------------------------------------------------------------ signal space
@@ -151,23 +155,22 @@ module protocol_emulator_core (
     end
   end
 
-  // ------------------------------------------------------------- arbitration
-  // Fixed priority, shifter 0 > shifter 1 > controller.
-  wire [1:0] sh_tx_request, sh_rx_request;
-  wire [7:0] sh_rx_byte_0, sh_rx_byte_1;
-  wire [1:0] sh_tx_grant, sh_rx_grant;
-  wire       cpu_tx_grant, cpu_rx_grant;
-  assign sh_tx_grant[0] = sh_tx_request[0] && !tx_empty;
-  assign sh_tx_grant[1] = sh_tx_request[1] && !sh_tx_request[0] && !tx_empty;
-  assign cpu_tx_grant   = cpu_tx_request && !(|sh_tx_request) && !tx_empty;
-  assign sh_rx_grant[0] = sh_rx_request[0] && !rx_full;
-  assign sh_rx_grant[1] = sh_rx_request[1] && !sh_rx_request[0] && !rx_full;
-  assign cpu_rx_grant   = cpu_rx_request && !(|sh_rx_request) && !rx_full;
-  assign tx_pop  = |{sh_tx_grant, cpu_tx_grant};
-  assign rx_push = |{sh_rx_grant, cpu_rx_grant};
+  // ---------------------------------------------------------- FIFO channels
+  // Shifter k owns channel k. The controller reaches either channel and
+  // yields to the shifter that owns it in the same cycle.
+  wire [1:0]  sh_tx_request, sh_rx_request;
+  wire [15:0] sh_rx_byte;
+  wire [1:0]  sh_tx_grant = sh_tx_request & ~tx_empty;
+  wire [1:0]  sh_rx_grant = sh_rx_request & ~rx_full;
+  wire [1:0]  cpu_select = cpu_channel ? 2'b10 : 2'b01;
+  wire cpu_tx_grant = cpu_tx_request && |(cpu_select & ~sh_tx_request & ~tx_empty);
+  wire cpu_rx_grant = cpu_rx_request && |(cpu_select & ~sh_rx_request & ~rx_full);
+  assign tx_pop  = sh_tx_grant | (cpu_tx_grant ? cpu_select : 2'b00);
+  assign rx_push = sh_rx_grant | (cpu_rx_grant ? cpu_select : 2'b00);
+  assign tx_push = cpu_tx_push ? cpu_select : 2'b00;
   assign tx_push_data = cpu_rx_data;
-  assign rx_data = sh_rx_grant[0] ? sh_rx_byte_0 :
-                   sh_rx_grant[1] ? sh_rx_byte_1 : cpu_rx_data;
+  assign rx_data = {sh_rx_grant[1] ? sh_rx_byte[15:8] : cpu_rx_data,
+                    sh_rx_grant[0] ? sh_rx_byte[7:0]  : cpu_rx_data};
 
   px8_controller cpu (
       .clk(clk),
@@ -189,11 +192,12 @@ module protocol_emulator_core (
       .pin_we(cpu_pin_we),
       .pin_index(cpu_pin_index),
       .pin_value(cpu_pin_value),
+      .channel(cpu_channel),
       .tx_request(cpu_tx_request),
       .tx_grant(cpu_tx_grant),
-      .tx_data(tx_data),
-      .tx_push(tx_push),
-      .tx_space(!tx_full),
+      .tx_data(cpu_channel ? tx_data[15:8] : tx_data[7:0]),
+      .tx_push(cpu_tx_push),
+      .tx_space(!(cpu_channel ? tx_full[1] : tx_full[0])),
       .rx_request(cpu_rx_request),
       .rx_grant(cpu_rx_grant),
       .rx_data(cpu_rx_data),
@@ -245,9 +249,9 @@ module protocol_emulator_core (
       .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
       .lines(lines),
       .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
-      .tx_data(tx_data),
+      .tx_data(tx_data[7:0]),
       .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
-      .rx_byte(sh_rx_byte_0),
+      .rx_byte(sh_rx_byte[7:0]),
       .out(s_out[0]), .active(s_active[0]),
       .word_pulse(s_word[0]), .stop_pulse(s_stop[0]),
       .rx_data(s_rx_data_0), .status(s_status_0)
@@ -259,9 +263,9 @@ module protocol_emulator_core (
       .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
       .lines(lines),
       .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
-      .tx_data(tx_data),
+      .tx_data(tx_data[15:8]),
       .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),
-      .rx_byte(sh_rx_byte_1),
+      .rx_byte(sh_rx_byte[15:8]),
       .out(s_out[1]), .active(s_active[1]),
       .word_pulse(s_word[1]), .stop_pulse(s_stop[1]),
       .rx_data(s_rx_data_1), .status(s_status_1)

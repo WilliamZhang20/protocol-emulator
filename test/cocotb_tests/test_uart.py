@@ -6,24 +6,28 @@ import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock
-from cocotb_tests.fabric import Bus, load_program, pop_rx, push_tx, rx_empty, start_engine
-from cocotb_tests.protocols import UART_RX_PIN, UART_TX_PIN, uart_full_duplex
+from cocotb_tests.fabric import (
+    Bus, load_program, pop_rx, push_tx, rx_empty, select_channel, start_engine,
+)
+from cocotb_tests.protocols import (
+    UART_RX_PIN, UART_TX_PIN, uart_dual_transmit, uart_full_duplex,
+)
 
 BIT = 24
 
 
-async def receive_frame(dut, bus: Bus, bit: int) -> int:
+async def receive_frame(dut, bus: Bus, bit: int, pin: int = UART_TX_PIN) -> int:
     """Reference UART receiver: wait for a start bit, sample mid-bit."""
-    while bus.level(UART_TX_PIN):
+    while bus.level(pin):
         await RisingEdge(dut.clk)
     await ClockCycles(dut.clk, bit // 2)
-    assert bus.level(UART_TX_PIN) == 0, "start bit glitch"
+    assert bus.level(pin) == 0, "start bit glitch"
     value = 0
     for index in range(8):
         await ClockCycles(dut.clk, bit)
-        value |= bus.level(UART_TX_PIN) << index
+        value |= bus.level(pin) << index
     await ClockCycles(dut.clk, bit)
-    assert bus.level(UART_TX_PIN) == 1, "missing stop bit"
+    assert bus.level(pin) == 1, "missing stop bit"
     return value
 
 
@@ -100,8 +104,35 @@ async def test_uart_full_duplex(dut):
     await driver
     await ClockCycles(dut.clk, 4 * BIT)
 
+    # Each shifter owns a FIFO channel: RX bytes arrive on channel 1 only.
+    assert await rx_empty(dut)
+    await select_channel(dut, 1)
     received_rx = []
     while not await rx_empty(dut):
         received_rx.append(await pop_rx(dut))
     assert received_tx == tx_bytes
     assert received_rx == rx_bytes
+
+
+@cocotb.test()
+async def test_fifo_channels_stream_independently(dut):
+    """Each shifter pulls its own FIFO channel: two transmitters at
+    different bit rates send their own byte streams at the same time."""
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    bits, pins = (BIT, BIT + 10), (UART_TX_PIN, 4)
+    rng = random.Random(11)
+    streams = [[rng.randrange(256) for _ in range(4)] for _ in range(2)]
+    await load_program(dut, uart_dual_transmit(bits, pins))
+    for channel in (1, 0):
+        await select_channel(dut, channel)
+        for byte in streams[channel]:
+            await push_tx(dut, byte)
+    await start_engine(dut)
+
+    async def listen(k):
+        return [await receive_frame(dut, bus, bits[k], pins[k]) for _ in streams[k]]
+
+    listeners = [cocotb.start_soon(listen(k)) for k in range(2)]
+    assert [await listener for listener in listeners] == streams

@@ -8,6 +8,9 @@
 // payload bytes are assembled from low/high nibble commands so all eight
 // pins remain available as host data.
 //
+// Command E selects the FIFO channel (one per shifter) that the TX, RX,
+// status and level commands use.
+//
 // One low-nibble stage and one data register serve both program writes and
 // TX pushes: a byte is committed by its high-nibble command, and the 8'h00
 // that must follow every command keeps the two from overlapping. The address
@@ -25,6 +28,7 @@ module host_interface (
     output wire [7:0] program_write_data,
     output wire [7:0] program_write_mask,
     input  wire [7:0] program_read_data,
+    output wire       channel,           // FIFO channel for TX/RX commands
     output wire       tx_push,
     output wire [7:0] tx_push_data,
     input  wire       tx_full,
@@ -49,6 +53,7 @@ module host_interface (
   reg tx_push_register;
   reg rx_pop_register;
   reg read_capture;            // SRAM data is valid the cycle after a read
+  reg channel_register;
 
   wire stable = host_sync == host_prev;
   wire command_valid = stable && host_sync != 8'h00 && !seen;
@@ -63,6 +68,7 @@ module host_interface (
   assign program_address = address_register;
   assign program_write_data = data_register;
   assign program_write_mask = 8'hff;
+  assign channel = channel_register;
   assign tx_push = tx_push_register;
   assign tx_push_data = data_register;
   assign rx_pop = rx_pop_register;
@@ -83,6 +89,7 @@ module host_interface (
       tx_push_register <= 1'b0;
       rx_pop_register <= 1'b0;
       read_capture <= 1'b0;
+      channel_register <= 1'b0;
     end else begin
       host_meta <= host_in;
       host_sync <= host_meta;
@@ -151,6 +158,7 @@ module host_interface (
             if (!rx_empty)
               output_register <= rx_pop_data;
           end
+          4'he: channel_register <= payload[0];
           default: output_register <= output_register;
         endcase
       end

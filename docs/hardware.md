@@ -42,7 +42,7 @@ with the clock.
 
 The host link uses all of `ui_in[7:0]` (command bytes) and `uo_out[7:0]`
 (responses). The demo board's microcontroller drives it, and the commands
-are listed in [architecture.md](architecture.md#host-interface-unchanged-boundary).
+are listed in [architecture.md](architecture.md#host-interface).
 The board's alternative uses of these pins (the UART bridge on
 `ui_in[3]`/`uo_out[4]`, the gamepad Pmod on `ui_in[4:6]`) are therefore not
 available.

@@ -20,6 +20,7 @@
 //        stalls), 4 CLREV (clear sticky events), 5 A = C, 6 C = A,
 //        7 TXP (TX FIFO = A[7:0], stalls while full),
 //        8 LDM (A = SRAM[C], C += 1: data stored after the program)
+//        PULL, PUSH and TXP use FIFO channel opnd[4] (PFIX 1 for channel 1).
 //
 // Timing: every instruction takes 2 cycles (fetch + execute) plus stalls;
 // LDM takes 3.
@@ -43,6 +44,7 @@ module px8_controller (
     output wire        pin_we,
     output wire [2:0]  pin_index,
     output wire        pin_value,
+    output wire        channel,
     output wire        tx_request,
     input  wire        tx_grant,
     input  wire [7:0]  tx_data,
@@ -132,6 +134,7 @@ module px8_controller (
   assign pin_we        = exec && op == OP_PIN;
   assign pin_index     = n[2:0];
   assign pin_value     = n[3];
+  assign channel       = opnd[4];
   assign tx_request    = exec && is_pull;
   assign rx_request    = exec && is_push;
   assign rx_data       = acc[7:0];

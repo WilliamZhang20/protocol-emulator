@@ -48,6 +48,22 @@ def uart_full_duplex(bit_cycles: int) -> list[int]:
     return p.assemble()
 
 
+def uart_dual_transmit(bit_cycles: tuple[int, int], pins: tuple[int, int]) -> list[int]:
+    """Two independent 8N1 transmitters: shifter k pulls FIFO channel k and
+    sends at its own bit rate on pins[k]."""
+    p = Px8()
+    for k in range(2):
+        p.timer(k, reload=bit_cycles[k] - 1, phase=bit_cycles[k] - 3, pulse=True,
+                start=shifter_active(k), stop=shifter_stop(k))
+        p.shifter(k, pre=1, pre_val=0, post=1, post_val=1, idle=1,
+                  shift=timer_rise(k))
+        p.pin_cell(pins[k], src=shifter_out(k), mode=MODE_PUSH_PULL)
+        p.shifter_io(k, pull=True)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
 # ---------------------------------------------------------------------- SPI
 def spi_master(mode: int, half_cycles: int) -> list[int]:
     """Full-duplex SPI master, MSB first, any CPOL/CPHA. Timer 0 is SCK and
@@ -304,11 +320,11 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     p.xrc(USB_CRC16_RESIDUE)
     p.jz("good")
     p.ldc(0xEE)
-    p.push()
+    p.push(channel=1)            # after the packet bytes, on shifter 1's channel
     p.j("done")
     p.label("good")
     p.ldc(0xA5)
-    p.push()
+    p.push(channel=1)
     p.label("done")
     p.halt()
     return p.assemble()

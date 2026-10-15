@@ -6,7 +6,9 @@ import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock, wait_until_halted
-from cocotb_tests.fabric import Bus, drain_rx, load_program, push_tx, start_engine, stream_tx
+from cocotb_tests.fabric import (
+    Bus, drain_rx, load_program, push_tx, select_channel, start_engine, stream_tx,
+)
 from cocotb_tests.line_codes import (
     J, K, SE0, USB_SYNC, crc16_usb, usb_decode, usb_encode, usb_state,
 )
@@ -79,6 +81,7 @@ async def run_receive(dut, packet: bytes, sender_bit: int) -> list[int]:
     bus = Bus(dut)
     bus.drive[USB_DP], bus.drive[USB_DM] = 0, 1      # idle J
     await load_program(dut, usb_ls_receive(BIT))
+    await select_channel(dut, 1)                 # shifter 1's channel
     await start_engine(dut)
     await ClockCycles(dut.clk, 1500)
     sender = cocotb.start_soon(drive_usb(dut, bus, usb_encode(packet), sender_bit))

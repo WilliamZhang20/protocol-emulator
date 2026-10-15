@@ -131,19 +131,19 @@ class Px8:
     def jz(self, label: str) -> None: self._branch(OP_JZ, label)
     def djnz(self, label: str) -> None: self._branch(OP_DJNZ, label)
     def halt(self) -> None: self._emit(OP_OPR, OPR_HALT)
-    def push(self) -> None: self._emit(OP_OPR, OPR_PUSH)
+    def push(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
     def a_from_c(self) -> None: self._emit(OP_OPR, OPR_A_FROM_C)
-    def txp(self) -> None: self._emit(OP_OPR, OPR_TXP)
+    def txp(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_TXP)
     def ldm(self) -> None: self._emit(OP_OPR, OPR_LDM)
 
-    def stream_sram_to_tx(self, start: int, end: int) -> None:
-        """Copy SRAM[start:end] into the TX FIFO (about 25 cycles a byte)."""
+    def stream_sram_to_tx(self, start: int, end: int, channel: int = 0) -> None:
+        """Copy SRAM[start:end] into a TX FIFO (about 25 cycles a byte)."""
         loop, done = f"_copy{len(self.code)}", f"_copied{len(self.code)}"
         self.setc(start)
         self.label(loop)
         self.ldm()
-        self.txp()
+        self.txp(channel)
         self.a_from_c()
         self.xrc(end)
         self.jz(done)
@@ -273,6 +273,11 @@ async def load_program(dut, program: list[int], address: int = 0) -> None:
     for byte in program:
         await host_command(dut, 0x4, byte)
         await host_command(dut, 0x5, byte >> 4)
+
+
+async def select_channel(dut, channel: int) -> None:
+    """FIFO channel k belongs to shifter k; TX/RX/status commands use it."""
+    await host_command(dut, 0xE, channel)
 
 
 async def push_tx(dut, byte: int) -> None:

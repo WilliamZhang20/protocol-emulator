@@ -27,7 +27,9 @@ transmit are SRAM programs; there is no protocol-specific logic. See the
 
 Load a program and payload over the nibble host link on `ui_in`, start the
 engine, and observe the protocol on `uio[7:0]`. Hold each host command and
-each `8'h00` separator for at least 2 clocks. Run `make verify` for lint,
+each `8'h00` separator for at least 2 clocks. Each shifter has its own TX
+and RX FIFO channel; host command `E` selects the one the FIFO commands
+use. Run `make verify` for lint,
 dead-logic detection, cocotb protocol tests, and formal checks.
 
 ## External hardware
