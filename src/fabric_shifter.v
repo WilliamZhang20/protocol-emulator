@@ -17,17 +17,26 @@
 //   2 step   [5:0] shift line  [11:6] sample line
 //   3 io     [5:0] start line  [10:6] input level (signal space 32-63)
 //            [11] auto pull TX FIFO  [12] auto push RX FIFO
+//   4 burst  [4:0] burst-end level (signal space 32-63)  [5] burst mode
 //
 // A frame starts when the start line is high, or (start line 0 with auto
 // pull) whenever the TX FIFO grants a byte. A new frame may start in the
 // same cycle the previous one ends, so streams are gapless. `word` pulses at
-// every frame end; `stop` pulses when the shifter actually goes idle.
+// every word end; `stop` pulses when the shifter actually goes idle.
+//
+// Burst mode: where a word's last data bit would end (the same shift or
+// sample event that ends a frame), the next word starts directly at its
+// first data bit, so pre, parity and post bits appear only around the
+// whole burst. The next word is pulled from the TX FIFO (auto pull) or is
+// the data register again. The word during which the burst-end line has
+// been high (or auto pull finds the FIFO empty at its end) is the last one;
+// parity covers that word only.
 module fabric_shifter (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        enable,
     input  wire        cfg_we,
-    input  wire [1:0]  cfg_addr,
+    input  wire [2:0]  cfg_addr,
     input  wire [15:0] cfg_data,
     input  wire [63:0] lines,
     output wire        tx_request,
@@ -47,6 +56,7 @@ module fabric_shifter (
   reg [15:0] frame;
   reg [11:0] step;
   reg [12:0] io;
+  reg [5:0]  burst;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
   reg [4:0]  index;
@@ -56,6 +66,7 @@ module fabric_shifter (
   reg [7:0]  push_byte;
   reg        overrun;
   reg        out_r;
+  reg        burst_end_seen;
 
   wire [4:0] pre_n     = {3'b0, frame[5:4]};
   wire       pre_val   = frame[6];
@@ -67,11 +78,12 @@ module fabric_shifter (
   wire [5:0] start_sel = io[5:0];
   wire       auto_pull = io[11];
   wire       auto_push = io[12];
+  wire       burst_mode = burst[5];
 
   // Frame boundaries depend only on the frame register, so they are
   // registered alongside it (computed from the value being written) instead
   // of passing through an adder chain every cycle.
-  wire        frame_we   = cfg_we && cfg_addr == 2'd1;
+  wire        frame_we   = cfg_we && cfg_addr == 3'd1;
   wire [3:0]  len_m1_next = frame_we ? cfg_data[3:0] : frame[3:0];
   wire [1:0]  pre_next    = frame_we ? cfg_data[5:4] : frame[5:4];
   wire [1:0]  post_next   = frame_we ? cfg_data[8:7] : frame[8:7];
@@ -80,16 +92,18 @@ module fabric_shifter (
   wire [4:0]  len_next   = {1'b0, len_m1_next} + 5'd1;
   wire [4:0]  data_end_next = {3'b0, pre_next} + len_next;
   wire [4:0]  par_end_next  = data_end_next + {4'b0, parity_next != 2'd0};
-  reg  [4:0]  data_end, par_end, last_index;
+  reg  [4:0]  data_end, par_end, last_index, data_last;
   reg  [15:0] len_mask;
   always @(posedge clk) begin
     if (!rst_n) begin
       data_end   <= 5'd1;
       par_end    <= 5'd1;
       last_index <= 5'd0;
+      data_last  <= 5'd0;
       len_mask   <= 16'd1;
     end else begin
       data_end   <= data_end_next;
+      data_last  <= data_end_next - 5'd1;
       par_end    <= par_end_next;
       last_index <= par_end_next + {3'b0, post_next} - 5'd1;
       len_mask   <= 16'hffff >> (5'd16 - len_next);
@@ -119,25 +133,34 @@ module fabric_shifter (
 
   wire shift_evt  = active_r && lines[step[5:0]];
   wire sample_now = active_r && lines[step[11:6]] && !lead_wait;
+  wire end_evt = end_on_sample ? sample_now : (shift_evt && !lead_wait);
   wire at_last = index == last_index;
-  wire done = enable && at_last &&
-      (end_on_sample ? sample_now : (shift_evt && !lead_wait));
+  wire [31:0] levels = lines[63:32];
+  // A burst continues past this word's last data bit unless the end line
+  // has been seen; with auto pull it also needs the next byte.
+  wire burst_want = enable && burst_mode && index == data_last && end_evt &&
+                    !(burst_end_seen || levels[burst[4:0]]);
+  wire burst_next = burst_want && (!auto_pull || tx_grant);
+  wire frame_end = enable && at_last && end_evt;
+  wire done = frame_end && !burst_next;
   wire trigger = start_sel != 6'd0 ? lines[start_sel] : auto_pull;
   wire start = enable && (!active_r || done) && trigger &&
                (!auto_pull || tx_grant);
-  wire [31:0] levels = lines[63:32];
   wire in_bit = levels[io[10:6]];
   wire [15:0] data_bit_mask = 16'd1 << data_pos;
   wire [15:0] rx_next = (sample_now && in_data) ?
       ((rx_word & ~data_bit_mask) | (in_bit ? data_bit_mask : 16'd0)) :
       rx_word;
 
-  assign tx_request = enable && (!active_r || done) && trigger && auto_pull;
+  // Requested from frame_end, not done, so the grant never feeds back into
+  // its own request; the two differ only when burst_want already requests.
+  assign tx_request = auto_pull &&
+      (burst_want || (enable && (!active_r || frame_end) && trigger));
   assign rx_request = push_pending;
   assign rx_byte    = push_byte;
   assign out        = out_r;
   assign active     = active_r;
-  assign word_pulse = done;
+  assign word_pulse = done || burst_next;
   assign stop_pulse = done && !start;
   assign rx_data    = rx_word;
   assign status = {active_r, overrun, push_pending, 9'b0, post_cap};
@@ -147,11 +170,13 @@ module fabric_shifter (
       frame <= 16'd0;
       step  <= 12'd0;
       io    <= 13'd0;
+      burst <= 6'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
-        2'd1: frame <= cfg_data;
-        2'd2: step  <= cfg_data[11:0];
-        2'd3: io    <= cfg_data[12:0];
+        3'd1: frame <= cfg_data;
+        3'd2: step  <= cfg_data[11:0];
+        3'd3: io    <= cfg_data[12:0];
+        3'd4: burst <= cfg_data[5:0];
         default: begin end
       endcase
     end
@@ -161,9 +186,11 @@ module fabric_shifter (
   // paths at a flop. Each candidate (new frame, advance, hold) is
   // precomputed from registers; the shift line only selects among them.
   wire [15:0] start_word = auto_pull ? {8'd0, tx_data} :
-      (cfg_we && cfg_addr == 2'd0 && !active_r) ? cfg_data : tx_word;
+      (cfg_we && cfg_addr == 3'd0 && !active_r) ? cfg_data : tx_word;
+  wire [15:0] burst_word = auto_pull ? {8'd0, tx_data} : tx_word;
   wire advance = shift_evt && !lead_wait && !at_last;
   wire bit_start = frame_bit_at(5'd0, start_word);
+  wire bit_burst = frame_bit_at(pre_n, burst_word);
   wire bit_next  = frame_bit_at(index + 5'd1, tx_word);
   wire bit_hold  = frame_bit_at(index, tx_word);
   always @(posedge clk) begin
@@ -171,6 +198,8 @@ module fabric_shifter (
       out_r <= 1'b0;
     else if (start)
       out_r <= bit_start;
+    else if (burst_next)
+      out_r <= bit_burst;
     else if (!active_r || done || !enable)
       out_r <= idle_next;
     else
@@ -180,9 +209,9 @@ module fabric_shifter (
   always @(posedge clk) begin
     if (!rst_n) begin
       tx_word <= 16'd0;
-    end else if (start && auto_pull) begin
+    end else if ((start || burst_next) && auto_pull) begin
       tx_word <= {8'd0, tx_data};
-    end else if (cfg_we && cfg_addr == 2'd0 && !active_r) begin
+    end else if (cfg_we && cfg_addr == 3'd0 && !active_r) begin
       tx_word <= cfg_data;
     end
   end
@@ -197,10 +226,11 @@ module fabric_shifter (
       push_pending <= 1'b0;
       push_byte    <= 8'd0;
       overrun      <= 1'b0;
+      burst_end_seen <= 1'b0;
     end else begin
       if (rx_grant)
         push_pending <= 1'b0;
-      if (done && auto_push) begin
+      if (word_pulse && auto_push) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;
         push_pending <= 1'b1;
@@ -214,7 +244,14 @@ module fabric_shifter (
         lead_wait <= lead;
         rx_word   <= 16'd0;
         post_cap  <= 4'd0;
+        burst_end_seen <= 1'b0;
+      end else if (burst_next) begin
+        index     <= pre_n;
+        lead_wait <= lead;
+        rx_word   <= 16'd0;
       end else if (active_r) begin
+        if (levels[burst[4:0]])
+          burst_end_seen <= 1'b1;
         rx_word <= rx_next;
         if (sample_now && !in_pre && !in_data)
           post_cap <= {post_cap[2:0], in_bit};

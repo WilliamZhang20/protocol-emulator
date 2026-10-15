@@ -117,7 +117,7 @@ high and the hold line, optionally inverted, is high; this implements I2C
 clock stretching), then count. Toggle mode flips the output on every tick;
 pulse mode reports every tick as a rise.
 
-### Shifter (×2), config `0x10 + 4k`
+### Shifter (×2), config `0x10 + 4k` (burst register at `0x32 + k`)
 
 | Reg | Field |
 | --- | --- |
@@ -125,6 +125,7 @@ pulse mode reports every tick as a rise.
 | 1 | `[3:0]` length − 1 (1..16), `[5:4]` pre count, `[6]` pre value, `[8:7]` post count, `[9]` post value, `[11:10]` parity (none/even/odd), `[12]` MSB first, `[13]` lead, `[14]` end on sample, `[15]` idle level |
 | 2 | `[5:0]` shift line, `[11:6]` sample line |
 | 3 | `[5:0]` start line, `[10:6]` input level, `[11]` auto-pull TX FIFO, `[12]` auto-push RX FIFO |
+| 4 | `[4:0]` burst-end level, `[5]` burst mode |
 
 - The output bit is a register. The next bit for each case (hold, advance,
   new frame) is precomputed, and the shift line only selects among them, so
@@ -136,6 +137,14 @@ pulse mode reports every tick as a rise.
 - A new frame can start in the same cycle the previous one ends, so streams
   are gapless. A start line of 0 with auto-pull means "start whenever the TX
   FIFO has a byte". A start line of 1 means "run continuously".
+- **Burst mode** frames a run of words once: `[pre][word][word]…[parity]
+  [post]`. Where a word's last data bit would end the frame, the next word
+  starts at its first data bit, pulled from the TX FIFO (auto-pull) or the
+  data register again. The word during which the burst-end line has been
+  high is the last one; so is a word whose successor the TX FIFO cannot
+  supply. Parity covers the last word only. Every word pulses `word` and is
+  auto-pushed, so a counter stepping on the word line with threshold
+  N − 1 ends an N-word burst.
 - Shifter k owns FIFO channel k: it pulls from TX FIFO k and pushes to RX
   FIFO k, so the two shifters never contend.
 - A received word waits in a one-byte slot for the RX FIFO. A second word
@@ -237,6 +246,8 @@ against independent reference models through the top-level pins only.
 
 | Protocol | Tiles used | What is checked |
 | --- | --- | --- |
+| Framed burst (TX and RX) | 2 timers, 2 shifters in burst mode, 2 counters | one start bit, three bytes with no inner framing, parity over the last byte, one stop bit; the receiver pushes every byte |
+| Two independent UART transmitters | 2 timers, 2 shifters | each shifter streams its own FIFO channel at its own bit rate |
 | UART 8N1, full duplex | 2 timers, 2 shifters | every edge exactly one bit period; TX and RX concurrently |
 | SPI master, modes 0–3 | timer (SCK), shifter | full-duplex bytes against a reference slave |
 | I2C master | timer (SCL + hold), shifter, controller START/STOP | write, repeated START, read, ACK/NACK, clock stretching |
@@ -283,7 +294,8 @@ any CRC up to 32 bits. CAN (equal-bit stuffing, CRC15), JTAG, SWD and
 
 **Not expressible yet:**
 
-- **Long frames:** frames longer than 16 bits without controller refill.
+- **Long frames:** a data field longer than 16 bits that is not a whole
+  number of words (burst mode covers whole words).
 - **Bit-time arbitration:** CAN or I2C multi-master arbitration is
   composable from glue cells but untested.
 - **Capacity:** more than 2 simultaneous streams (one FIFO channel per

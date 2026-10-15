@@ -6,6 +6,10 @@
 //    including frames restarted gaplessly in the cycle the last one ends;
 //  * with the input line looped back to `out`, a frame whose data bits were
 //    all sampled reproduces the transmitted word in rx_data and the RX push;
+//  * burst mode: between words the frame jumps from the last data bit to
+//    the next word's first data bit (no pre/parity/post), the word in which
+//    the end line was seen (or the FIFO ran dry) is the last, and every
+//    word pulses `word` and is pushed;
 //  * FIFO handshakes never drop or invent bytes, and overrun is flagged.
 module fabric_shifter_properties;
   (* gclk *) reg formal_timestep;
@@ -16,7 +20,7 @@ module fabric_shifter_properties;
 
   (* anyseq *) reg        enable;
   (* anyseq *) reg        cfg_we;
-  (* anyseq *) reg [1:0]  cfg_addr;
+  (* anyseq *) reg [2:0]  cfg_addr;
   (* anyseq *) reg [15:0] cfg_data;
   (* anyseq *) reg [63:0] lines_any;
   (* anyseq *) reg        tx_ready;
@@ -33,6 +37,7 @@ module fabric_shifter_properties;
   reg [15:0] frame_s = 16'd0, data_s = 16'd0;
   reg [11:0] step_s = 12'd0;
   reg [12:0] io_s = 13'd0;
+  reg [5:0]  burst_s = 6'd0;
 
   // Loop the selected input level line back to the shifter's own output.
   wire [5:0] in_sel = {1'b1, io_s[10:6]};
@@ -49,10 +54,10 @@ module fabric_shifter_properties;
       .stop_pulse(stop_pulse), .rx_data(rx_data), .status(status)
   );
 
-  wire start_pulse = active ? (word_pulse && !stop_pulse) :
-                     (enable && (io_s[5:0] != 6'd0 ? lines[io_s[5:0]] : io_s[11]) &&
-                      (!io_s[11] || tx_grant));
-  always @(*) if (rst_n && cfg_we && cfg_addr != 2'd0) assume(!active && !start_pulse);
+  wire trigger = io_s[5:0] != 6'd0 ? lines[io_s[5:0]] : io_s[11];
+  always @(*) if (rst_n && cfg_we && cfg_addr != 3'd0)
+    assume(!active && !(enable && trigger && (!io_s[11] || tx_grant)));
+  always @(*) if (rst_n && cfg_we) assume(cfg_addr <= 3'd4);
 
   wire [4:0] len  = {1'b0, frame_s[3:0]} + 5'd1;
   wire [1:0] npre = frame_s[5:4];
@@ -87,16 +92,27 @@ module fabric_shifter_properties;
 
   reg [4:0]  r_idx = 5'd0;
   reg        r_lead = 1'b0;
+  reg        r_active = 1'b0;
+  reg        r_end_seen = 1'b0;
+  reg [1:0]  burst_words = 2'd0;    // words continued into, saturating
   reg [15:0] r_sampled = 16'd0;
-  wire shift_evt  = active && lines[step_s[5:0]];
-  wire sample_now = active && lines[step_s[11:6]] && !r_lead;
+  wire shift_evt  = r_active && lines[step_s[5:0]];
+  wire sample_now = r_active && lines[step_s[11:6]] && !r_lead;
   wire [31:0] frame_bits = build_frame(word);
   wire in_data = r_idx >= {3'd0, npre} && r_idx < {3'd0, npre} + len;
   wire [4:0] data_i = r_idx - {3'd0, npre};
   wire [3:0] data_pos = frame_s[12] ? (len[3:0] - 4'd1 - data_i[3:0]) : data_i[3:0];
   wire at_last = r_idx == total - 5'd1;
-  wire expect_done = enable && active && at_last &&
-      (end_on_sample ? sample_now : (shift_evt && !r_lead));
+  wire end_evt = end_on_sample ? sample_now : (shift_evt && !r_lead);
+  wire end_line = lines[{1'b1, burst_s[4:0]}];
+  // Burst: the word continues into the next one at its last data bit.
+  wire burst_go = enable && burst_s[5] && r_idx == {3'd0, npre} + len - 5'd1 &&
+                  end_evt && !(r_end_seen || end_line);
+  wire burst_pull = burst_go && io_s[11];
+  wire expect_next = burst_go && (!io_s[11] || tx_grant);
+  wire expect_done = enable && r_active && at_last && end_evt && !expect_next;
+  wire start_pulse = enable && (!r_active || expect_done) && trigger &&
+                     (!io_s[11] || tx_grant);
   wire [15:0] len_mask = 16'hffff >> (5'd16 - len);
   wire [15:0] sampled_now = r_sampled |
       ((sample_now && in_data) ? (16'd1 << data_pos) : 16'd0);
@@ -106,25 +122,42 @@ module fabric_shifter_properties;
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
       frame_s <= 16'd0; step_s <= 12'd0; data_s <= 16'd0; io_s <= 13'd0;
-      word <= 16'd0;
+      burst_s <= 6'd0; word <= 16'd0;
       r_idx <= 5'd0; r_lead <= 1'b0; r_sampled <= 16'd0;
+      r_active <= 1'b0; r_end_seen <= 1'b0; burst_words <= 2'd0;
     end else begin
+      if (start_pulse)
+        burst_words <= 2'd0;
+      else if (expect_next && burst_words != 2'd3)
+        burst_words <= burst_words + 2'd1;
       if (cfg_we) begin
         case (cfg_addr)
-          2'd0: if (!active && !(start_pulse && io_s[11])) data_s <= cfg_data;
-          2'd1: frame_s <= cfg_data;
-          2'd2: step_s <= cfg_data[11:0];
-          default: io_s <= cfg_data[12:0];
+          3'd0: if (!active && !(start_pulse && io_s[11])) data_s <= cfg_data;
+          3'd1: frame_s <= cfg_data;
+          3'd2: step_s <= cfg_data[11:0];
+          3'd3: io_s <= cfg_data[12:0];
+          default: burst_s <= cfg_data[5:0];
         endcase
       end
-      if (start_pulse && io_s[11])
+      if ((start_pulse || expect_next) && io_s[11])
         data_s <= {8'd0, tx_data};   // a pulled byte replaces the data word
+      if (!enable)
+        r_active <= 1'b0;
+      else if (start_pulse)
+        r_active <= 1'b1;
+      else if (expect_done)
+        r_active <= 1'b0;
       if (start_pulse) begin
         // A data write in the start cycle is the word sent (unless pulling).
         word <= io_s[11] ? {8'd0, tx_data} :
-                (cfg_we && cfg_addr == 2'd0 && !active) ? cfg_data : data_s;
-        r_idx <= 5'd0; r_lead <= lead; r_sampled <= 16'd0;
-      end else if (active) begin
+                (cfg_we && cfg_addr == 3'd0 && !active) ? cfg_data : data_s;
+        r_idx <= 5'd0; r_lead <= lead; r_sampled <= 16'd0; r_end_seen <= 1'b0;
+      end else if (expect_next) begin
+        word <= io_s[11] ? {8'd0, tx_data} : data_s;
+        r_idx <= {3'd0, npre}; r_lead <= lead; r_sampled <= 16'd0;
+      end else if (r_active) begin
+        if (end_line)
+          r_end_seen <= 1'b1;
         if (sample_now && in_data)
           r_sampled <= sampled_now;
         if (shift_evt) begin
@@ -149,11 +182,13 @@ module fabric_shifter_properties;
 
   always @(*) begin
     if (rst_n) begin
+      assert(active == r_active);
       if (active && enable) assert(out == frame_bits[r_idx]);
       if (!active) assert(out == frame_s[15]);
-      assert(word_pulse == expect_done);
-      if (stop_pulse) assert(word_pulse);
-      if (tx_request) assert(!active || word_pulse);
+      assert(word_pulse == (expect_done || expect_next));
+      assert(stop_pulse == (expect_done && !start_pulse));
+      if (tx_request) assert(!active || expect_done || burst_go);
+      if (burst_pull) assert(tx_request);
       if (active) assert(r_idx < total);
     end
   end
@@ -174,6 +209,9 @@ module fabric_shifter_properties;
       cover(word_pulse && has_par && npre == 2'd1 && npost == 2'd1 && len == 5'd8);
       cover(word_pulse && lead && end_on_sample && frame_s[12]);
       cover(word_pulse && !stop_pulse && io_s[11]);   // gapless restart
+      // A three-word pulled burst framed by a start and a stop bit.
+      cover(expect_done && burst_s[5] && io_s[11] && npre == 2'd1 &&
+            npost == 2'd1 && has_par && burst_words == 2'd2);
     end
   end
 endmodule

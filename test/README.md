@@ -52,11 +52,17 @@ under `formal/models/`; neither model is synthesized into the ASIC.
 `B` at several addresses. That test caught a readback that returned the
 previous read's data. It also checks that a command held on the pins for
 several cycles acts exactly once, and that a byte seen mid-change (bits
-arriving across a clock edge) is ignored.
+arriving across a clock edge) is ignored. It also checks that host pushes
+and pops and the controller's `TXP`/`PUSH` reach only their own FIFO
+channel.
 
 `test_uart.py` checks that every edge of a UART frame lands exactly one bit
 period apart, streams four bytes through a reference receiver, and runs TX and
-RX concurrently (full duplex) with frames deliberately misaligned.
+RX concurrently (full duplex) with frames deliberately misaligned, with RX
+bytes arriving on channel 1 only. Two transmitters at different bit rates
+stream their own channels at once. A burst-mode frame (start bit, three
+bytes back to back, parity over the last, stop bit) is checked bit by bit
+and replayed into a burst receiver that pushes each byte.
 
 `test_spi.py` runs a three-byte full-duplex transfer in each of SPI modes 0–3
 against a reference slave and checks both directions.

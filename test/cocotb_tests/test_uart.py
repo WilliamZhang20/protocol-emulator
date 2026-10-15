@@ -10,7 +10,7 @@ from cocotb_tests.fabric import (
     Bus, load_program, pop_rx, push_tx, rx_empty, select_channel, start_engine,
 )
 from cocotb_tests.protocols import (
-    UART_RX_PIN, UART_TX_PIN, uart_dual_transmit, uart_full_duplex,
+    UART_RX_PIN, UART_TX_PIN, framed_burst_loop, uart_dual_transmit, uart_full_duplex,
 )
 
 BIT = 24
@@ -136,3 +136,44 @@ async def test_fifo_channels_stream_independently(dut):
 
     listeners = [cocotb.start_soon(listen(k)) for k in range(2)]
     assert [await listener for listener in listeners] == streams
+
+
+@cocotb.test()
+async def test_burst_frames_words_without_inner_framing(dut):
+    """Burst mode: start bit, three bytes back to back, parity over the last
+    byte, stop bit. The transmitter's bit stream is checked bit by bit and
+    replayed into the receiver, which pushes each byte on its own."""
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    data = [0xA7, 0x3C, 0x01]
+    bits = [0]
+    for byte in data:
+        bits += [(byte >> i) & 1 for i in range(8)]
+    bits += [bin(data[-1]).count("1") & 1, 1]
+    await load_program(dut, framed_burst_loop(BIT, len(data)))
+    for byte in data:
+        await push_tx(dut, byte)
+    await start_engine(dut)
+
+    while bus.level(UART_TX_PIN):
+        await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, BIT // 2)
+    sent = []
+    for _ in bits:
+        sent.append(bus.level(UART_TX_PIN))
+        await ClockCycles(dut.clk, BIT)
+    assert sent == bits
+    for _ in range(3 * BIT):             # idle high after the stop bit
+        assert bus.level(UART_TX_PIN) == 1
+        await RisingEdge(dut.clk)
+
+    for level in bits + [1]:
+        bus.drive[UART_RX_PIN] = level
+        await ClockCycles(dut.clk, BIT)
+    await ClockCycles(dut.clk, 2 * BIT)
+    await select_channel(dut, 1)
+    received = []
+    while not await rx_empty(dut):
+        received.append(await pop_rx(dut))
+    assert received == data

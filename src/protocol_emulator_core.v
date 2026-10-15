@@ -34,6 +34,7 @@
 //   0x30      controller flags [1:0]
 //   0x31      [0] arm: tiles and pin outputs stay idle until armed, so a
 //             partially written configuration can never act
+//   0x32-0x33 shifter k burst register (shifter reg 4)
 
 //   0x40-0x5F glue cell addr[4:2], reg addr[1:0]
 //
@@ -245,8 +246,8 @@ module protocol_emulator_core (
 
   fabric_shifter shifter0 (
       .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && cfg_addr[7:2] == 6'b000100),
-      .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || cfg_addr == 8'h32)),
+      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
       .lines(lines),
       .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
       .tx_data(tx_data[7:0]),
@@ -259,8 +260,8 @@ module protocol_emulator_core (
 
   fabric_shifter shifter1 (
       .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && cfg_addr[7:2] == 6'b000101),
-      .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || cfg_addr == 8'h33)),
+      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
       .lines(lines),
       .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
       .tx_data(tx_data[15:8]),

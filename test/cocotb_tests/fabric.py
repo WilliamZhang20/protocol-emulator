@@ -196,6 +196,11 @@ class Px8:
         self.cfg(base + 1, frame)
         self.cfg(base + 2, shift | (sample << 6))
 
+    def shifter_burst(self, k: int, *, end: int) -> None:
+        """Burst mode: words follow each other with no pre/parity/post bits
+        until the word in which level line `end` has been high."""
+        self.cfg(0x32 + k, _level(end) | (1 << 5))
+
     def shifter_data(self, k: int, value: int) -> None:
         self.cfg(0x10 + 4 * k, value)
 

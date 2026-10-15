@@ -64,6 +64,32 @@ def uart_dual_transmit(bit_cycles: tuple[int, int], pins: tuple[int, int]) -> li
     return p.assemble()
 
 
+def framed_burst_loop(bit_cycles: int, words: int) -> list[int]:
+    """Burst mode on both shifters: a frame of one start bit, `words` bytes
+    back to back, even parity over the last byte, and one stop bit. Shifter
+    0 sends bytes pulled from channel 0 on the UART TX pin; shifter 1
+    receives the same framing on the RX pin and pushes every byte to
+    channel 1. Counter k counts shifter k's words and ends its burst."""
+    p = Px8()
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
+            start=shifter_active(0), stop=shifter_stop(0))
+    p.timer(1, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
+            start=pin_fall(UART_RX_PIN), stop=shifter_stop(1))
+    for k in range(2):
+        p.counter(k, match=words - 1, step=shifter_word(k))
+        p.shifter_burst(k, end=counter_ge(k))
+    p.shifter(0, pre=1, pre_val=0, post=1, post_val=1, parity=1, idle=1,
+              shift=timer_rise(0))
+    p.shifter(1, pre=1, post=1, parity=1, shift=timer_rise(1), sample=timer_rise(1))
+    p.pin_cell(UART_TX_PIN, src=shifter_out(0), mode=MODE_PUSH_PULL)
+    p.shifter_io(0, pull=True)
+    p.shifter_io(1, start=pin_fall(UART_RX_PIN),
+                 data_in=pin_level(UART_RX_PIN), push=True)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
 # ---------------------------------------------------------------------- SPI
 def spi_master(mode: int, half_cycles: int) -> list[int]:
     """Full-duplex SPI master, MSB first, any CPOL/CPHA. Timer 0 is SCK and

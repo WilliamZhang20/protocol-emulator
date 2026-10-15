@@ -73,6 +73,18 @@ MUTATIONS = (
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
+        "shifter_burst_end_forgotten", "fabric_shifter", "fabric_shifter.v",
+        "!(burst_end_seen || levels[burst[4:0]]);",
+        "!levels[burst[4:0]];",
+        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_burst_keeps_pre", "fabric_shifter", "fabric_shifter.v",
+        "        index     <= pre_n;",
+        "        index     <= 5'd0;",
+        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
         "counter_equal_restart", "fabric_counter", "fabric_counter.v",
         "default: next = data == last ? inc : 8'd1;",
         "default: next = data == last ? inc : 8'd0;",
