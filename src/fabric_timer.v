@@ -10,9 +10,11 @@
 //   1 phase   first interval - 1 after a start or resync
 //   2 ctl     [5:0] start line  [11:6] stop line  [12] idle level
 //             [13] pulse mode
-//   3 sync    [5:0] resync line  [11:6] hold line  [12] hold invert
+//   3 sync    [4:0] resync level  [5] resync enable
+//             [10:6] hold level   [11] hold enable  [12] hold invert
 //
-// Lines are indices into the fabric signal space. Priority per cycle:
+// Start/stop select any of the 64 lines; resync and hold select one of the
+// 32 level lines (signal space 32-63). Priority per cycle:
 // stop, start (only while stopped), resync (restart the interval at phase,
 // for clock recovery), hold (freeze while the output is high and the hold
 // line, optionally inverted, is high: clock stretching), then count.
@@ -41,10 +43,11 @@ module fabric_timer (
   wire idle  = ctl[12];
   wire pulse = ctl[13];
 
+  wire [31:0] levels = lines[63:32];
   wire stop_now   = lines[ctl[11:6]];
   wire start_now  = !run && lines[ctl[5:0]];
-  wire resync_now = run && lines[sync[5:0]];
-  wire hold       = out_r && (lines[sync[11:6]] ^ sync[12]);
+  wire resync_now = run && sync[5] && levels[sync[4:0]];
+  wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);
   wire tick = enable && run && !stop_now && !resync_now && !hold &&
               count == 16'd0;
 

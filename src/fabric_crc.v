@@ -8,8 +8,8 @@
 // Registers (16-bit, written by the controller):
 //   0/1 polynomial [15:0] / [31:16]
 //   2/3 check residue [15:0] / [31:16]
-//   4   [5:0] absorb line  [11:6] data line
-//   5   [5:0] emit line    [11:6] init line
+//   4   [5:0] absorb line  [10:6] data level (signal space 32-63)
+//   5   [5:0] emit line    [10:6] init pulse line (signal space 0-31)
 //   6   [4:0] width-1      [5] init to all ones
 //
 // Priority per cycle: init, absorb, emit. While the fabric is disarmed the
@@ -28,14 +28,28 @@ module fabric_crc (
 );
   reg [31:0] poly;
   reg [31:0] check;
-  reg [11:0] absorb_cfg;
-  reg [11:0] emit_cfg;
+  reg [10:0] absorb_cfg;
+  reg [10:0] emit_cfg;
   reg [5:0]  shape;
   reg [31:0] crc;
 
-  wire [31:0] mask = 32'hffffffff >> (5'd31 - shape[4:0]);
-  wire msb = crc[shape[4:0]];
-  wire feedback = msb ^ lines[absorb_cfg[11:6]];
+  // The width mask and top-bit select depend only on the shape register, so
+  // they are registered alongside it rather than decoded every cycle.
+  wire        shape_we   = cfg_we && cfg_addr == 3'd6;
+  wire [4:0]  width_next = shape_we ? cfg_data[4:0] : shape[4:0];
+  reg  [31:0] mask;
+  reg  [31:0] top;
+  always @(posedge clk) begin
+    if (!rst_n) begin
+      mask <= 32'd1;
+      top  <= 32'd1;
+    end else begin
+      mask <= 32'hffffffff >> (5'd31 - width_next);
+      top  <= 32'd1 << width_next;
+    end
+  end
+  wire msb = |(crc & top);
+  wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];
   wire [31:0] shifted = crc << 1;
 
   assign out   = !msb;
@@ -46,8 +60,8 @@ module fabric_crc (
     if (!rst_n) begin
       poly       <= 32'd0;
       check      <= 32'd0;
-      absorb_cfg <= 12'd0;
-      emit_cfg   <= 12'd0;
+      absorb_cfg <= 11'd0;
+      emit_cfg   <= 11'd0;
       shape      <= 6'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
@@ -55,8 +69,8 @@ module fabric_crc (
         3'd1: poly[31:16] <= cfg_data;
         3'd2: check[15:0]  <= cfg_data;
         3'd3: check[31:16] <= cfg_data;
-        3'd4: absorb_cfg <= cfg_data[11:0];
-        3'd5: emit_cfg   <= cfg_data[11:0];
+        3'd4: absorb_cfg <= cfg_data[10:0];
+        3'd5: emit_cfg   <= cfg_data[10:0];
         3'd6: shape      <= cfg_data[5:0];
         default: begin end
       endcase
@@ -66,7 +80,7 @@ module fabric_crc (
   always @(posedge clk) begin
     if (!rst_n)
       crc <= 32'd0;
-    else if (!enable || lines[emit_cfg[11:6]])
+    else if (!enable || lines[{1'b0, emit_cfg[10:6]}])
       crc <= shape[5] ? mask : 32'd0;
     else if (lines[absorb_cfg[5:0]])
       crc <= (shifted ^ (feedback ? poly : 32'd0)) & mask;

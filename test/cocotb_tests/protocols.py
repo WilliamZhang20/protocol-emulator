@@ -7,7 +7,7 @@ values absorb a fixed, documented latency.
 """
 
 from cocotb_tests.fabric import (
-    CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RUN_ONES, ZERO,
+    CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RUN_ONES,
     Px8, counter_ge, fire, flag, glue, pin_fall, pin_level,
     pin_rise, rd_shifter_data, rd_shifter_status, shifter_active, shifter_out,
     shifter_stop, shifter_word, timer_fall, timer_out, timer_rise, truth,
@@ -364,7 +364,7 @@ def ethernet_10baset_link(frame_bytes: int) -> list[int]:
 
     def link_pins() -> None:
         p.pin_cell(ETH_TD_P, src=timer_out(2), mode=MODE_PUSH_PULL)
-        p.pin_cell(ETH_TD_N, src=ZERO, mode=MODE_PUSH_PULL)
+        p.pin_cell(ETH_TD_N, cpu=True, mode=MODE_PUSH_PULL)   # controller pin, held 0
 
     def wait_16ms() -> None:
         p.clrev()

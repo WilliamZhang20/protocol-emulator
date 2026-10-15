@@ -58,6 +58,13 @@ sticky flags. The other lines are levels.
 | 54, 55 | controller flags 0, 1 |
 | 56 + k | glue cell k output |
 
+Selects come in three kinds, chosen per input by what it can ever need:
+**full** (6-bit, any line), **level** (5-bit, lines 32–63) and **pulse**
+(5-bit, lines 0–31, which include the constants). Narrowing 49 of the 75
+selects to 32-way cut combinational logic area by 17%, with no loss for any
+program here. Level-only inputs that also need an "off" state (timer hold
+and resync) carry an explicit enable bit.
+
 The timing rules are simple and fixed:
 
 - **Pulses** cost one cycle per hop.
@@ -98,7 +105,7 @@ tile's period and select registers while it is stopped.
 | 0 | `reload` (period − 1) |
 | 1 | `phase` (first interval − 1 after a start or resync) |
 | 2 | `[5:0]` start line, `[11:6]` stop line, `[12]` idle level, `[13]` pulse mode |
-| 3 | `[5:0]` resync line, `[11:6]` hold line, `[12]` hold invert |
+| 3 | `[4:0]` resync level, `[5]` resync enable, `[10:6]` hold level, `[11]` hold enable, `[12]` hold invert |
 
 Priority per cycle: stop, start (only while stopped), resync (restart the
 interval at `phase`, for clock recovery), hold (freeze while the output is
@@ -113,8 +120,12 @@ pulse mode reports every tick as a rise.
 | 0 | transmit word (ignored while active) |
 | 1 | `[3:0]` length − 1 (1..16), `[5:4]` pre count, `[6]` pre value, `[8:7]` post count, `[9]` post value, `[11:10]` parity (none/even/odd), `[12]` MSB first, `[13]` lead, `[14]` end on sample, `[15]` idle level |
 | 2 | `[5:0]` shift line, `[11:6]` sample line |
-| 3 | `[5:0]` start line, `[11:6]` input line, `[12]` auto-pull TX FIFO, `[13]` auto-push RX FIFO |
+| 3 | `[5:0]` start line, `[10:6]` input level, `[11]` auto-pull TX FIFO, `[12]` auto-push RX FIFO |
 
+- The output bit is a register. The next bit for each case (hold, advance,
+  new frame) is precomputed, and the shift line only selects among them, so
+  downstream paths start at a flop. Frame boundaries are registered
+  alongside the frame register.
 - Frames are `[pre][data][parity][post]`. Data bits land in `rx_data` at
   their natural position. Parity and post bits (stop bit, I2C ACK) are
   captured in `status[3:0]`.
@@ -129,8 +140,8 @@ pulse mode reports every tick as a rise.
 | Reg | Field |
 | --- | --- |
 | 0 | `[7:0]` threshold |
-| 1 | `[5:0]` step line, `[11:6]` data line, `[13:12]` mode |
-| 2 | `[5:0]` clear line (priority over step) |
+| 1 | `[5:0]` step line, `[10:6]` data level, `[12:11]` mode |
+| 2 | `[4:0]` clear pulse line (priority over step) |
 
 Modes: 0 count steps; 1 run of ones (data 0 clears); 2 run of zeros; 3 run
 of equal bits (a change restarts at 1). The count saturates at 255. The
@@ -144,8 +155,8 @@ CAN bit stuffing.
 | --- | --- |
 | 0, 1 | polynomial `[15:0]`, `[31:16]` |
 | 2, 3 | check residue `[15:0]`, `[31:16]` |
-| 4 | `[5:0]` absorb line, `[11:6]` data line |
-| 5 | `[5:0]` emit line, `[11:6]` init line |
+| 4 | `[5:0]` absorb line, `[10:6]` data level |
+| 5 | `[5:0]` emit line, `[10:6]` init pulse line |
 | 6 | `[4:0]` width − 1 (1..32), `[5]` init to all ones |
 
 A bit-serial LFSR in wire order. *Absorb* folds in a data bit. *Emit*
@@ -159,9 +170,13 @@ fabric is disarmed the register holds its init value.
 | Reg | Field |
 | --- | --- |
 | 0 | truth table, indexed by `{in3, in2, in1, in0}` |
-| 1 | `[5:0]` in0 line, `[11:6]` in1 line |
-| 2 | `[5:0]` in2 line, `[11:6]` in3 line |
-| 3 | `[5:0]` enable line, `[6]` registered |
+| 1 | `[5:0]` in0 line, `[11:6]` in1 line (any line) |
+| 2 | `[4:0]` in2 level, `[9:5]` in3 level |
+| 3 | `[4:0]` enable pulse line, `[5]` registered |
+
+Only inputs 0–1 accept pulse lines. The configuration helper moves pulse
+inputs there and permutes the truth table to match, so programs never
+notice.
 
 A registered cell loads its LUT output on cycles where the enable line is
 high. That makes it a D flip-flop with enable: NRZI state, a sampled
@@ -169,8 +184,9 @@ previous bit, an SE0 latch.
 
 ### Pin cells (×8), config `0x18 + p`
 
-`[5:0]` source line, `[6]` use controller pin, `[8:7]` mode (0 input,
-1 push-pull, 2 open-drain). Any line can drive any pin.
+`[4:0]` source level, `[5]` use controller pin, `[7:6]` mode (0 input,
+1 push-pull, 2 open-drain). Any level line can drive any pin. A constant 0
+is the controller pin left at 0.
 
 ## PX8 controller
 
@@ -311,18 +327,22 @@ idle.
 
   `mutation_check.py` confirms the harnesses reject eight representative
   RTL bugs.
-- Area: 15,421 generic yosys cells, against 18,961 for the earlier
-  CPU-based design. The eight glue cells are the largest block (~5.9k),
-  because of their 64-way input selects.
+- Area (liberty-mapped synthesis, IHP sg13cmos5l): about 194k µm². That
+  includes the register-output shifter and CRC changes, which traded about
+  12k µm² for shorter paths.
 
 ## Known limits and next steps
 
-- **Timing closure is unconfirmed.** The two-rank structure halves the
-  worst combinational path, but liberty-mapped synthesis ignores wires and
-  fanout buffering. For calibration, the earlier CPU design measured 4.7 ns
-  the same way yet failed 50 MHz signoff by 5.3 ns. Signoff STA from the GDS
-  flow decides; if 50 MHz does not close, 40 MHz (which 10BASE-T needs
-  anyway) is the natural target.
+- **Timing at signoff.** The first spatial fabric (v1, timers and shifters
+  only) passed the full GDS flow, including the gate-level test, with
+  +3.83 ns setup slack at 50 MHz in the slow corner (1.08 V, 125 °C). Its
+  critical path starts at the SRAM macro. The earlier CPU design failed the
+  same corner by 5.28 ns. For v2, the worst combinational path from abc
+  (typical corner, no wires) went from 12.7 ns to 5.1 ns through four
+  changes: two glue ranks, narrowed selects, a registered shifter output,
+  and registered CRC width decode. abc cannot see the SRAM or wires, so v2
+  signoff STA decides. If 50 MHz does not close, 40 MHz (which 10BASE-T
+  needs anyway) is the natural target.
 - **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
   did not converge on the 16-bit counters, and counter saturation at 255 is
   beyond the BMC depth.

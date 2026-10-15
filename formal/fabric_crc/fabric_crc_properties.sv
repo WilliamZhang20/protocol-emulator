@@ -31,7 +31,7 @@ module fabric_crc_properties;
   endfunction
 
   reg [31:0] poly_s = 32'd0, check_s = 32'd0;
-  reg [11:0] absorb_s = 12'd0, emit_s = 12'd0;
+  reg [10:0] absorb_s = 11'd0, emit_s = 11'd0;
   reg        ones_s = 1'b0;
   reg [31:0] r = 32'd0;      // reflected register
   reg        configured = 1'b0;
@@ -44,7 +44,7 @@ module fabric_crc_properties;
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
-      poly_s <= 32'd0; check_s <= 32'd0; absorb_s <= 12'd0; emit_s <= 12'd0;
+      poly_s <= 32'd0; check_s <= 32'd0; absorb_s <= 11'd0; emit_s <= 11'd0;
       ones_s <= 1'b0; r <= 32'd0; configured <= 1'b0;
     end else begin
       if (cfg_we) begin
@@ -53,16 +53,16 @@ module fabric_crc_properties;
           3'd1: poly_s[31:16] <= cfg_data;
           3'd2: check_s[15:0] <= cfg_data;
           3'd3: check_s[31:16] <= cfg_data;
-          3'd4: absorb_s <= cfg_data[11:0];
-          3'd5: emit_s <= cfg_data[11:0];
+          3'd4: absorb_s <= cfg_data[10:0];
+          3'd5: emit_s <= cfg_data[10:0];
           3'd6: begin ones_s <= cfg_data[5]; configured <= 1'b1; end
           default: begin end
         endcase
       end
-      if (!enable || lines[emit_s[11:6]])
+      if (!enable || lines[{1'b0, emit_s[10:6]}])
         r <= ones_s ? 32'hffffffff : 32'd0;
       else if (lines[absorb_s[5:0]])
-        r <= (r >> 1) ^ ((r[0] ^ lines[absorb_s[11:6]]) ? reverse(poly_s) : 32'd0);
+        r <= (r >> 1) ^ ((r[0] ^ lines[{1'b1, absorb_s[10:6]}]) ? reverse(poly_s) : 32'd0);
       else if (lines[emit_s[5:0]])
         r <= r >> 1;
     end

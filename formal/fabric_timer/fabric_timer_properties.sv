@@ -31,8 +31,9 @@ module fabric_timer_properties;
   reg [12:0] sync_s = 13'd0;
   wire stop   = lines[ctl_s[11:6]];
   wire start  = lines[ctl_s[5:0]];
-  wire resync = lines[sync_s[5:0]];
-  wire hold   = out && (lines[sync_s[11:6]] ^ sync_s[12]);
+  wire [31:0] levels = lines[63:32];
+  wire resync = sync_s[5] && levels[sync_s[4:0]];
+  wire hold   = out && sync_s[11] && (levels[sync_s[10:6]] ^ sync_s[12]);
 
   reg        r_run = 1'b0;
   reg        r_first = 1'b0;

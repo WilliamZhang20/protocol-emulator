@@ -32,13 +32,12 @@ module fabric_shifter_properties;
   // starting (the controller's programming rule).
   reg [15:0] frame_s = 16'd0, data_s = 16'd0;
   reg [11:0] step_s = 12'd0;
-  reg [13:0] io_s = 14'd0;
+  reg [12:0] io_s = 13'd0;
 
-  // Loop the selected input line back to the shifter's own output.
-  wire [5:0] in_sel = io_s[11:6];
+  // Loop the selected input level line back to the shifter's own output.
+  wire [5:0] in_sel = {1'b1, io_s[10:6]};
   wire [63:0] lines_raw = {lines_any[63:2], 1'b1, 1'b0};
-  wire [63:0] lines = (in_sel > 6'd1) ?
-      ((lines_raw & ~(64'd1 << in_sel)) | ({63'd0, out} << in_sel)) : lines_raw;
+  wire [63:0] lines = (lines_raw & ~(64'd1 << in_sel)) | ({63'd0, out} << in_sel);
 
   fabric_shifter dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
@@ -51,8 +50,8 @@ module fabric_shifter_properties;
   );
 
   wire start_pulse = active ? (word_pulse && !stop_pulse) :
-                     (enable && (io_s[5:0] != 6'd0 ? lines[io_s[5:0]] : io_s[12]) &&
-                      (!io_s[12] || tx_grant));
+                     (enable && (io_s[5:0] != 6'd0 ? lines[io_s[5:0]] : io_s[11]) &&
+                      (!io_s[11] || tx_grant));
   always @(*) if (rst_n && cfg_we && cfg_addr != 2'd0) assume(!active && !start_pulse);
 
   wire [4:0] len  = {1'b0, frame_s[3:0]} + 5'd1;
@@ -106,23 +105,23 @@ module fabric_shifter_properties;
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
-      frame_s <= 16'd0; step_s <= 12'd0; data_s <= 16'd0; io_s <= 14'd0;
+      frame_s <= 16'd0; step_s <= 12'd0; data_s <= 16'd0; io_s <= 13'd0;
       word <= 16'd0;
       r_idx <= 5'd0; r_lead <= 1'b0; r_sampled <= 16'd0;
     end else begin
       if (cfg_we) begin
         case (cfg_addr)
-          2'd0: if (!active && !(start_pulse && io_s[12])) data_s <= cfg_data;
+          2'd0: if (!active && !(start_pulse && io_s[11])) data_s <= cfg_data;
           2'd1: frame_s <= cfg_data;
           2'd2: step_s <= cfg_data[11:0];
-          default: io_s <= cfg_data[13:0];
+          default: io_s <= cfg_data[12:0];
         endcase
       end
-      if (start_pulse && io_s[12])
+      if (start_pulse && io_s[11])
         data_s <= {8'd0, tx_data};   // a pulled byte replaces the data word
       if (start_pulse) begin
         // A data write in the start cycle is the word sent (unless pulling).
-        word <= io_s[12] ? {8'd0, tx_data} :
+        word <= io_s[11] ? {8'd0, tx_data} :
                 (cfg_we && cfg_addr == 2'd0 && !active) ? cfg_data : data_s;
         r_idx <= 5'd0; r_lead <= lead; r_sampled <= 16'd0;
       end else if (active) begin
@@ -141,9 +140,9 @@ module fabric_shifter_properties;
   reg [15:0] past_word;
   always @(posedge clk) begin
     past_valid <= rst_n;
-    past_check <= word_pulse && in_sel > 6'd1 && (sampled_now & len_mask) == len_mask;
-    past_push_check <= word_pulse && io_s[13];
-    past_overrun_case <= word_pulse && io_s[13] && rx_request && !rx_grant;
+    past_check <= word_pulse && (sampled_now & len_mask) == len_mask;
+    past_push_check <= word_pulse && io_s[12];
+    past_overrun_case <= word_pulse && io_s[12] && rx_request && !rx_grant;
     past_rx_hold <= enable && rx_request && !rx_grant;
     past_word <= word;
   end
@@ -174,7 +173,7 @@ module fabric_shifter_properties;
     if (rst_n) begin
       cover(word_pulse && has_par && npre == 2'd1 && npost == 2'd1 && len == 5'd8);
       cover(word_pulse && lead && end_on_sample && frame_s[12]);
-      cover(word_pulse && !stop_pulse && io_s[12]);   // gapless restart
+      cover(word_pulse && !stop_pulse && io_s[11]);   // gapless restart
     end
   end
 endmodule

@@ -26,8 +26,9 @@
 // Config map (controller WCF address):
 //   0x00-0x0F timer addr[3:2], reg addr[1:0]
 //   0x10-0x17 shifter addr[2], reg addr[1:0]
-//   0x18-0x1F pin p: [5:0] source line, [6] controller pin, [8:7] mode
-//             mode: 0 input, 1 push-pull, 2 open-drain, 3 push-pull
+//   0x18-0x1F pin p: [4:0] source level (signal space 32-63),
+//             [5] controller pin, [7:6] mode: 0 input, 1 push-pull,
+//             2 open-drain, 3 push-pull
 //   0x20-0x27 counter addr[2], reg addr[1:0]
 //   0x28-0x2E CRC reg addr[2:0]
 //   0x30      controller flags [1:0]
@@ -217,7 +218,7 @@ module protocol_emulator_core (
       fabric_counter tile (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:3] == 5'b00100 && cfg_addr[2] == k),
-          .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data[13:0]),
+          .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data[12:0]),
           .lines(lines),
           .ge(c_ge[k]), .hit(c_hit[k]), .count(count)
       );
@@ -283,7 +284,7 @@ module protocol_emulator_core (
   );
 
   // ------------------------------------------------------------- pin cells
-  reg [8:0] pin_cfg [0:7];
+  reg [7:0] pin_cfg [0:7];
   reg [7:0] cpu_pins;
   reg [7:0] out_q;
   reg [7:0] oe_q;
@@ -291,9 +292,9 @@ module protocol_emulator_core (
   always @(posedge clk) begin
     if (!rst_n) begin
       for (r = 0; r < 8; r = r + 1)
-        pin_cfg[r] <= 9'd0;
+        pin_cfg[r] <= 8'd0;
     end else if (cfg_we && cfg_addr[7:3] == 5'b00011) begin
-      pin_cfg[cfg_addr[2:0]] <= cfg_data[8:0];
+      pin_cfg[cfg_addr[2:0]] <= cfg_data[7:0];
     end
   end
 
@@ -301,7 +302,7 @@ module protocol_emulator_core (
   integer m;
   always @(*) begin
     for (m = 0; m < 8; m = m + 1)
-      pin_value[m] = pin_cfg[m][6] ? cpu_pins[m] : lines[pin_cfg[m][5:0]];
+      pin_value[m] = pin_cfg[m][5] ? cpu_pins[m] : lines[{1'b1, pin_cfg[m][4:0]}];
   end
 
   // Every pin output is registered: one uniform cycle of output latency and
@@ -320,7 +321,7 @@ module protocol_emulator_core (
       oe_q  <= 8'd0;
     end else begin
       for (p = 0; p < 8; p = p + 1) begin
-        case (pin_cfg[p][8:7])
+        case (pin_cfg[p][7:6])
           2'd0: begin out_q[p] <= 1'b0; oe_q[p] <= 1'b0; end
           2'd2: begin out_q[p] <= 1'b0; oe_q[p] <= !pin_value[p]; end
           default: begin out_q[p] <= pin_value[p]; oe_q[p] <= 1'b1; end

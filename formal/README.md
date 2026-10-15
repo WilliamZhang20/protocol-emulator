@@ -43,11 +43,12 @@ The tile targets are BMC + cover. Unbounded PDR did not converge on the
 counter saturation at 255 lies beyond the BMC depth.
 
 Each target also has a cover task so its important scenario is demonstrably
-reachable. `make formal` runs `mutation-check` last. That script makes eight
+reachable. `make formal` runs `mutation-check` last. That script makes nine
 temporary RTL variants and requires the focused BMC targets to reject a FIFO
-count reversal, a timer reload off-by-one, an ignored clock-stretch hold, a
-shifter bit-order bug, a parity polarity flip, a lost overrun flag, a wrong
-run-of-equal restart value, and a CRC feedback that ignores data. The
+count reversal, a timer reload off-by-one, an ignored clock-stretch hold,
+shifter bit-order bugs on transmit and receive, a parity polarity flip, a
+lost overrun flag, a wrong run-of-equal restart value, and a CRC feedback
+that ignores data. The
 repository RTL is never modified by the mutation run.
 
 ## Adding a block

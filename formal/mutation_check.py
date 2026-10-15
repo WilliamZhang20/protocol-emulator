@@ -44,20 +44,26 @@ MUTATIONS = (
     ),
     Mutation(
         "timer_hold_ignored", "fabric_timer", "fabric_timer.v",
-        "wire hold       = out_r && (lines[sync[11:6]] ^ sync[12]);",
+        "wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);",
         "wire hold       = 1'b0;",
         ("fabric_timer.v",), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
-        "shifter_bit_order", "fabric_shifter", "fabric_shifter.v",
+        "shifter_rx_bit_order", "fabric_shifter", "fabric_shifter.v",
         "wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;",
         "wire [3:0] data_pos = data_pos_raw;",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
+        "shifter_tx_bit_order", "fabric_shifter", "fabric_shifter.v",
+        "frame_bit_at = w[msb_first ? (frame[3:0] - raw) : raw];",
+        "frame_bit_at = w[raw];",
+        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
         "shifter_parity_polarity", "fabric_shifter", "fabric_shifter.v",
-        "wire parity_bit = (^(tx_word & len_mask)) ^ parity[1];",
-        "wire parity_bit = (^(tx_word & len_mask)) ^ parity[0];",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity;",
+        "frame_bit_at = (^(w & len_mask)) ^ !odd_parity;",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
@@ -74,7 +80,7 @@ MUTATIONS = (
     ),
     Mutation(
         "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",
-        "wire feedback = msb ^ lines[absorb_cfg[11:6]];",
+        "wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];",
         "wire feedback = msb;",
         ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),

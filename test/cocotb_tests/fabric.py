@@ -60,6 +60,18 @@ RD_CRC_HI = 8
 COUNT_STEPS, RUN_ONES, RUN_ZEROS, RUN_EQUAL = range(4)
 
 
+def _level(line: int) -> int:
+    """Encode a level-only select (signal space 32-63)."""
+    assert 32 <= line < 64, f"line {line} is not a level line"
+    return line - 32
+
+
+def _pulse(line: int) -> int:
+    """Encode a pulse-only select (signal space 0-31, includes 0 and 1)."""
+    assert 0 <= line < 32, f"line {line} is not a pulse line"
+    return line
+
+
 def truth(fn, inputs: int = 4) -> int:
     """Truth table for a glue cell from a Python predicate over (in0..in3)."""
     table = 0
@@ -160,11 +172,17 @@ class Px8:
     # ------------------------------------------------------------- fabric
     def timer(self, k: int, *, reload: int, phase: int, start: int = ZERO,
               stop: int = ZERO, idle: int = 0, pulse: bool = False,
-              resync: int = ZERO, hold: int = ZERO, hold_invert: bool = False) -> None:
+              resync: int | None = None, hold: int | None = None,
+              hold_invert: bool = False) -> None:
         base = 4 * k
         self.cfg(base + 0, reload)
         self.cfg(base + 1, phase)
-        self.cfg(base + 3, resync | (hold << 6) | (int(hold_invert) << 12))
+        sync = 0
+        if resync is not None:
+            sync |= _level(resync) | (1 << 5)
+        if hold is not None:
+            sync |= (_level(hold) << 6) | (1 << 11) | (int(hold_invert) << 12)
+        self.cfg(base + 3, sync)
         self.cfg(base + 2, start | (stop << 6) | (idle << 12) | (int(pulse) << 13))
 
     def shifter(self, k: int, *, length: int = 8, pre: int = 0, pre_val: int = 0,
@@ -181,17 +199,19 @@ class Px8:
     def shifter_data(self, k: int, value: int) -> None:
         self.cfg(0x10 + 4 * k, value)
 
-    def shifter_io(self, k: int, *, start: int = ZERO, data_in: int = ZERO,
+    def shifter_io(self, k: int, *, start: int = ZERO, data_in: int | None = None,
                    pull: bool = False, push: bool = False) -> None:
-        self.cfg(0x10 + 4 * k + 3, start | (data_in << 6) | (int(pull) << 12) |
-                 (int(push) << 13))
+        data = 0 if data_in is None else _level(data_in)
+        self.cfg(0x10 + 4 * k + 3, start | (data << 6) | (int(pull) << 11) |
+                 (int(push) << 12))
 
-    def counter(self, k: int, *, match: int, step: int, data: int = ZERO,
+    def counter(self, k: int, *, match: int, step: int, data: int | None = None,
                 mode: int = COUNT_STEPS, clear: int = ZERO) -> None:
         base = 0x20 + 4 * k
+        level = 0 if data is None else _level(data)
         self.cfg(base + 0, match)
-        self.cfg(base + 2, clear)
-        self.cfg(base + 1, step | (data << 6) | (mode << 12))
+        self.cfg(base + 2, _pulse(clear))
+        self.cfg(base + 1, step | (level << 6) | (mode << 11))
 
     def crc(self, *, width: int, poly: int, check: int, absorb: int, data: int,
             emit: int = ZERO, init: int = ZERO, init_ones: bool = True) -> None:
@@ -202,20 +222,38 @@ class Px8:
         self.cfg(0x2A, check & 0xFFFF)
         self.cfg(0x2B, check >> 16)
         self.cfg(0x2E, (width - 1) | (int(init_ones) << 5))
-        self.cfg(0x2D, emit | (init << 6))
-        self.cfg(0x2C, absorb | (data << 6))
+        self.cfg(0x2D, emit | (_pulse(init) << 6))
+        self.cfg(0x2C, absorb | (_level(data) << 6))
 
     def glue(self, k: int, table: int, inputs: list[int], *,
              registered: bool = False, enable: int = ONE) -> None:
-        sel = list(inputs) + [ZERO] * (4 - len(inputs))
+        """Inputs 0-1 take any line, inputs 2-3 only level lines, so pulse
+        inputs are listed first (landing in slots 0-1) and the truth table is
+        permuted to match. Unused slots are don't-cares in the table."""
+        pulses = [i for i, line in enumerate(inputs) if line < 32]
+        levels = [i for i, line in enumerate(inputs) if line >= 32]
+        assert len(pulses) <= 2, "a glue cell takes at most two pulse inputs"
+        order = pulses + levels + [None] * (4 - len(inputs))   # slot -> input
+        permuted = 0
+        for index in range(16):
+            original = 0
+            for slot, source in enumerate(order):
+                if source is not None and (index >> slot) & 1:
+                    original |= 1 << source
+            if (table >> original) & 1:
+                permuted |= 1 << index
+        line = [ZERO if src is None else inputs[src] for src in order]
         base = 0x40 + 4 * k
-        self.cfg(base + 0, table)
-        self.cfg(base + 1, sel[0] | (sel[1] << 6))
-        self.cfg(base + 2, sel[2] | (sel[3] << 6))
-        self.cfg(base + 3, enable | (int(registered) << 6))
+        self.cfg(base + 0, permuted)
+        self.cfg(base + 1, line[0] | (line[1] << 6))
+        self.cfg(base + 2, (_level(line[2]) if order[2] is not None else 0) |
+                 ((_level(line[3]) if order[3] is not None else 0) << 5))
+        self.cfg(base + 3, _pulse(enable) | (int(registered) << 5))
 
-    def pin_cell(self, p: int, *, mode: int, src: int = ZERO, cpu: bool = False) -> None:
-        self.cfg(0x18 + p, src | (int(cpu) << 6) | (mode << 7))
+    def pin_cell(self, p: int, *, mode: int, src: int | None = None, cpu: bool = False) -> None:
+        """Drive pin p from a level line, or from the controller pin bit."""
+        level = 0 if src is None else _level(src)
+        self.cfg(0x18 + p, level | (int(cpu) << 5) | (mode << 6))
 
     def flags(self, value: int) -> None:
         self.cfg(0x30, value)
