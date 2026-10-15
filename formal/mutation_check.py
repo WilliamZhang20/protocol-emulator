@@ -44,8 +44,8 @@ MUTATIONS = (
     ),
     Mutation(
         "timer_hold_ignored", "fabric_timer", "fabric_timer.v",
-        "wire hold      = hold_en && out_r && !pins[hold_pin];",
-        "wire hold      = 1'b0;",
+        "wire hold       = out_r && (lines[sync[11:6]] ^ sync[12]);",
+        "wire hold       = 1'b0;",
         ("fabric_timer.v",), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
@@ -62,9 +62,21 @@ MUTATIONS = (
     ),
     Mutation(
         "shifter_overrun_lost", "fabric_shifter", "fabric_shifter.v",
-        "              overrun <= 1'b1;",
-        "              overrun <= 1'b0;",
+        "          overrun <= 1'b1;",
+        "          overrun <= 1'b0;",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "counter_equal_restart", "fabric_counter", "fabric_counter.v",
+        "default: next = data == last ? inc : 8'd1;",
+        "default: next = data == last ? inc : 8'd0;",
+        ("fabric_counter.v",), "fabric_counter_properties.sv", "fabric_counter_properties",
+    ),
+    Mutation(
+        "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",
+        "wire feedback = msb ^ lines[absorb_cfg[11:6]];",
+        "wire feedback = msb;",
+        ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),
 )
 

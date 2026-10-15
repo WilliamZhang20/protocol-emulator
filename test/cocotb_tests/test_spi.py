@@ -58,7 +58,7 @@ async def run_mode(dut, mode: int) -> None:
     bus = Bus(dut)
     sent = [0xA5, 0x3C, 0x81]
     replies = [0x5A, 0xC3, 0x7E]
-    await load_program(dut, spi_master(mode, HALF, len(sent)))
+    await load_program(dut, spi_master(mode, HALF))
     for byte in sent:
         await push_tx(dut, byte)
     seen: list[int] = []

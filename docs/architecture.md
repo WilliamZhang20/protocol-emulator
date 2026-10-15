@@ -3,147 +3,174 @@
 ## Idea
 
 Most programmable protocol engines are temporal: a processor executes one
-instruction after another and protocol timing is the sum of instruction
-latencies. This design is spatial. Bit-level behavior is built by wiring
-small hardware tiles together once, and the configured circuit then runs
-every clock cycle with no instruction fetch at all.
+instruction after another, and protocol timing is the sum of instruction
+latencies. This design is spatial. Bit-level behavior is built by connecting
+hardware tiles once, and the configured circuit then runs every clock cycle
+with no instruction fetch.
 
-- **Tiles** do the bit-level work: timers make clocks, baud ticks and
-  timeouts; shifters frame, serialize, sample and deserialize; pin cells
-  route a tile to a pad as push-pull or open-drain.
-- **A registered event bus** connects them. A tile's trigger inputs are
-  5-bit selects onto 32 event lines, so "SCK falling edge advances the
-  shifter" is a configuration value, not code.
+- **Coarse tiles** do the expensive, common work: timers (clocks, baud
+  ticks, timeouts, clock recovery), shifters (framing, serialization,
+  sampling), counters (run lengths, frame counts), and a CRC engine.
+- **Glue cells** (a 4-input LUT plus an optional flip-flop) supply the
+  per-bit logic the coarse tiles do not: NRZI, Manchester, stuffing gates,
+  line-state decoding, inversions.
+- **One signal space** connects everything. Every tile input is a 6-bit
+  select over 64 lines, so "the SCK falling edge advances the shifter" is a
+  configuration value, not code.
 - **A small controller (PX8)** writes the configuration and makes
-  transaction-level decisions (I2C START/STOP/ACK handling, byte counts).
-  It never touches bit timing.
+  transaction-level decisions (I2C START/STOP, EOP sequencing, CRC verdicts).
+  It never times a bit.
 
-UART, SPI, and I2C differ only in configuration words held in SRAM. There is
-no protocol-specific RTL.
+UART, SPI, I2C, PS/2, low-speed USB, and 10BASE-T transmit are all
+configurations in SRAM. There is no protocol-specific RTL.
 
 ```text
-                         host link (ui/uo) ── SRAM 1024x8 ── PX8 controller
-                                   │                             │ cfg / rd / wait
-                                TX FIFO   RX FIFO                ▼
-                                   │        ▲        ┌──── config registers ────┐
-                                   ▼        │        ▼                          ▼
- events[31:0] ◀─ reg ◀─┬─ timer 0..3  (rise/fall)   shifter 0..1 (start/done)
-     │                 └─ pin 0..7 rise/fall (2-flop synchronized)
-     └──────▶ every tile's start / stop / shift / sample select
-                                   │                      │
-                                pin cells: source × {input, push-pull, open-drain}
-                                   │ (registered)
-                                 uio[7:0]
+host link (ui/uo) ── SRAM 1024x8 ── PX8 controller ── cfg / readback / wait
+        │                                   │
+     TX FIFO ─────┐               ┌─────────┴──────────┐
+     RX FIFO ◀──┐ │               ▼                    ▼
+                │ │   ┌───────────── 64-line signal space ─────────────┐
+                │ └──▶│ timers ×4   shifters ×2   counters ×2   CRC ×1 │
+                └─────│ glue cells ×8 (LUT4+FF)   pin rise/fall/level  │
+                      └────────────────┬───────────────────────────────┘
+                                 pin cells ×8 (registered)
+                                       │
+                                    uio[7:0]
 ```
 
-## Why spatial
+## Signal space
 
-| Property | Temporal CPU (previous `cmos5l`) | Spatial fabric |
-| --- | --- | --- |
-| Bit timing | instruction-count accounting (`+11` per UART bit) | timer reload value, exact |
-| Concurrency | CPU + 2 lanes sharing pins, with claim scoreboards | every tile runs in parallel; ownership fixed by config |
-| Hazard logic | pin claims, launch scan, FIFO round-robin, stall rules | none needed; one pin cell selects one source |
-| Generic cells (yosys `synth`) | 18,961 | **4,363** (−77%) |
+Lines 2–31 are registered one-cycle pulses. The controller sees them through
+sticky flags. The other lines are levels.
 
-Two protocols at once falls out naturally: the full-duplex UART test runs an
-independent transmitter (timer 0 + shifter 0) and receiver (timer 1 +
-shifter 1) concurrently with the controller idle.
+| Line | Signal |
+| --- | --- |
+| 0, 1 | constant 0, constant 1 |
+| 2, 3 | controller `FIRE 0/1` |
+| 4 + 2k, 5 + 2k | timer k rise, fall |
+| 12 + 2k, 13 + 2k | shifter k word (every frame end), stop (went idle) |
+| 16 + p, 24 + p | pin p rise, fall (synchronized) |
+| 32 + p | pin p level (synchronized) |
+| 40 + k | timer k output |
+| 44 + k, 46 + k | shifter k output, active |
+| 48 + k, 50 + k | counter k ≥ threshold, hit (registered pulse) |
+| 52, 53 | CRC output bit, CRC matches check residue |
+| 54, 55 | controller flags 0, 1 |
+| 56 + k | glue cell k output |
 
-## Timing model
+The timing rules are simple and fixed:
 
-Everything is synchronous to `clk` (50 MHz target).
+- **Pulses** cost one cycle per hop.
+- **Pin outputs** are registered: one cycle of uniform latency, glitch-free.
+- **Inputs** pass a two-flop synchronizer.
 
-- **One cycle per hop.** Every event line is registered, so a tile reacts one
-  cycle after the event it selects. A configuration cannot form a
-  combinational loop, and every latency is a fixed number of cycles.
-- **Registered pins.** Pin outputs and output enables are registered after the
-  source mux: one cycle of uniform latency and glitch-free pads.
-- **Synchronized inputs.** Pins pass through a two-flop synchronizer; pin rise
-  and fall events come from the synchronized value.
+Programs absorb these latencies in timer phase values. Timing is exact and
+repeatable. For example, `test_10baset_frame` checks that every 10BASE-T
+half-bit is exactly 2 cycles.
 
-Programs absorb these fixed latencies in timer phase values. For example, the
-UART transmitter uses `phase = bit − 3` so that the start-bit length equals
-every other bit, and the receiver uses `phase = bit/2 − 2` to sample
-mid-bit after synchronizer and hop delays. `test_uart_tx_bit_period_is_exact`
-checks every edge interval of a frame to the cycle.
+**No combinational loops by construction.** Tile outputs depend only on
+their own registers, and glue cell k sees the *live* output of cells j < k
+but only the *registered* value of cells j ≥ k. No configuration can create
+a loop.
+
+**Arm.** Tiles and pin outputs stay idle until the program writes the arm
+bit (config `0x31`). A partially written configuration can therefore never
+act. Before arming, a counter whose threshold is still 0 reads as "≥". The
+10BASE-T test caught exactly that hazard before arming existed. Tiles can
+still be reconfigured after arming; the I2C master does this to hand pins
+between the controller and the fabric.
 
 ## Tiles
 
-All tile registers are 16 bits wide and written by the controller (`WCF`).
-Program reload, phase and ctl only while the tile is stopped. A start always
-uses the previously written phase.
+All tile registers are written by the controller (`WCF address`). Program a
+tile's period and select registers while it is stopped.
 
-### Timer tile (×4)
-
-A reload counter. After a start, the first tick comes `phase + 1` cycles
-later and then one every `reload + 1` cycles. In toggle mode the output flips
-on each tick and the tick is reported as a rise or fall event; in pulse mode
-the output stays idle and every tick is a rise event.
+### Timer (×4), config `0x00 + 4k`
 
 | Reg | Field |
 | --- | --- |
 | 0 | `reload` (period − 1) |
-| 1 | `phase` (first interval − 1) |
-| 2 | `[4:0]` start select, `[9:5]` stop select, `[10]` idle level, `[11]` pulse mode, `[14:12]` hold pin, `[15]` hold enable |
-| 3 | `[0]` start now, `[1]` stop now (strobes) |
+| 1 | `phase` (first interval − 1 after a start or resync) |
+| 2 | `[5:0]` start line, `[11:6]` stop line, `[12]` idle level, `[13]` pulse mode |
+| 3 | `[5:0]` resync line, `[11:6]` hold line, `[12]` hold invert |
 
-Stop has priority over start and tick. **Hold** implements clock stretching
-generically: while the output is high but the selected pin still reads low,
-the counter freezes, so a high phase is never shorter than programmed.
+Priority per cycle: stop, start (only while stopped), resync (restart the
+interval at `phase`, for clock recovery), hold (freeze while the output is
+high and the hold line, optionally inverted, is high; this implements I2C
+clock stretching), then count. Toggle mode flips the output on every tick;
+pulse mode reports every tick as a rise.
 
-### Shifter tile (×2)
-
-Emits and captures one framed word: `[pre bits][data bits][parity][post bits]`.
-The frame index advances on the shift event; the input pin is captured on the
-sample event. Separate shift and sample selects give every CPOL/CPHA
-combination and full duplex.
+### Shifter (×2), config `0x10 + 4k`
 
 | Reg | Field |
 | --- | --- |
 | 0 | transmit word (ignored while active) |
 | 1 | `[3:0]` length − 1 (1..16), `[5:4]` pre count, `[6]` pre value, `[8:7]` post count, `[9]` post value, `[11:10]` parity (none/even/odd), `[12]` MSB first, `[13]` lead, `[14]` end on sample, `[15]` idle level |
-| 2 | `[4:0]` shift select, `[9:5]` sample select, `[14:10]` start select |
-| 3 | `[2:0]` input pin, `[3]` auto-pull TX FIFO, `[4]` auto-push RX FIFO, `[5]` start now (strobe) |
+| 2 | `[5:0]` shift line, `[11:6]` sample line |
+| 3 | `[5:0]` start line, `[11:6]` input line, `[12]` auto-pull TX FIFO, `[13]` auto-push RX FIFO |
 
-- Data bits land in `rx_data` at their natural bit position, so an 8-bit word
-  is always `rx_data[7:0]` whatever the bit order. Parity and post bits (UART
-  stop bit, I2C ACK) are captured into `status[3:0]`, newest in bit 0.
-- **Lead** makes the first shift event present bit 0 (CPHA = 1). **End on
-  sample** finishes the frame on the last sample instead of the last shift.
-- With auto-pull and start select 0, the shifter starts whenever the TX FIFO
-  has a byte, so streams run back to back without controller involvement.
-- A completed receive waits in a one-byte push slot until the RX FIFO accepts
-  it. A second completion before then sets `status[14]` (overrun).
+- Frames are `[pre][data][parity][post]`. Data bits land in `rx_data` at
+  their natural position. Parity and post bits (stop bit, I2C ACK) are
+  captured in `status[3:0]`.
+- A new frame can start in the same cycle the previous one ends, so streams
+  are gapless. A start line of 0 with auto-pull means "start whenever the TX
+  FIFO has a byte". A start line of 1 means "run continuously".
+- A received word waits in a one-byte slot for the RX FIFO. A second word
+  before then sets `status[14]` (overrun).
 
-### Pin cells (×8)
+### Counter (×2), config `0x20 + 4k`
 
-Config `0x18 + p`: `[2:0]` source (0 controller, 1–4 timer 0–3, 5–6
-shifter 0–1, 7 zero) and `[4:3]` mode (0 input, 1 push-pull, 2 open-drain).
-Open-drain drives low for 0 and releases for 1. Pins reset to input and
-return to input whenever the engine is disabled.
-
-### Event bus
-
-| Index | Event |
+| Reg | Field |
 | --- | --- |
-| 0 | never |
-| 1 | always |
-| 2, 3 | controller `FIRE 0/1` |
-| 4 + 2k, 5 + 2k | timer k rise, fall |
-| 12, 13 | shifter 0 start, done |
-| 14, 15 | shifter 1 start, done |
-| 16 + p | pin p rise |
-| 24 + p | pin p fall |
+| 0 | `[7:0]` threshold |
+| 1 | `[5:0]` step line, `[11:6]` data line, `[13:12]` mode |
+| 2 | `[5:0]` clear line (priority over step) |
 
-The controller sees the bus through 32 sticky flags: `WEV e` waits for flag
-`e` and consumes it; `CLREV` clears all of them.
+Modes: 0 count steps; 1 run of ones (data 0 clears); 2 run of zeros; 3 run
+of equal bits (a change restarts at 1). The count saturates at 255. The
+counter exports a ≥-threshold level and a hit pulse on the step that first
+reaches the threshold. Run of ones is USB bit stuffing; run of equal bits is
+CAN bit stuffing.
+
+### CRC (×1), config `0x28`–`0x2E`
+
+| Reg | Field |
+| --- | --- |
+| 0, 1 | polynomial `[15:0]`, `[31:16]` |
+| 2, 3 | check residue `[15:0]`, `[31:16]` |
+| 4 | `[5:0]` absorb line, `[11:6]` data line |
+| 5 | `[5:0]` emit line, `[11:6]` init line |
+| 6 | `[4:0]` width − 1 (1..32), `[5]` init to all ones |
+
+A bit-serial LFSR in wire order. *Absorb* folds in a data bit. *Emit*
+shifts out the complemented register MSB first, which appends the FCS of
+USB, CAN, Ethernet and similar protocols. *OK* compares the register with a
+check residue (USB CRC16 `0x800D`, Ethernet CRC32 `0xC704DD7B`). While the
+fabric is disarmed the register holds its init value.
+
+### Glue cell (×8), config `0x40 + 4k`
+
+| Reg | Field |
+| --- | --- |
+| 0 | truth table, indexed by `{in3, in2, in1, in0}` |
+| 1 | `[5:0]` in0 line, `[11:6]` in1 line |
+| 2 | `[5:0]` in2 line, `[11:6]` in3 line |
+| 3 | `[5:0]` enable line, `[6]` registered |
+
+A registered cell loads its LUT output on cycles where the enable line is
+high. That makes it a D flip-flop with enable: NRZI state, a sampled
+previous bit, an SE0 latch.
+
+### Pin cells (×8), config `0x18 + p`
+
+`[5:0]` source line, `[6]` use controller pin, `[8:7]` mode (0 input,
+1 push-pull, 2 open-drain). Any line can drive any pin.
 
 ## PX8 controller
 
-One-byte instructions `{op[3:0], n[3:0]}`. Wider operands are built with
-Transputer-style prefixes: `opnd = O | n`, `PFIX` does `O = opnd << 4`, and
-every other instruction clears `O`. Each instruction takes 2 cycles (fetch +
-execute) plus any stall.
+One-byte instructions `{op, n}`. Wider operands are built with
+Transputer-style prefixes (`opnd = O | n`; `PFIX` does `O = opnd << 4`).
+Each instruction takes 2 cycles plus any stall.
 
 | op | Name | Effect |
 | --- | --- | --- |
@@ -157,50 +184,89 @@ execute) plus any stall.
 | 7 | `SETC` | `C = opnd` |
 | 8 | `WCF` | `cfg[opnd] = A` |
 | 9 | `RD` | `A = rd[opnd]` |
-| A | `WEV` | wait for sticky event `opnd`, consume it |
-| B | `FIRE` | pulse controller event `opnd[0]` |
+| A | `WEV` | wait for line `opnd`; pulse lines are sticky and consumed |
+| B | `FIRE` | pulse line `2 + opnd[0]` |
 | C | `PIN` | controller pin `n[2:0]` := `n[3]` |
 | D | `DLY` | stall `opnd` extra cycles |
-| E | `OPR` | `0` NOP, `1` HALT, `2` PULL (`A` = TX byte), `3` PUSH (RX = `A[7:0]`), `4` CLREV, `5` `A = C`, `6` `C = A` |
+| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A` |
 | F | `ANDC` | `A = A & opnd` |
 
-Readback (`RD`): 0 pins, 1/3 shifter 0/1 data, 2/4 shifter 0/1 status
-`{active, overrun, push pending, 9'b0, post bits[3:0]}`, 5 timers running,
-6/7 sticky flags `[15:0]`/`[31:16]`.
+Readback: 0 pins, 1/3 shifter data, 2/4 shifter status, 5/6 counter
+values, 7/8 CRC, 9/10 sticky flags. Config `0x30` sets controller flags
+`[1:0]`; `0x31` arms the fabric.
 
-Configuration addresses: `0x00–0x0F` timer `addr[3:2]` register `addr[1:0]`,
-`0x10–0x17` shifter `addr[2]` register `addr[1:0]`, `0x18–0x1F` pin cells.
+## Verified protocols
 
-## Protocol mappings
+All of these are in `test/cocotb_tests/protocols.py` and are checked
+against independent reference models through the top-level pins only.
 
-These live in `test/cocotb_tests/protocols.py`, built with the assembler in
-`test/cocotb_tests/fabric.py`.
+| Protocol | Tiles used | What is checked |
+| --- | --- | --- |
+| UART 8N1, full duplex | 2 timers, 2 shifters | every edge exactly one bit period; TX and RX concurrently |
+| SPI master, modes 0–3 | timer (SCK), shifter | full-duplex bytes against a reference slave |
+| I2C master | timer (SCL + hold), shifter, controller START/STOP | write, repeated START, read, ACK/NACK, clock stretching |
+| PS/2 receive | shifter clocked by the device | 11-bit frames with odd parity |
+| USB low speed, transmit | timer, shifter, 2 counters, CRC16, 8 glue cells | NRZI, bit stuffing (incl. in the CRC), CRC16, EOP; every transition on the bit grid |
+| USB low speed, receive | timer with resync, counter, CRC16, 6 glue cells | clock recovery from a 3% slow sender, destuffing, CRC16 residue verdict, bad-CRC detection |
+| 10BASE-T transmit (40 MHz clock) | timer, shifter, 2 counters, CRC32, 6 glue cells | Manchester with exact 2-cycle half bits, preamble/SFD, FCS equal to `zlib.crc32` |
+| 10BASE-T link pulses | 2 timers | exact 100 ns pulses at an exact period |
 
-**UART 8N1, full duplex.** TX: shifter 0 auto-pulls, frame `pre 1×0`,
-`post 1×1`, LSB first; its start event starts timer 0 (pulse mode), whose
-ticks shift. RX: a falling edge on the RX pin starts timer 1 (first tick
-mid-start-bit) and shifter 1. Each tick samples and shifts, and the frame
-auto-pushes. The controller just spins.
+### How USB transmit composes
 
-**SPI master, modes 0–3.** Timer 0 is SCK (toggle mode, idle = CPOL), started
-and stopped by shifter 0's start/done events. CPHA 0 samples on the leading
-edge and shifts on the trailing edge. CPHA 1 uses lead mode and ends on the
-last sample. The controller drives CS and counts done events.
+At each bit tick E, the NRZI glue cell latches the current bit X. X is a
+stuffed 0 if counter 0 (run of ones) has reached 6; otherwise it's the
+shifter bit, or the CRC bit once the shifter runs dry. Gated tick G = E and
+not stuffing: it advances the shifter and either absorbs (after SYNC/PID)
+or emits (after the data) in the CRC tile. Counter 1 counts emitted FCS
+bits. The controller then raises the SE0 flag, and a registered glue cell
+applies it at the next tick, never in place of a pending stuffed bit.
 
-**I2C master.** Timer 0 drives SCL open-drain, with hold on the SCL pin for
-clock stretching. Shifter 0 drives SDA open-drain, shifts on the timer fall,
-and samples on the *observed* SCL rise event (pin 1 rise). A 9-bit frame (8
-data + 1 post bit) carries the ACK both ways: post value 1 releases SDA so the
-slave's ACK is captured in `status[0]`, and post value 0/1 sends ACK/NACK
-after a read. START, repeated START and STOP are controller pin sequences
-that hand the pins back and forth by rewriting pin-cell sources. Releasing SCL
-waits for the SCL rise event, so a stretching slave is honored there too.
+### 10BASE-T scope
+
+- **Clock:** 10 Mb/s Manchester has 50 ns half bits, which needs a 40 MHz
+  (or 60/80 MHz) clock. At the 50 MHz design target a half bit would be 2.5
+  cycles.
+- **Analog front end:** TD± needs an external resistor network and pulse
+  transformer.
+- **Host bandwidth:** frames need a byte every 800 ns, faster than a typical
+  Tiny Tapeout host can feed the nibble link.
+- **Receive:** not attempted. It needs clock recovery at 2 samples per half
+  bit plus an analog receiver.
+
+## Programmability
+
+**Expressible:** framed serial protocols with any timing, bit order,
+parity, and pre/post bits; device-clocked or self-clocked links; clock
+stretching; edge-based clock recovery; NRZI and Manchester; bit stuffing;
+any CRC up to 32 bits. CAN (equal-bit stuffing, CRC15), JTAG, SWD and
+1-Wire fit the same tiles but are not yet tested.
+
+**Not expressible yet:**
+
+- **Long frames:** frames longer than 16 bits without controller refill.
+- **Bit-time arbitration:** CAN or I2C multi-master arbitration is
+  composable from glue cells but untested.
+- **Capacity:** more than 2 simultaneous streams. Both shifters share one
+  FIFO pair, and per-tile FIFO channels are the next step.
+- **Fast front ends:** anything that needs more than 2 samples per half bit
+  at the clock rate.
+
+**Versus an eFPGA:**
+
+- **Granularity:** this fabric is coarse. A 16-bit timer or a framed
+  shifter is one tile with about 60 config bits, where an eFPGA builds
+  everything from LUTs and pays mostly for routing.
+- **Timing:** every configuration meets the clock that was signed off once
+  at tapeout. There is no per-design place-and-route or timing closure.
+- **Reconfiguration:** a register write, possible mid-transaction.
+- **Generality:** the eight glue cells buy back most of the eFPGA's
+  flexibility for the per-bit logic coarse tiles miss.
 
 ## Host interface (unchanged boundary)
 
 The Tiny Tapeout host link, 1024×8 SRAM macro, and 4-deep TX/RX FIFOs keep
-their existing behavior. A command byte is presented on `ui_in` for one
-clock, followed by `8'h00`; the upper nibble is the command:
+their behavior. A command byte is presented on `ui_in` for one clock,
+followed by `8'h00`:
 
 | Command | Operation |
 | --- | --- |
@@ -215,28 +281,35 @@ clock, followed by `8'h00`; the upper nibble is the command:
 | `D` | Peek RX without popping |
 
 `HALT` makes the host clear `enable`, which returns every tile and pin to
-idle. Program memory is host-accessible only while stopped.
+idle.
 
 ## Verification
 
 - `make dead-check`: Verilator `-Wall` unused/undriven signals plus yosys
-  constant/never-active flip-flop detection. Currently 0 findings.
-- cocotb (pins and host commands only, so gate-level safe): exact UART bit
-  period, UART streaming, full-duplex UART, SPI modes 0–3 against a reference
-  slave, I2C write + repeated START + read, I2C clock stretching, I2C NACK.
-- Formal (`make formal`): timer tile against an independent cycle-count
-  model; shifter tile against an independently built frame model with a
-  loopback round-trip check; FIFO and SRAM proofs. `mutation_check.py`
-  confirms the harnesses reject six representative RTL bugs.
+  constant or never-active flip-flops (including `opt_dff -sat`). Currently
+  0 findings.
+- cocotb: 17 tests covering the protocols above, using pins and host
+  commands only, so they are gate-level safe.
+- Formal (`make formal`), each target against an independent reference:
+  - timer: a cycle-count model;
+  - shifter: a frame builder with a loopback round-trip check;
+  - counter: a per-mode reference;
+  - CRC: the mirror-image reflected LFSR;
+  - FIFO and SRAM: proofs.
+
+  `mutation_check.py` confirms the harnesses reject eight representative
+  RTL bugs.
+- Area: 15,421 generic yosys cells, against 18,961 for the earlier
+  CPU-based design. The eight glue cells are the largest block (~5.9k),
+  because of their 64-way input selects.
 
 ## Known limits and next steps
 
-- Tile counts (4 timers, 2 shifters) are a starting point. At about 4.4k
-  generic cells there is room for more tiles inside 6×4.
-- Both shifters share one TX/RX FIFO pair (fixed priority). Two simultaneous
-  streaming protocols need per-tile FIFO channels plus a host channel select.
-- Candidate generic tiles: CRC/LFSR fed by a shifter's bit stream (USB CRC5/16,
-  Ethernet CRC32), a run-length/pattern matcher (USB bit stuffing, 1-Wire
-  presence), and an NRZI/Manchester line coder.
-- The tile formal targets are BMC + cover. Unbounded PDR proofs did not
-  converge on the 16-bit counters within 15 minutes.
+- **Glue-cell timing:** combinational chains through glue cells add logic
+  depth. Signoff STA in the GDS flow should confirm 50 MHz with the longest
+  legal chain.
+- **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
+  did not converge on the 16-bit counters, and counter saturation at 255 is
+  beyond the BMC depth.
+- **Parallel streams:** per-shifter FIFO channels with a host channel select
+  would allow two independent streaming protocols at once.

@@ -4,11 +4,13 @@ export PATH := $(EDA_BIN):$(PROJECT_ROOT)/.venv/bin:$(PATH)
 PYTHON ?= $(PROJECT_ROOT)/.venv/bin/python
 SBY ?= $(if $(wildcard $(EDA_BIN)/sby),$(EDA_BIN)/sby,sby)
 BUILD_DIR ?= $(PROJECT_ROOT)/build/formal
-TARGETS := program_memory byte_fifo fabric_timer fabric_shifter
+TARGETS := program_memory byte_fifo fabric_timer fabric_shifter fabric_counter fabric_crc
 program_memory_TASKS := bmc prove cover
 byte_fifo_TASKS := bmc prove cover
 fabric_timer_TASKS := bmc cover
 fabric_shifter_TASKS := bmc cover
+fabric_counter_TASKS := bmc cover
+fabric_crc_TASKS := bmc cover
 
 .PHONY: all $(TARGETS) mutation-check clean list
 

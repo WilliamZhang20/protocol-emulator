@@ -1,28 +1,44 @@
 `default_nettype none
 
-// Spatial protocol engine. Bit-level timing is produced by a fabric of
-// statically configured tiles (4 timers, 2 shifters, 8 pin cells) that run
-// every cycle without instruction fetch. Tiles talk over a registered
-// 32-line event bus: every hop costs exactly one cycle, and no configuration
-// can form a combinational loop. A small PX8 controller configures the
-// fabric and makes transaction-level decisions.
+// Spatial protocol engine. Bit-level behavior comes from a fabric of
+// statically configured tiles that run every cycle without instruction
+// fetch: 4 timers, 2 shifters, 2 counters, 1 CRC, 8 glue cells (LUT4+FF),
+// and 8 pin cells. Every tile input is a 6-bit select into one 64-line
+// signal space. A small PX8 controller configures the fabric and makes
+// transaction-level decisions.
 //
-// Event bus (index = 5-bit select used by every tile):
-//   0 never   1 always   2-3 CPU FIRE 0/1
-//   4+2k / 5+2k  timer k rise / fall (k = 0..3)
-//   12/13 shifter 0 start/done   14/15 shifter 1 start/done
-//   16+p / 24+p  pin p rise / fall (synchronized)
+// Signal space (lines 2-31 are registered one-cycle pulses; the rest are
+// levels):
+//   0 zero   1 one   2-3 controller FIRE 0/1
+//   4+2k / 5+2k   timer k rise / fall          (k = 0..3)
+//   12+2k / 13+2k shifter k word / stop        (k = 0..1)
+//   16+p / 24+p   pin p rise / fall (synchronized)
+//   32+p          pin p level (synchronized)
+//   40+k timer k out    44+k shifter k out    46+k shifter k active
+//   48+k counter k >= threshold    50+k counter k hit (registered pulse)
+//   52 CRC out bit   53 CRC matches check   54-55 controller flags 0/1
+//   56+k glue cell k output
+//
+// Glue cell k sees the live output of cells j < k and the registered value
+// of cells j >= k, so no configuration can form a combinational loop.
 //
 // Config map (controller WCF address):
-//   0x00-0x0F timer k = addr[3:2], register addr[1:0]
-//   0x10-0x17 shifter k = addr[2], register addr[1:0]
-//   0x18-0x1F pin p = addr[2:0]: [2:0] source, [4:3] mode
-//     source: 0 CPU, 1-4 timer 0-3, 5 shifter 0, 6 shifter 1, 7 zero
-//     mode:   0 input, 1 push-pull, 2 open-drain, 3 push-pull
+//   0x00-0x0F timer addr[3:2], reg addr[1:0]
+//   0x10-0x17 shifter addr[2], reg addr[1:0]
+//   0x18-0x1F pin p: [5:0] source line, [6] controller pin, [8:7] mode
+//             mode: 0 input, 1 push-pull, 2 open-drain, 3 push-pull
+//   0x20-0x27 counter addr[2], reg addr[1:0]
+//   0x28-0x2E CRC reg addr[2:0]
+//   0x30      controller flags [1:0]
+//   0x31      [0] arm: tiles and pin outputs stay idle until armed, so a
+//             partially written configuration can never act
+
+//   0x40-0x5F glue cell addr[4:2], reg addr[1:0]
 //
 // Readback map (controller RD address):
 //   0 pins   1/3 shifter 0/1 rx data   2/4 shifter 0/1 status
-//   5 timers running   6/7 sticky events [15:0]/[31:16]
+//   5/6 counter 0/1 count   7/8 CRC [15:0]/[31:16]
+//   9/10 sticky pulses [15:0]/[31:16]
 module protocol_emulator_core (
     input  wire       clk,
     input  wire       rst_n,
@@ -61,10 +77,10 @@ module protocol_emulator_core (
   wire        cfg_we;
   wire [7:0]  cfg_addr;
   wire [15:0] cfg_data;
-  wire [2:0]  rd_addr;
+  wire [3:0]  rd_addr;
   reg  [15:0] rd_data;
   wire        event_consume;
-  wire [4:0]  event_index;
+  wire [5:0]  event_index;
   wire        clear_events;
   wire [1:0]  cpu_fire;
   wire        cpu_pin_we;
@@ -73,24 +89,69 @@ module protocol_emulator_core (
   wire        cpu_tx_request;
   wire        cpu_rx_request;
   wire [7:0]  cpu_rx_data;
-  reg  [31:2] event_reg;
-  wire [31:0] events = {event_reg, 1'b1, 1'b0};
-  // Lines 0/1 are constants, so only lines 2-31 need sticky flags.
-  reg  [31:2] sticky_reg;
-  wire [31:0] sticky = {sticky_reg, 1'b1, 1'b0};
+
+  // ------------------------------------------------------------ signal space
+  wire [3:0]  t_out, t_rise, t_fall;
+  wire [1:0]  s_out, s_active, s_word, s_stop;
+  wire [1:0]  c_ge, c_hit;
+  wire        crc_out, crc_ok;
+  wire [7:0]  lut_out, lut_q;
+  reg  [31:2] pulse_reg;
+  reg  [1:0]  hit_reg;
+  reg  [1:0]  flags;
+  reg         armed;
+  reg  [31:2] sticky;
+  wire        live = enable && armed;
+
+  wire [63:0] lines = {
+      lut_out,                   // 63:56
+      flags, crc_ok, crc_out,    // 55:52
+      hit_reg, c_ge,             // 51:48
+      s_active, s_out,           // 47:44
+      t_out,                     // 43:40
+      pin_sync,                  // 39:32
+      pulse_reg, 1'b1, 1'b0      // 31:0
+  };
+  wire [31:2] pulse_next = {
+      ~pin_sync & pin_prev,      // 31:24 pin fall
+      pin_sync & ~pin_prev,      // 23:16 pin rise
+      s_stop[1], s_word[1], s_stop[0], s_word[0],
+      t_fall[3], t_rise[3], t_fall[2], t_rise[2],
+      t_fall[1], t_rise[1], t_fall[0], t_rise[0],
+      cpu_fire
+  };
+  // Index 0/1 wraps to a shift of 30/31, which correctly clears nothing.
+  wire [31:2] consume_mask = (event_consume && !event_index[5]) ?
+      (30'd1 << (event_index[4:0] - 5'd2)) : 30'd0;
+  wire [31:0] sticky_view = {sticky, 1'b1, 1'b0};
+  wire event_ready = event_index[5] ? lines[event_index] :
+                                      sticky_view[event_index[4:0]];
+
+  always @(posedge clk) begin
+    if (!rst_n || !enable) begin
+      pulse_reg <= 30'd0;
+      hit_reg   <= 2'd0;
+      sticky    <= 30'd0;
+      flags     <= 2'd0;
+      armed     <= 1'b0;
+    end else begin
+      pulse_reg <= pulse_next;
+      hit_reg   <= c_hit;
+      sticky    <= clear_events ? 30'd0 :
+                   ((sticky & ~consume_mask) | pulse_reg);
+      if (cfg_we && cfg_addr == 8'h30)
+        flags <= cfg_data[1:0];
+      if (cfg_we && cfg_addr == 8'h31)
+        armed <= cfg_data[0];
+    end
+  end
 
   // ------------------------------------------------------------- arbitration
-  // Fixed priority, shifter 0 > shifter 1 > CPU. Ownership is normally
-  // static (one consumer per FIFO), so priority only matters if a program
-  // deliberately shares a queue.
-  wire [1:0] sh_tx_request;
-  wire [1:0] sh_rx_request;
-  wire [7:0] sh_rx_byte_0;
-  wire [7:0] sh_rx_byte_1;
-  wire [1:0] sh_tx_grant;
-  wire [1:0] sh_rx_grant;
-  wire       cpu_tx_grant;
-  wire       cpu_rx_grant;
+  // Fixed priority, shifter 0 > shifter 1 > controller.
+  wire [1:0] sh_tx_request, sh_rx_request;
+  wire [7:0] sh_rx_byte_0, sh_rx_byte_1;
+  wire [1:0] sh_tx_grant, sh_rx_grant;
+  wire       cpu_tx_grant, cpu_rx_grant;
   assign sh_tx_grant[0] = sh_tx_request[0] && !tx_empty;
   assign sh_tx_grant[1] = sh_tx_request[1] && !sh_tx_request[0] && !tx_empty;
   assign cpu_tx_grant   = cpu_tx_request && !(|sh_tx_request) && !tx_empty;
@@ -114,7 +175,7 @@ module protocol_emulator_core (
       .cfg_data(cfg_data),
       .rd_addr(rd_addr),
       .rd_data(rd_data),
-      .event_ready(sticky[event_index]),
+      .event_ready(event_ready),
       .event_consume(event_consume),
       .event_index(event_index),
       .clear_events(clear_events),
@@ -132,149 +193,125 @@ module protocol_emulator_core (
   );
 
   // ------------------------------------------------------------------ tiles
-  wire [3:0] t_out;
-  wire [3:0] t_rise;
-  wire [3:0] t_fall;
-  wire [3:0] t_running;
   genvar k;
   generate
     for (k = 0; k < 4; k = k + 1) begin : timer
       fabric_timer tile (
-          .clk(clk),
-          .rst_n(rst_n),
-          .enable(enable),
+          .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:4] == 4'h0 && cfg_addr[3:2] == k),
-          .cfg_addr(cfg_addr[1:0]),
-          .cfg_data(cfg_data),
-          .events(events),
-          .pins(pin_sync),
-          .out(t_out[k]),
-          .rise(t_rise[k]),
-          .fall(t_fall[k]),
-          .running(t_running[k])
+          .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+          .lines(lines),
+          .out(t_out[k]), .rise(t_rise[k]), .fall(t_fall[k])
+      );
+    end
+
+    for (k = 0; k < 2; k = k + 1) begin : counter
+      wire [7:0] count;
+      fabric_counter tile (
+          .clk(clk), .rst_n(rst_n), .enable(live),
+          .cfg_we(cfg_we && cfg_addr[7:3] == 5'b00100 && cfg_addr[2] == k),
+          .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data[13:0]),
+          .lines(lines),
+          .ge(c_ge[k]), .hit(c_hit[k]), .count(count)
+      );
+    end
+
+    // Cell k: live outputs of cells below it, registered values above.
+    for (k = 0; k < 8; k = k + 1) begin : glue
+      wire [7:0] view;
+      if (k == 0) begin : first
+        assign view = lut_q;
+      end else begin : rest
+        assign view = {lut_q[7:k], lut_out[k-1:0]};
+      end
+      fabric_lut tile (
+          .clk(clk), .rst_n(rst_n), .enable(live),
+          .cfg_we(cfg_we && cfg_addr[7:5] == 3'b010 && cfg_addr[4:2] == k),
+          .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+          .lines({view, lines[55:0]}),
+          .out(lut_out[k]), .q(lut_q[k])
       );
     end
   endgenerate
 
-  wire [1:0]  s_out;
-  wire [1:0]  s_start;
-  wire [1:0]  s_done;
-  wire [15:0] s_rx_data_0, s_rx_data_1;
-  wire [15:0] s_status_0, s_status_1;
+  wire [15:0] s_rx_data_0, s_rx_data_1, s_status_0, s_status_1;
 
   fabric_shifter shifter0 (
-      .clk(clk),
-      .rst_n(rst_n),
-      .enable(enable),
+      .clk(clk), .rst_n(rst_n), .enable(live),
       .cfg_we(cfg_we && cfg_addr[7:2] == 6'b000100),
-      .cfg_addr(cfg_addr[1:0]),
-      .cfg_data(cfg_data),
-      .events(events),
-      .pins(pin_sync),
-      .tx_request(sh_tx_request[0]),
-      .tx_grant(sh_tx_grant[0]),
+      .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+      .lines(lines),
+      .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
       .tx_data(tx_data),
-      .rx_request(sh_rx_request[0]),
-      .rx_grant(sh_rx_grant[0]),
+      .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
       .rx_byte(sh_rx_byte_0),
-      .out(s_out[0]),
-      .start_pulse(s_start[0]),
-      .done_pulse(s_done[0]),
-      .rx_data(s_rx_data_0),
-      .status(s_status_0)
+      .out(s_out[0]), .active(s_active[0]),
+      .word_pulse(s_word[0]), .stop_pulse(s_stop[0]),
+      .rx_data(s_rx_data_0), .status(s_status_0)
   );
 
   fabric_shifter shifter1 (
-      .clk(clk),
-      .rst_n(rst_n),
-      .enable(enable),
+      .clk(clk), .rst_n(rst_n), .enable(live),
       .cfg_we(cfg_we && cfg_addr[7:2] == 6'b000101),
-      .cfg_addr(cfg_addr[1:0]),
-      .cfg_data(cfg_data),
-      .events(events),
-      .pins(pin_sync),
-      .tx_request(sh_tx_request[1]),
-      .tx_grant(sh_tx_grant[1]),
+      .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+      .lines(lines),
+      .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
       .tx_data(tx_data),
-      .rx_request(sh_rx_request[1]),
-      .rx_grant(sh_rx_grant[1]),
+      .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),
       .rx_byte(sh_rx_byte_1),
-      .out(s_out[1]),
-      .start_pulse(s_start[1]),
-      .done_pulse(s_done[1]),
-      .rx_data(s_rx_data_1),
-      .status(s_status_1)
+      .out(s_out[1]), .active(s_active[1]),
+      .word_pulse(s_word[1]), .stop_pulse(s_stop[1]),
+      .rx_data(s_rx_data_1), .status(s_status_1)
   );
 
-  // -------------------------------------------------------------- event bus
-  wire [31:2] events_next = {
-      ~pin_sync & pin_prev,                       // 31:24 pin fall
-      pin_sync & ~pin_prev,                       // 23:16 pin rise
-      s_done[1], s_start[1], s_done[0], s_start[0],
-      t_fall[3], t_rise[3], t_fall[2], t_rise[2],
-      t_fall[1], t_rise[1], t_fall[0], t_rise[0],
-      cpu_fire
-  };
-  // Index 0/1 wraps to a shift of 30/31, which correctly clears nothing.
-  wire [31:2] consume_mask = event_consume ?
-      (30'd1 << (event_index - 5'd2)) : 30'd0;
-  wire [31:2] sticky_next = clear_events ? 30'd0 :
-      ((sticky_reg & ~consume_mask) | event_reg);
-  always @(posedge clk) begin
-    if (!rst_n || !enable) begin
-      event_reg  <= 30'd0;
-      sticky_reg <= 30'd0;
-    end else begin
-      event_reg <= events_next;
-      sticky_reg <= sticky_next;
-    end
-  end
+  wire [31:0] crc_value;
+  fabric_crc crc_tile (
+      .clk(clk), .rst_n(rst_n), .enable(live),
+      .cfg_we(cfg_we && cfg_addr[7:3] == 5'b00101),
+      .cfg_addr(cfg_addr[2:0]), .cfg_data(cfg_data),
+      .lines(lines),
+      .out(crc_out), .ok(crc_ok), .value(crc_value)
+  );
 
   // ------------------------------------------------------------- pin cells
-  reg [4:0] pin_cfg [0:7];
+  reg [8:0] pin_cfg [0:7];
   reg [7:0] cpu_pins;
   reg [7:0] out_q;
   reg [7:0] oe_q;
-  integer p;
   integer r;
   always @(posedge clk) begin
     if (!rst_n) begin
       for (r = 0; r < 8; r = r + 1)
-        pin_cfg[r] <= 5'd0;
+        pin_cfg[r] <= 9'd0;
     end else if (cfg_we && cfg_addr[7:3] == 5'b00011) begin
-      pin_cfg[cfg_addr[2:0]] <= cfg_data[4:0];
+      pin_cfg[cfg_addr[2:0]] <= cfg_data[8:0];
     end
   end
 
   reg [7:0] pin_value;
   integer m;
   always @(*) begin
-    for (m = 0; m < 8; m = m + 1) begin
-      case (pin_cfg[m][2:0])
-        3'd0: pin_value[m] = cpu_pins[m];
-        3'd1: pin_value[m] = t_out[0];
-        3'd2: pin_value[m] = t_out[1];
-        3'd3: pin_value[m] = t_out[2];
-        3'd4: pin_value[m] = t_out[3];
-        3'd5: pin_value[m] = s_out[0];
-        3'd6: pin_value[m] = s_out[1];
-        default: pin_value[m] = 1'b0;
-      endcase
-    end
+    for (m = 0; m < 8; m = m + 1)
+      pin_value[m] = pin_cfg[m][6] ? cpu_pins[m] : lines[pin_cfg[m][5:0]];
   end
 
   // Every pin output is registered: one uniform cycle of output latency and
   // no glitches from the combinational source muxes.
+  integer p;
   always @(posedge clk) begin
-    if (!rst_n || !enable) begin
+    if (!rst_n || !enable)
       cpu_pins <= 8'd0;
-      out_q    <= 8'd0;
-      oe_q     <= 8'd0;
+    else if (cpu_pin_we)
+      cpu_pins[cpu_pin_index] <= cpu_pin_value;
+  end
+
+  always @(posedge clk) begin
+    if (!rst_n || !live) begin
+      out_q <= 8'd0;
+      oe_q  <= 8'd0;
     end else begin
-      if (cpu_pin_we)
-        cpu_pins[cpu_pin_index] <= cpu_pin_value;
       for (p = 0; p < 8; p = p + 1) begin
-        case (pin_cfg[p][4:3])
+        case (pin_cfg[p][8:7])
           2'd0: begin out_q[p] <= 1'b0; oe_q[p] <= 1'b0; end
           2'd2: begin out_q[p] <= 1'b0; oe_q[p] <= !pin_value[p]; end
           default: begin out_q[p] <= pin_value[p]; oe_q[p] <= 1'b1; end
@@ -288,17 +325,20 @@ module protocol_emulator_core (
   // -------------------------------------------------------------- readback
   always @(*) begin
     case (rd_addr)
-      3'd0: rd_data = {8'd0, pin_sync};
-      3'd1: rd_data = s_rx_data_0;
-      3'd2: rd_data = s_status_0;
-      3'd3: rd_data = s_rx_data_1;
-      3'd4: rd_data = s_status_1;
-      3'd5: rd_data = {12'd0, t_running};
-      3'd6: rd_data = sticky[15:0];
-      default: rd_data = sticky[31:16];
+      4'd0:  rd_data = {8'd0, pin_sync};
+      4'd1:  rd_data = s_rx_data_0;
+      4'd2:  rd_data = s_status_0;
+      4'd3:  rd_data = s_rx_data_1;
+      4'd4:  rd_data = s_status_1;
+      4'd5:  rd_data = {8'd0, counter[0].count};
+      4'd6:  rd_data = {8'd0, counter[1].count};
+      4'd7:  rd_data = crc_value[15:0];
+      4'd8:  rd_data = crc_value[31:16];
+      4'd9:  rd_data = {sticky[15:2], 2'b10};
+      4'd10: rd_data = sticky[31:16];
+      default: rd_data = 16'd0;
     endcase
   end
-
 endmodule
 
 `default_nettype wire

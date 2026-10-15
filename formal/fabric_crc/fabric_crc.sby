@@ -1,0 +1,22 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 24
+multiclock on
+
+[engines]
+bmc: smtbmc boolector
+cover: btor btormc
+
+[script]
+read -formal -sv fabric_crc.v
+read -formal -sv fabric_crc_properties.sv
+prep -top fabric_crc_properties
+
+[files]
+../../src/fabric_crc.v
+fabric_crc_properties.sv

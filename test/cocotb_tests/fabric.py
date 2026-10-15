@@ -7,76 +7,73 @@ are gate-level safe.
 from __future__ import annotations
 
 import cocotb
-from cocotb.triggers import FallingEdge, RisingEdge
+from cocotb.triggers import FallingEdge
 
 from cocotb_tests.common import host_command
 
-# ----------------------------------------------------------------- event bus
-EV_NEVER = 0
-EV_ALWAYS = 1
+# -------------------------------------------------------------- signal space
+ZERO = 0
+ONE = 1
 
 
-def ev_fire(n: int) -> int:
-    return 2 + n
+def fire(n: int) -> int: return 2 + n
+def timer_rise(k: int) -> int: return 4 + 2 * k
+def timer_fall(k: int) -> int: return 5 + 2 * k
+def shifter_word(k: int) -> int: return 12 + 2 * k
+def shifter_stop(k: int) -> int: return 13 + 2 * k
+def pin_rise(p: int) -> int: return 16 + p
+def pin_fall(p: int) -> int: return 24 + p
+def pin_level(p: int) -> int: return 32 + p
+def timer_out(k: int) -> int: return 40 + k
+def shifter_out(k: int) -> int: return 44 + k
+def shifter_active(k: int) -> int: return 46 + k
+def counter_ge(k: int) -> int: return 48 + k
+def counter_hit(k: int) -> int: return 50 + k
 
 
-def ev_timer_rise(k: int) -> int:
-    return 4 + 2 * k
+CRC_OUT = 52
+CRC_OK = 53
 
 
-def ev_timer_fall(k: int) -> int:
-    return 5 + 2 * k
+def flag(n: int) -> int: return 54 + n
+def glue(k: int) -> int: return 56 + k
 
 
-def ev_shifter_start(k: int) -> int:
-    return 12 + 2 * k
-
-
-def ev_shifter_done(k: int) -> int:
-    return 13 + 2 * k
-
-
-def ev_pin_rise(p: int) -> int:
-    return 16 + p
-
-
-def ev_pin_fall(p: int) -> int:
-    return 24 + p
-
-
-# --------------------------------------------------------------- pin sources
-SRC_CPU = 0
-
-
-def src_timer(k: int) -> int:
-    return 1 + k
-
-
-def src_shifter(k: int) -> int:
-    return 5 + k
-
-
+# --------------------------------------------------------------- pin modes
 MODE_INPUT = 0
 MODE_PUSH_PULL = 1
 MODE_OPEN_DRAIN = 2
 
-# ----------------------------------------------------------------- readback
+# ------------------------------------------------------------------ readback
 RD_PINS = 0
-RD_TIMERS = 5
 
 
-def rd_shifter_data(k: int) -> int:
-    return 1 + 2 * k
+def rd_shifter_data(k: int) -> int: return 1 + 2 * k
+def rd_shifter_status(k: int) -> int: return 2 + 2 * k
+def rd_counter(k: int) -> int: return 5 + k
 
 
-def rd_shifter_status(k: int) -> int:
-    return 2 + 2 * k
+RD_CRC_LO = 7
+RD_CRC_HI = 8
+
+# counter modes
+COUNT_STEPS, RUN_ONES, RUN_ZEROS, RUN_EQUAL = range(4)
+
+
+def truth(fn, inputs: int = 4) -> int:
+    """Truth table for a glue cell from a Python predicate over (in0..in3)."""
+    table = 0
+    for index in range(16):
+        bits = [(index >> b) & 1 for b in range(4)]
+        if fn(*bits[:inputs]):
+            table |= 1 << index
+    return table
 
 
 # ------------------------------------------------------------------ assembler
 OP_PFIX, OP_LDC, OP_ADC, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
 OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_PIN, OP_DLY, OP_OPR, OP_ANDC = range(8, 16)
-OPR_NOP, OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C, OPR_C_FROM_A = range(7)
+OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV = 1, 2, 3, 4
 
 
 class Px8:
@@ -108,13 +105,12 @@ class Px8:
         self.labels[name] = len(self.code)
 
     def ldc(self, v: int) -> None: self._emit(OP_LDC, v)
-    def adc(self, v: int) -> None: self._emit(OP_ADC, v)
     def xrc(self, v: int) -> None: self._emit(OP_XRC, v)
     def andc(self, v: int) -> None: self._emit(OP_ANDC, v)
     def setc(self, v: int) -> None: self._emit(OP_SETC, v)
     def wcf(self, addr: int) -> None: self._emit(OP_WCF, addr)
     def rd(self, addr: int) -> None: self._emit(OP_RD, addr)
-    def wev(self, event: int) -> None: self._emit(OP_WEV, event)
+    def wev(self, line: int) -> None: self._emit(OP_WEV, line)
     def fire(self, n: int) -> None: self._emit(OP_FIRE, n)
     def dly(self, cycles: int) -> None: self._emit(OP_DLY, cycles)
     def pin(self, p: int, v: int) -> None: self.code.append((OP_PIN << 4) | (v << 3) | p)
@@ -122,13 +118,17 @@ class Px8:
     def jz(self, label: str) -> None: self._branch(OP_JZ, label)
     def djnz(self, label: str) -> None: self._branch(OP_DJNZ, label)
     def halt(self) -> None: self._emit(OP_OPR, OPR_HALT)
-    def pull(self) -> None: self._emit(OP_OPR, OPR_PULL)
     def push(self) -> None: self._emit(OP_OPR, OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
 
     def cfg(self, addr: int, value: int) -> None:
         self.ldc(value)
         self.wcf(addr)
+
+    def idle_forever(self) -> None:
+        name = f"_idle{len(self.code)}"
+        self.label(name)
+        self.j(name)
 
     def assemble(self) -> list[int]:
         code = list(self.code)
@@ -137,46 +137,76 @@ class Px8:
             code[at] = (OP_PFIX << 4) | ((target >> 8) & 0xF)
             code[at + 1] = (OP_PFIX << 4) | ((target >> 4) & 0xF)
             code[at + 2] = (op << 4) | (target & 0xF)
-        assert len(code) <= 1024
+        assert len(code) <= 1024, len(code)
         return code
 
     # ------------------------------------------------------------- fabric
-    def timer(self, k: int, *, reload: int, phase: int, start: int = EV_NEVER,
-              stop: int = EV_NEVER, idle: int = 0, pulse: bool = False,
-              hold_pin: int | None = None) -> None:
+    def timer(self, k: int, *, reload: int, phase: int, start: int = ZERO,
+              stop: int = ZERO, idle: int = 0, pulse: bool = False,
+              resync: int = ZERO, hold: int = ZERO, hold_invert: bool = False) -> None:
         base = 4 * k
         self.cfg(base + 0, reload)
         self.cfg(base + 1, phase)
-        ctl = start | (stop << 5) | (idle << 10) | (int(pulse) << 11)
-        if hold_pin is not None:
-            ctl |= (hold_pin << 12) | (1 << 15)
-        self.cfg(base + 2, ctl)
-
-    def timer_cmd(self, k: int, *, start: bool = False, stop: bool = False) -> None:
-        self.cfg(4 * k + 3, int(start) | (int(stop) << 1))
+        self.cfg(base + 3, resync | (hold << 6) | (int(hold_invert) << 12))
+        self.cfg(base + 2, start | (stop << 6) | (idle << 12) | (int(pulse) << 13))
 
     def shifter(self, k: int, *, length: int = 8, pre: int = 0, pre_val: int = 0,
                 post: int = 0, post_val: int = 0, parity: int = 0,
                 msb: bool = False, lead: bool = False, end_on_sample: bool = False,
-                idle: int = 0, shift: int = EV_NEVER, sample: int = EV_NEVER,
-                start: int = EV_NEVER) -> None:
+                idle: int = 0, shift: int = ZERO, sample: int = ZERO) -> None:
         base = 0x10 + 4 * k
         frame = ((length - 1) | (pre << 4) | (pre_val << 6) | (post << 7) |
                  (post_val << 9) | (parity << 10) | (int(msb) << 12) |
                  (int(lead) << 13) | (int(end_on_sample) << 14) | (idle << 15))
         self.cfg(base + 1, frame)
-        self.cfg(base + 2, shift | (sample << 5) | (start << 10))
+        self.cfg(base + 2, shift | (sample << 6))
 
     def shifter_data(self, k: int, value: int) -> None:
         self.cfg(0x10 + 4 * k, value)
 
-    def shifter_io(self, k: int, *, in_pin: int = 0, pull: bool = False,
-                   push: bool = False, start_now: bool = False) -> None:
-        self.cfg(0x10 + 4 * k + 3, in_pin | (int(pull) << 3) | (int(push) << 4) |
-                 (int(start_now) << 5))
+    def shifter_io(self, k: int, *, start: int = ZERO, data_in: int = ZERO,
+                   pull: bool = False, push: bool = False) -> None:
+        self.cfg(0x10 + 4 * k + 3, start | (data_in << 6) | (int(pull) << 12) |
+                 (int(push) << 13))
 
-    def pin_cell(self, p: int, src: int, mode: int) -> None:
-        self.cfg(0x18 + p, src | (mode << 3))
+    def counter(self, k: int, *, match: int, step: int, data: int = ZERO,
+                mode: int = COUNT_STEPS, clear: int = ZERO) -> None:
+        base = 0x20 + 4 * k
+        self.cfg(base + 0, match)
+        self.cfg(base + 2, clear)
+        self.cfg(base + 1, step | (data << 6) | (mode << 12))
+
+    def crc(self, *, width: int, poly: int, check: int, absorb: int, data: int,
+            emit: int = ZERO, init: int = ZERO, init_ones: bool = True) -> None:
+        """The register holds its init value until the fabric is armed;
+        `init` re-initializes it at runtime (e.g. between packets)."""
+        self.cfg(0x28, poly & 0xFFFF)
+        self.cfg(0x29, poly >> 16)
+        self.cfg(0x2A, check & 0xFFFF)
+        self.cfg(0x2B, check >> 16)
+        self.cfg(0x2E, (width - 1) | (int(init_ones) << 5))
+        self.cfg(0x2D, emit | (init << 6))
+        self.cfg(0x2C, absorb | (data << 6))
+
+    def glue(self, k: int, table: int, inputs: list[int], *,
+             registered: bool = False, enable: int = ONE) -> None:
+        sel = list(inputs) + [ZERO] * (4 - len(inputs))
+        base = 0x40 + 4 * k
+        self.cfg(base + 0, table)
+        self.cfg(base + 1, sel[0] | (sel[1] << 6))
+        self.cfg(base + 2, sel[2] | (sel[3] << 6))
+        self.cfg(base + 3, enable | (int(registered) << 6))
+
+    def pin_cell(self, p: int, *, mode: int, src: int = ZERO, cpu: bool = False) -> None:
+        self.cfg(0x18 + p, src | (int(cpu) << 6) | (mode << 7))
+
+    def flags(self, value: int) -> None:
+        self.cfg(0x30, value)
+
+    def arm(self) -> None:
+        """Go live: tiles and pin outputs stay idle until the whole
+        configuration has been written."""
+        self.cfg(0x31, 1)
 
 
 # ------------------------------------------------------------- host helpers
@@ -208,6 +238,29 @@ async def rx_empty(dut) -> bool:
     return bool(int(dut.uo_out.value) & 0x10)
 
 
+async def tx_full(dut) -> bool:
+    await host_command(dut, 0xA)
+    return bool(int(dut.uo_out.value) & 0x20)
+
+
+async def stream_tx(dut, data: list[int]) -> None:
+    """Keep the 4-deep TX FIFO topped up while the engine runs."""
+    for byte in data:
+        while await tx_full(dut):
+            pass
+        await push_tx(dut, byte)
+
+
+async def drain_rx(dut, count: int, timeout_polls: int = 20000) -> list[int]:
+    received: list[int] = []
+    for _ in range(timeout_polls):
+        if len(received) == count:
+            return received
+        if not await rx_empty(dut):
+            received.append(await pop_rx(dut))
+    raise AssertionError(f"received only {received}")
+
+
 # ------------------------------------------------------------ external bus
 class Bus:
     """Wired-AND pin model with pull-ups. `drive[p]` holds an external level
@@ -228,18 +281,7 @@ class Bus:
     def levels(self) -> int:
         return sum(self.level(p) << p for p in range(8))
 
-    def update(self) -> None:
-        self.dut.uio_in.value = self.levels()
-
     async def _run(self) -> None:
         while True:
             await FallingEdge(self.dut.clk)
-            self.update()
-
-
-async def wait_level(dut, bus: Bus, p: int, value: int, timeout: int = 100000) -> None:
-    for _ in range(timeout):
-        await RisingEdge(dut.clk)
-        if bus.level(p) == value:
-            return
-    raise AssertionError(f"pin {p} never reached {value}")
+            self.dut.uio_in.value = self.levels()

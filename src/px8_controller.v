@@ -8,8 +8,9 @@
 //
 //   0 PFIX  O = (O | n) << 4        8 WCF   cfg[opnd] = A
 //   1 LDC   A = opnd                9 RD    A = rd[opnd]
-//   2 ADC   A = A + opnd            A WEV   wait for sticky event opnd, consume
-//   3 XRC   A = A ^ opnd            B FIRE  pulse CPU event opnd[0]
+//   2 ADC   A = A + opnd            A WEV   wait for line opnd (pulse lines
+//                                           are sticky and consumed)
+//   3 XRC   A = A ^ opnd            B FIRE  pulse line 2 + opnd[0]
 //   4 J     pc = opnd               C PIN   CPU pin n[2:0] := n[3]
 //   5 JZ    if A == 0: pc = opnd    D DLY   stall opnd extra cycles
 //   6 DJNZ  C -= 1; if C != 0: pc   E OPR   misc (below)
@@ -29,11 +30,11 @@ module px8_controller (
     output wire        cfg_we,
     output wire [7:0]  cfg_addr,
     output wire [15:0] cfg_data,
-    output wire [2:0]  rd_addr,
+    output wire [3:0]  rd_addr,
     input  wire [15:0] rd_data,
     input  wire        event_ready,
     output wire        event_consume,
-    output wire [4:0]  event_index,
+    output wire [5:0]  event_index,
     output wire        clear_events,
     output wire [1:0]  fire,
     output wire        pin_we,
@@ -112,9 +113,9 @@ module px8_controller (
   assign cfg_we        = exec && op == OP_WCF;
   assign cfg_addr      = opnd[7:0];
   assign cfg_data      = acc;
-  assign rd_addr       = opnd[2:0];
+  assign rd_addr       = opnd[3:0];
   assign event_consume = exec && op == OP_WEV && event_ready;
-  assign event_index   = opnd[4:0];
+  assign event_index   = opnd[5:0];
   assign clear_events  = exec && op == OP_OPR && opnd[3:0] == 4'd4;
   assign fire          = (exec && op == OP_FIRE) ?
                          (opnd[0] ? 2'b10 : 2'b01) : 2'b00;

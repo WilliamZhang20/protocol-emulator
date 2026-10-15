@@ -14,6 +14,9 @@ RTL_SOURCES := \
 	src/px8_controller.v \
 	src/fabric_timer.v \
 	src/fabric_shifter.v \
+	src/fabric_counter.v \
+	src/fabric_crc.v \
+	src/fabric_lut.v \
 	src/program_memory.v \
 	src/byte_fifo.v \
 	src/host_interface.v
