@@ -29,8 +29,14 @@ module tt_um_protocol_emulator (
   wire [9:0] instruction_address;
   wire instruction_read;
 
-  wire tx_push;
-  wire [7:0] tx_push_data;
+  wire host_tx_push;
+  wire [7:0] host_tx_push_data;
+  wire core_tx_push;
+  wire [7:0] core_tx_push_data;
+  // A running program may feed the TX FIFO itself (e.g. a frame stored in
+  // SRAM); it has priority, so the host must not push at the same time.
+  wire tx_push = host_tx_push || core_tx_push;
+  wire [7:0] tx_push_data = core_tx_push ? core_tx_push_data : host_tx_push_data;
   wire tx_pop;
   wire [7:0] tx_pop_data;
   wire tx_empty;
@@ -58,8 +64,8 @@ module tt_um_protocol_emulator (
       .program_write_data(host_program_write_data),
       .program_write_mask(host_program_write_mask),
       .program_read_data(program_read_data),
-      .tx_push(tx_push),
-      .tx_push_data(tx_push_data),
+      .tx_push(host_tx_push),
+      .tx_push_data(host_tx_push_data),
       .tx_full(tx_full),
       .tx_level(tx_level),
       .rx_pop(rx_pop),
@@ -123,6 +129,9 @@ module tt_um_protocol_emulator (
       .tx_data(tx_pop_data),
       .tx_empty(tx_empty),
       .tx_pop(tx_pop),
+      .tx_full(tx_full),
+      .tx_push(core_tx_push),
+      .tx_push_data(core_tx_push_data),
       .rx_data(rx_push_data),
       .rx_push(rx_push),
       .rx_full(rx_full),

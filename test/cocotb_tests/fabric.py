@@ -73,7 +73,8 @@ def truth(fn, inputs: int = 4) -> int:
 # ------------------------------------------------------------------ assembler
 OP_PFIX, OP_LDC, OP_ADC, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
 OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_PIN, OP_DLY, OP_OPR, OP_ANDC = range(8, 16)
-OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV = 1, 2, 3, 4
+OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C = 1, 2, 3, 4, 5
+OPR_TXP, OPR_LDM = 7, 8
 
 
 class Px8:
@@ -120,6 +121,22 @@ class Px8:
     def halt(self) -> None: self._emit(OP_OPR, OPR_HALT)
     def push(self) -> None: self._emit(OP_OPR, OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
+    def a_from_c(self) -> None: self._emit(OP_OPR, OPR_A_FROM_C)
+    def txp(self) -> None: self._emit(OP_OPR, OPR_TXP)
+    def ldm(self) -> None: self._emit(OP_OPR, OPR_LDM)
+
+    def stream_sram_to_tx(self, start: int, end: int) -> None:
+        """Copy SRAM[start:end] into the TX FIFO (about 25 cycles a byte)."""
+        loop, done = f"_copy{len(self.code)}", f"_copied{len(self.code)}"
+        self.setc(start)
+        self.label(loop)
+        self.ldm()
+        self.txp()
+        self.a_from_c()
+        self.xrc(end)
+        self.jz(done)
+        self.j(loop)
+        self.label(done)
 
     def cfg(self, addr: int, value: int) -> None:
         self.ldc(value)
@@ -210,10 +227,11 @@ class Px8:
 
 
 # ------------------------------------------------------------- host helpers
-async def load_program(dut, program: list[int]) -> None:
-    await host_command(dut, 0x1, 0)
-    await host_command(dut, 0x2, 0)
-    await host_command(dut, 0x3, 0)
+async def load_program(dut, program: list[int], address: int = 0) -> None:
+    """Write bytes into SRAM at `address` (programs at 0, data after them)."""
+    await host_command(dut, 0x1, address)
+    await host_command(dut, 0x2, address >> 4)
+    await host_command(dut, 0x3, address >> 8)
     for byte in program:
         await host_command(dut, 0x4, byte)
         await host_command(dut, 0x5, byte >> 4)

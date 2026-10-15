@@ -68,10 +68,16 @@ Programs absorb these latencies in timer phase values. Timing is exact and
 repeatable. For example, `test_10baset_frame` checks that every 10BASE-T
 half-bit is exactly 2 cycles.
 
-**No combinational loops by construction.** Tile outputs depend only on
-their own registers, and glue cell k sees the *live* output of cells j < k
-but only the *registered* value of cells j ≥ k. No configuration can create
-a loop.
+**No combinational loops, and bounded depth, by construction.** Tile
+outputs depend only on their own registers. Glue cells form two ranks:
+cells 0–3 see only *registered* glue values, and cells 4–7 also see cells
+0–3 *live*. No configuration can create a loop, and no combinational path
+crosses more than two glue cells.
+
+This matters for timing closure because static timing analysis times every
+structural path, not only the ones a program uses. With an unbounded chain,
+liberty-mapped synthesis measured a 12.7 ns worst combinational path. The
+two-rank structure cuts it to 6.1 ns (abc, typical corner, no wire load).
 
 **Arm.** Tiles and pin outputs stay idle until the program writes the arm
 bit (config `0x31`). A partially written configuration can therefore never
@@ -170,7 +176,10 @@ previous bit, an SE0 latch.
 
 One-byte instructions `{op, n}`. Wider operands are built with
 Transputer-style prefixes (`opnd = O | n`; `PFIX` does `O = opnd << 4`).
-Each instruction takes 2 cycles plus any stall.
+Each instruction takes 2 cycles plus any stall; `LDM` takes 3. `LDM` and
+`TXP` let a program stream data stored in SRAM after its code (for example
+an Ethernet frame) into the TX FIFO at about 25 cycles per byte. While a
+program feeds the TX FIFO, the host must not push.
 
 | op | Name | Effect |
 | --- | --- | --- |
@@ -188,7 +197,7 @@ Each instruction takes 2 cycles plus any stall.
 | B | `FIRE` | pulse line `2 + opnd[0]` |
 | C | `PIN` | controller pin `n[2:0]` := `n[3]` |
 | D | `DLY` | stall `opnd` extra cycles |
-| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A` |
+| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A`, 7 TXP (TX FIFO = `A`), 8 LDM (`A = SRAM[C]`, `C += 1`) |
 | F | `ANDC` | `A = A & opnd` |
 
 Readback: 0 pins, 1/3 shifter data, 2/4 shifter status, 5/6 counter
@@ -208,8 +217,7 @@ against independent reference models through the top-level pins only.
 | PS/2 receive | shifter clocked by the device | 11-bit frames with odd parity |
 | USB low speed, transmit | timer, shifter, 2 counters, CRC16, 8 glue cells | NRZI, bit stuffing (incl. in the CRC), CRC16, EOP; every transition on the bit grid |
 | USB low speed, receive | timer with resync, counter, CRC16, 6 glue cells | clock recovery from a 3% slow sender, destuffing, CRC16 residue verdict, bad-CRC detection |
-| 10BASE-T transmit (40 MHz clock) | timer, shifter, 2 counters, CRC32, 6 glue cells | Manchester with exact 2-cycle half bits, preamble/SFD, FCS equal to `zlib.crc32` |
-| 10BASE-T link pulses | 2 timers | exact 100 ns pulses at an exact period |
+| 10BASE-T link session (40 MHz clock) | 4 timers, shifter, 2 counters, CRC32, 8 glue cells, controller streaming the frame from SRAM | link pulses exactly 100 ns wide and exactly 16 ms apart; a frame on the same TD± pair with exact 2-cycle half bits, preamble/SFD, FCS equal to `zlib.crc32`, and 300 ns TP_IDL |
 
 ### How USB transmit composes
 
@@ -223,13 +231,17 @@ applies it at the next tick, never in place of a pending stuffed bit.
 
 ### 10BASE-T scope
 
+What is verified is a transmit-only link session: link pulses every 16 ms
+and a frame streamed from SRAM, both on the same TD± pair.
+
+- **Frame source:** the controller copies the frame from SRAM into the TX
+  FIFO (`LDM`/`TXP`), so host bandwidth does not matter. A minimum 64-byte
+  frame fits after the program in the 1 KB SRAM.
 - **Clock:** 10 Mb/s Manchester has 50 ns half bits, which needs a 40 MHz
-  (or 60/80 MHz) clock. At the 50 MHz design target a half bit would be 2.5
-  cycles.
+  clock (±100 ppm from the board). At 50 MHz a half bit would be 2.5 cycles.
 - **Analog front end:** TD± needs an external resistor network and pulse
-  transformer.
-- **Host bandwidth:** frames need a byte every 800 ns, faster than a typical
-  Tiny Tapeout host can feed the nibble link.
+  transformer. There is no waveform pre-distortion, so this is the
+  hobby-grade "bit-banged" class of transmitter, not a compliant PHY.
 - **Receive:** not attempted. It needs clock recovery at 2 samples per half
   bit plus an analog receiver.
 
@@ -288,7 +300,7 @@ idle.
 - `make dead-check`: Verilator `-Wall` unused/undriven signals plus yosys
   constant or never-active flip-flops (including `opt_dff -sat`). Currently
   0 findings.
-- cocotb: 17 tests covering the protocols above, using pins and host
+- cocotb: 16 tests covering the protocols above, using pins and host
   commands only, so they are gate-level safe.
 - Formal (`make formal`), each target against an independent reference:
   - timer: a cycle-count model;
@@ -305,9 +317,12 @@ idle.
 
 ## Known limits and next steps
 
-- **Glue-cell timing:** combinational chains through glue cells add logic
-  depth. Signoff STA in the GDS flow should confirm 50 MHz with the longest
-  legal chain.
+- **Timing closure is unconfirmed.** The two-rank structure halves the
+  worst combinational path, but liberty-mapped synthesis ignores wires and
+  fanout buffering. For calibration, the earlier CPU design measured 4.7 ns
+  the same way yet failed 50 MHz signoff by 5.3 ns. Signoff STA from the GDS
+  flow decides; if 50 MHz does not close, 40 MHz (which 10BASE-T needs
+  anyway) is the natural target.
 - **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
   did not converge on the 16-bit counters, and counter saturation at 255 is
   beyond the BMC depth.

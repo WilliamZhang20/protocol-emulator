@@ -17,9 +17,12 @@
 //   7 SETC  C = opnd                F ANDC  A = A & opnd
 //
 //   OPR: 0 NOP, 1 HALT, 2 PULL (A = TX byte, stalls), 3 PUSH (RX = A[7:0],
-//        stalls), 4 CLREV (clear sticky events), 5 A = C, 6 C = A
+//        stalls), 4 CLREV (clear sticky events), 5 A = C, 6 C = A,
+//        7 TXP (TX FIFO = A[7:0], stalls while full),
+//        8 LDM (A = SRAM[C], C += 1: data stored after the program)
 //
-// Timing: every instruction takes 2 cycles (fetch + execute) plus stalls.
+// Timing: every instruction takes 2 cycles (fetch + execute) plus stalls;
+// LDM takes 3.
 module px8_controller (
     input  wire        clk,
     input  wire        rst_n,
@@ -43,6 +46,8 @@ module px8_controller (
     output wire        tx_request,
     input  wire        tx_grant,
     input  wire [7:0]  tx_data,
+    output wire        tx_push,
+    input  wire        tx_space,
     output wire        rx_request,
     input  wire        rx_grant,
     output wire [7:0]  rx_data,
@@ -51,6 +56,7 @@ module px8_controller (
   localparam ST_FETCH = 2'd0;
   localparam ST_EXEC  = 2'd1;
   localparam ST_HALT  = 2'd2;
+  localparam ST_LOAD  = 2'd3;
 
   localparam OP_PFIX = 4'h0;
   localparam OP_LDC  = 4'h1;
@@ -84,6 +90,8 @@ module px8_controller (
 
   wire is_pull = op == OP_OPR && opnd[3:0] == 4'd2;
   wire is_push = op == OP_OPR && opnd[3:0] == 4'd3;
+  wire is_txp  = op == OP_OPR && opnd[3:0] == 4'd7;
+  wire is_ldm  = op == OP_OPR && opnd[3:0] == 4'd8;
 
   // An executing instruction either retires this cycle or stalls in EXEC.
   reg retire;
@@ -91,7 +99,8 @@ module px8_controller (
     case (op)
       OP_WEV:  retire = event_ready;
       OP_DLY:  retire = delaying ? delay == 16'd1 : opnd == 16'd0;
-      OP_OPR:  retire = is_pull ? tx_grant : is_push ? rx_grant : 1'b1;
+      OP_OPR:  retire = is_pull ? tx_grant : is_push ? rx_grant :
+                        is_txp ? tx_space : 1'b1;
       default: retire = 1'b1;
     endcase
   end
@@ -108,8 +117,9 @@ module px8_controller (
     endcase
   end
 
-  assign instruction_address = pc;
-  assign instruction_read    = enable && state == ST_FETCH;
+  // LDM reads SRAM at C while executing; the data arrives in ST_LOAD.
+  assign instruction_address = (exec && is_ldm) ? cnt[9:0] : pc;
+  assign instruction_read    = enable && (state == ST_FETCH || (exec && is_ldm));
   assign cfg_we        = exec && op == OP_WCF;
   assign cfg_addr      = opnd[7:0];
   assign cfg_data      = acc;
@@ -125,6 +135,7 @@ module px8_controller (
   assign tx_request    = exec && is_pull;
   assign rx_request    = exec && is_push;
   assign rx_data       = acc[7:0];
+  assign tx_push       = exec && is_txp && tx_space;
   assign halted        = state == ST_HALT;
 
   always @(posedge clk) begin
@@ -148,7 +159,7 @@ module px8_controller (
             delaying <= 1'b0;
             pc       <= next_pc;
             oreg     <= op == OP_PFIX ? opnd[11:0] : 12'd0;
-            state    <= ST_FETCH;
+            state    <= is_ldm ? ST_LOAD : ST_FETCH;
             case (op)
               OP_LDC:  acc <= opnd;
               OP_ADC:  acc <= acc + opnd;
@@ -170,7 +181,12 @@ module px8_controller (
             endcase
           end
         end
-        default: state <= ST_HALT;
+        ST_LOAD: begin
+          acc   <= {8'd0, instruction_data};
+          cnt   <= cnt + 16'd1;
+          state <= ST_FETCH;
+        end
+        default: begin end
       endcase
     end
   end

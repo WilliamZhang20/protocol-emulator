@@ -69,7 +69,10 @@ two-bit SE0, J, and every transition on the 33-cycle bit grid). It also
 receives packets from a sender running 3% slow (clock recovery) and checks
 the CRC16 residue verdict for good and corrupted packets.
 
-`test_ethernet.py` runs at 40 MHz and transmits a 10BASE-T frame: every half
-bit must be exactly 2 cycles with a mid-bit transition, TD- must mirror TD+,
-and the hardware FCS must equal `zlib.crc32`. It also checks normal link
-pulses for exact width and period.
+`test_ethernet.py` runs at 40 MHz and records a full 10BASE-T link session
+through edge triggers, so 1.5 M cycles stay fast. It checks three link pulses
+that are exactly 100 ns wide and exactly 16 ms apart, and between them a
+frame that the program streams from SRAM. Every half bit must be exactly 2
+cycles with a mid-bit transition, TD- must mirror TD+, the hardware FCS must
+equal `zlib.crc32`, and TP_IDL must hold the line high for 300 ns before it
+idles.

@@ -19,8 +19,9 @@
 //   52 CRC out bit   53 CRC matches check   54-55 controller flags 0/1
 //   56+k glue cell k output
 //
-// Glue cell k sees the live output of cells j < k and the registered value
-// of cells j >= k, so no configuration can form a combinational loop.
+// Glue cells form two ranks: cells 0-3 see only registered glue values,
+// cells 4-7 also see cells 0-3 live. No configuration can form a loop, and
+// no combinational path crosses more than two glue cells.
 //
 // Config map (controller WCF address):
 //   0x00-0x0F timer addr[3:2], reg addr[1:0]
@@ -49,6 +50,9 @@ module protocol_emulator_core (
     input  wire [7:0] tx_data,
     input  wire       tx_empty,
     output wire       tx_pop,
+    input  wire       tx_full,
+    output wire       tx_push,
+    output wire [7:0] tx_push_data,
     output wire [7:0] rx_data,
     output wire       rx_push,
     input  wire       rx_full,
@@ -160,6 +164,7 @@ module protocol_emulator_core (
   assign cpu_rx_grant   = cpu_rx_request && !(|sh_rx_request) && !rx_full;
   assign tx_pop  = |{sh_tx_grant, cpu_tx_grant};
   assign rx_push = |{sh_rx_grant, cpu_rx_grant};
+  assign tx_push_data = cpu_rx_data;
   assign rx_data = sh_rx_grant[0] ? sh_rx_byte_0 :
                    sh_rx_grant[1] ? sh_rx_byte_1 : cpu_rx_data;
 
@@ -186,6 +191,8 @@ module protocol_emulator_core (
       .tx_request(cpu_tx_request),
       .tx_grant(cpu_tx_grant),
       .tx_data(tx_data),
+      .tx_push(tx_push),
+      .tx_space(!tx_full),
       .rx_request(cpu_rx_request),
       .rx_grant(cpu_rx_grant),
       .rx_data(cpu_rx_data),
@@ -216,13 +223,15 @@ module protocol_emulator_core (
       );
     end
 
-    // Cell k: live outputs of cells below it, registered values above.
+    // Two ranks bound the combinational depth to two cells for any
+    // configuration: rank 0 (cells 0-3) sees only registered glue values;
+    // rank 1 (cells 4-7) also sees rank 0 live.
     for (k = 0; k < 8; k = k + 1) begin : glue
       wire [7:0] view;
-      if (k == 0) begin : first
+      if (k < 4) begin : rank0
         assign view = lut_q;
-      end else begin : rest
-        assign view = {lut_q[7:k], lut_out[k-1:0]};
+      end else begin : rank1
+        assign view = {lut_q[7:4], lut_out[3:0]};
       end
       fabric_lut tile (
           .clk(clk), .rst_n(rst_n), .enable(live),
