@@ -26,13 +26,25 @@ transmit are SRAM programs; there is no protocol-specific logic. See the
 ## How to test
 
 Load a program and payload over the nibble host link on `ui_in`, start the
-engine, and observe the protocol on `uio[7:0]`. Run `make verify` for lint,
+engine, and observe the protocol on `uio[7:0]`. Hold each host command and
+each `8'h00` separator for at least 2 clocks. Run `make verify` for lint,
 dead-logic detection, cocotb protocol tests, and formal checks.
 
 ## External hardware
 
-UART needs only a TX/RX connection. SPI and I2C need a target device or a
-microcontroller or FPGA acting as one; I2C needs pull-up resistors on SCL
-and SDA. Low-speed USB needs series resistors and a 1.5 kΩ pull-up as for
-any bit-banged LS device. 10BASE-T transmit needs a 40 MHz clock and a
-resistor network plus pulse transformer on TD±.
+All pins are 3.3 V digital and inputs are not 5 V tolerant. Default
+protocol pins follow the Tiny Tapeout recommended pinouts:
+
+- **UART:** `uio[1]` TXD, `uio[2]` RXD. Any 3.3 V USB-UART Pmod.
+- **SPI:** `uio[0..3]` CS/MOSI/MISO/SCK. Direct to 3.3 V devices.
+- **I2C:** `uio[2]` SCL, `uio[3]` SDA. Needs 2.2–4.7 kΩ pull-ups to 3.3 V.
+- **PS/2:** `uio[4]` CLK, `uio[5]` DATA. Needs a 5 V ↔ 3.3 V
+  bidirectional level shifter.
+- **Low-speed USB:** `uio[4]` D+, `uio[5]` D−. Needs series resistors and a
+  1.5 kΩ (device) or 15 kΩ (host) termination; a buffer helps on long
+  cables.
+- **10BASE-T transmit:** `uio[6]` TD+, `uio[7]` TD−. Needs a 40 MHz clock,
+  a line driver, a resistor network, and magnetics.
+
+See [hardware.md](hardware.md) for clock choices, host-link timing, and
+details.

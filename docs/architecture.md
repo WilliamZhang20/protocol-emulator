@@ -76,15 +76,19 @@ repeatable. For example, `test_10baset_frame` checks that every 10BASE-T
 half-bit is exactly 2 cycles.
 
 **No combinational loops, and bounded depth, by construction.** Tile
-outputs depend only on their own registers. Glue cells form two ranks:
-cells 0–3 see only *registered* glue values, and cells 4–7 also see cells
-0–3 *live*. No configuration can create a loop, and no combinational path
-crosses more than two glue cells.
+outputs depend only on their own registers (the CRC match flag included).
+Glue cells see each other only as *registered* values. No configuration can
+create a loop, and no combinational path crosses more than one glue cell.
 
 This matters for timing closure because static timing analysis times every
-structural path, not only the ones a program uses. With an unbounded chain,
-liberty-mapped synthesis measured a 12.7 ns worst combinational path. The
-two-rank structure cuts it to 6.1 ns (abc, typical corner, no wire load).
+structural path, not only the ones a program uses. Every select costs about
+8 ns in the signoff slow corner, so the depth bound sets the clock. An
+earlier two-rank structure (cells 4–7 saw cells 0–3 live) signed off at
++0.96 ns typical but −10.3 ns slow at 50 MHz, all from one chain:
+CRC match → glue cell → glue cell → shifter start → TX FIFO write. A
+program that needs two levels of logic either repeats terms inline (the
+USB gated tick) or registers the first level and accepts a uniform cycle
+of latency (the 10BASE-T Manchester and window cells).
 
 **Arm.** Tiles and pin outputs stay idle until the program writes the arm
 bit (config `0x31`). A partially written configuration can therefore never
@@ -237,7 +241,9 @@ against independent reference models through the top-level pins only.
 
 ### How USB transmit composes
 
-At each bit tick E, the NRZI glue cell latches the current bit X. X is a
+At each bit tick E, the NRZI glue cell latches the current bit X. X is
+registered every cycle; nothing it depends on changes in the cycle before
+a tick, so the NRZI cell and the stuffing counter see the right bit. X is a
 stuffed 0 if counter 0 (run of ones) has reached 6; otherwise it's the
 shifter bit, or the CRC bit once the shifter runs dry. Gated tick G = E and
 not stuffing: it advances the shifter and either absorbs (after SYNC/PID)
@@ -293,8 +299,10 @@ any CRC up to 32 bits. CAN (equal-bit stuffing, CRC15), JTAG, SWD and
 ## Host interface (unchanged boundary)
 
 The Tiny Tapeout host link, 1024×8 SRAM macro, and 4-deep TX/RX FIFOs keep
-their behavior. A command byte is presented on `ui_in` for one clock,
-followed by `8'h00`:
+their command set. `ui_in` passes a two-flop synchronizer, and a byte
+counts only once it is stable for two cycles, so the host may drive the
+pins asynchronously. Hold each command byte, and the `8'h00` that follows
+it, for at least 2 clocks (see [hardware.md](hardware.md)):
 
 | Command | Operation |
 | --- | --- |
@@ -309,7 +317,8 @@ followed by `8'h00`:
 | `D` | Peek RX without popping |
 
 Every command must be followed by `8'h00`. A command held for several
-cycles acts once, and `8'h00` re-arms the decoder. Commands `4` and `6`
+cycles acts once, and `8'h00` re-arms the decoder. A byte seen for a single
+cycle while the pins change never acts. Commands `4` and `6`
 share one low-nibble stage, so stage and commit one byte at a time.
 
 `HALT` makes the host clear `enable`, which returns every tile and pin to
@@ -341,12 +350,12 @@ idle.
   only) passed the full GDS flow, including the gate-level test, with
   +3.83 ns setup slack at 50 MHz in the slow corner (1.08 V, 125 °C). Its
   critical path starts at the SRAM macro. The earlier CPU design failed the
-  same corner by 5.28 ns. For v2, the worst combinational path from abc
-  (typical corner, no wires) went from 12.7 ns to 5.1 ns through four
-  changes: two glue ranks, narrowed selects, a registered shifter output,
-  and registered CRC width decode. abc cannot see the SRAM or wires, so v2
-  signoff STA decides. If 50 MHz does not close, 40 MHz (which 10BASE-T
-  needs anyway) is the natural target.
+  same corner by 5.28 ns. v2 with two glue ranks passed CI (which gates on
+  the typical corner, +0.96 ns) but failed the slow corner by 10.3 ns
+  through a CRC match → glue → glue → shifter → TX FIFO chain. The fixes
+  are a registered CRC match, glue cells that see each other registered,
+  and a FIFO that no longer accepts a push into a full FIFO on a
+  same-cycle pop. The SRAM paths keep +3.2 ns slow-corner slack.
 - **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
   did not converge on the 16-bit counters, and counter saturation at 255 is
   beyond the BMC depth.

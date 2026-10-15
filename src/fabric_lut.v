@@ -12,8 +12,8 @@
 //
 // Combinational cells output f directly; registered cells output q, which
 // loads f on cycles where the enable line is high. Loop freedom and a
-// two-cell depth bound are structural: the core gives rank-1 cells the live
-// output of rank-0 cells and every other glue view as its registered value.
+// one-cell depth bound are structural: the core shows every glue cell the
+// other cells' q, never their live output.
 module fabric_lut (
     input  wire        clk,
     input  wire        rst_n,

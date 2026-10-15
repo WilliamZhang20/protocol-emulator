@@ -39,7 +39,8 @@ async def test_usb_ls_transmit_packet(dut):
     while True:
         await RisingEdge(dut.clk)
         cycle += 1
-        driven = (int(dut.uio_oe.value) & 0b11) == 0b11
+        both = (1 << USB_DP) | (1 << USB_DM)
+        driven = (int(dut.uio_oe.value) & both) == both
         state = usb_state(bus.level(USB_DP), bus.level(USB_DM)) if driven else None
         if state != last:
             trace.append((cycle, state))

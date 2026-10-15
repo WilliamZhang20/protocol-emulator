@@ -19,9 +19,9 @@
 //   52 CRC out bit   53 CRC matches check   54-55 controller flags 0/1
 //   56+k glue cell k output
 //
-// Glue cells form two ranks: cells 0-3 see only registered glue values,
-// cells 4-7 also see cells 0-3 live. No configuration can form a loop, and
-// no combinational path crosses more than two glue cells.
+// Glue cells see each other only as registered values, so no configuration
+// can form a loop and no combinational path crosses more than one glue
+// cell.
 //
 // Config map (controller WCF address):
 //   0x00-0x0F timer addr[3:2], reg addr[1:0]
@@ -224,21 +224,14 @@ module protocol_emulator_core (
       );
     end
 
-    // Two ranks bound the combinational depth to two cells for any
-    // configuration: rank 0 (cells 0-3) sees only registered glue values;
-    // rank 1 (cells 4-7) also sees rank 0 live.
+    // Glue cells see each other's registered values only, which bounds the
+    // combinational depth to one cell for any configuration.
     for (k = 0; k < 8; k = k + 1) begin : glue
-      wire [7:0] view;
-      if (k < 4) begin : rank0
-        assign view = lut_q;
-      end else begin : rank1
-        assign view = {lut_q[7:4], lut_out[3:0]};
-      end
       fabric_lut tile (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:5] == 3'b010 && cfg_addr[4:2] == k),
           .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
-          .lines({view, lines[55:0]}),
+          .lines({lut_q, lines[55:0]}),
           .out(lut_out[k]), .q(lut_q[k])
       );
     end

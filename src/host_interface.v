@@ -1,8 +1,12 @@
 `default_nettype none
 
-// Synchronous nibble-command host interface. Commands are presented on host_in
-// for one clock and separated by 8'h00. Program and payload bytes are assembled
-// from low/high nibble commands so all eight pins remain available as host data.
+// Nibble-command host interface. The demo board's microcontroller drives
+// host_in asynchronously, so the pins pass a two-flop synchronizer and a
+// byte counts only once it has been stable for two cycles: a command (or
+// the 8'h00 that must separate commands) must be held for at least two
+// clocks. A byte caught mid-change can therefore never act. Program and
+// payload bytes are assembled from low/high nibble commands so all eight
+// pins remain available as host data.
 //
 // One low-nibble stage and one data register serve both program writes and
 // TX pushes: a byte is committed by its high-nibble command, and the 8'h00
@@ -31,6 +35,9 @@ module host_interface (
     input  wire [2:0] rx_level,
     input  wire       engine_halted
 );
+  (* async_reg = "true" *) reg [7:0] host_meta;
+  (* async_reg = "true" *) reg [7:0] host_sync;
+  reg [7:0] host_prev;
   reg       seen;              // a command was accepted since the last 8'h00
   reg [9:0] address_register;
   reg [3:0] low_nibble;
@@ -43,9 +50,10 @@ module host_interface (
   reg rx_pop_register;
   reg read_capture;            // SRAM data is valid the cycle after a read
 
-  wire command_valid = host_in != 8'h00 && !seen;
-  wire [3:0] command = host_in[7:4];
-  wire [3:0] payload = host_in[3:0];
+  wire stable = host_sync == host_prev;
+  wire command_valid = stable && host_sync != 8'h00 && !seen;
+  wire [3:0] command = host_sync[7:4];
+  wire [3:0] payload = host_sync[3:0];
 
   assign host_out = output_register;
   assign engine_enable = engine_enable_register;
@@ -61,6 +69,9 @@ module host_interface (
 
   always @(posedge clk) begin
     if (!rst_n) begin
+      host_meta <= 8'h00;
+      host_sync <= 8'h00;
+      host_prev <= 8'h00;
       seen <= 1'b0;
       address_register <= 10'b0;
       low_nibble <= 4'b0;
@@ -73,6 +84,9 @@ module host_interface (
       rx_pop_register <= 1'b0;
       read_capture <= 1'b0;
     end else begin
+      host_meta <= host_in;
+      host_sync <= host_meta;
+      host_prev <= host_sync;
       program_write_register <= 1'b0;
       program_read_register <= 1'b0;
       tx_push_register <= 1'b0;
@@ -90,7 +104,7 @@ module host_interface (
       if (program_write_register)
         address_register <= address_register + 1'b1;
 
-      if (host_in == 8'h00)
+      if (stable && host_sync == 8'h00)
         seen <= 1'b0;
       else if (command_valid) begin
         seen <= 1'b1;

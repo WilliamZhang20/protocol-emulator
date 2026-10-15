@@ -33,34 +33,34 @@ project:
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: "host_in[0]"
-  ui[1]: "host_in[1]"
-  ui[2]: "host_in[2]"
-  ui[3]: "host_in[3]"
-  ui[4]: "host_in[4]"
-  ui[5]: "host_in[5]"
-  ui[6]: "host_in[6]"
-  ui[7]: "host_in[7]"
+  ui[0]: "host command[0]"
+  ui[1]: "host command[1]"
+  ui[2]: "host command[2]"
+  ui[3]: "host command[3]"
+  ui[4]: "host command[4]"
+  ui[5]: "host command[5]"
+  ui[6]: "host command[6]"
+  ui[7]: "host command[7]"
 
   # Outputs
-  uo[0]: "host_out[0]"
-  uo[1]: "host_out[1]"
-  uo[2]: "host_out[2]"
-  uo[3]: "host_out[3]"
-  uo[4]: "host_out[4]"
-  uo[5]: "host_out[5]"
-  uo[6]: "host_out[6]"
-  uo[7]: "host_out[7]"
+  uo[0]: "host response[0]"
+  uo[1]: "host response[1]"
+  uo[2]: "host response[2]"
+  uo[3]: "host response[3]"
+  uo[4]: "host response[4]"
+  uo[5]: "host response[5]"
+  uo[6]: "host response[6]"
+  uo[7]: "host response[7]"
 
-  # Bidirectional pins
-  uio[0]: "protocol_gpio[0]"
-  uio[1]: "protocol_gpio[1]"
-  uio[2]: "protocol_gpio[2]"
-  uio[3]: "protocol_gpio[3]"
-  uio[4]: "protocol_gpio[4]"
-  uio[5]: "protocol_gpio[5]"
-  uio[6]: "protocol_gpio[6]"
-  uio[7]: "protocol_gpio[7]"
+  # Bidirectional pins (protocol defaults; programs may remap any pin)
+  uio[0]: "SPI CS"
+  uio[1]: "UART TXD / SPI MOSI"
+  uio[2]: "UART RXD / SPI MISO / I2C SCL"
+  uio[3]: "SPI SCK / I2C SDA"
+  uio[4]: "PS/2 CLK / USB D+"
+  uio[5]: "PS/2 DATA / USB D-"
+  uio[6]: "10BASE-T TD+"
+  uio[7]: "10BASE-T TD-"
 
 # Do not change!
 yaml_version: 6

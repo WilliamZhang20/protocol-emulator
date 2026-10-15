@@ -25,7 +25,7 @@ module byte_fifo #(
       DEPTH[ADDRESS_WIDTH-1:0] - 1'b1;
   localparam [ADDRESS_WIDTH:0] FIFO_DEPTH = DEPTH;
   wire pop_accepted = pop && !empty;
-  wire push_accepted = push && (!full || pop_accepted);
+  wire push_accepted = push && !full;
 
   assign pop_data = memory[read_pointer];
   assign empty = count == 0;

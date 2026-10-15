@@ -12,6 +12,9 @@
 //   5   [5:0] emit line    [10:6] init pulse line (signal space 0-31)
 //   6   [4:0] width-1      [5] init to all ones
 //
+// `ok` is registered (it reflects the register one cycle earlier) so the
+// 32-bit compare never sits in front of a signal-space select.
+//
 // Priority per cycle: init, absorb, emit. While the fabric is disarmed the
 // register holds its init value, so a frame needs no explicit init pulse.
 module fabric_crc (
@@ -32,6 +35,7 @@ module fabric_crc (
   reg [10:0] emit_cfg;
   reg [5:0]  shape;
   reg [31:0] crc;
+  reg        ok_r;
 
   // The width mask and top-bit select depend only on the shape register, so
   // they are registered alongside it rather than decoded every cycle.
@@ -53,7 +57,7 @@ module fabric_crc (
   wire [31:0] shifted = crc << 1;
 
   assign out   = !msb;
-  assign ok    = ((crc ^ check) & mask) == 32'd0;
+  assign ok    = ok_r;
   assign value = crc;
 
   always @(posedge clk) begin
@@ -75,6 +79,13 @@ module fabric_crc (
         default: begin end
       endcase
     end
+  end
+
+  always @(posedge clk) begin
+    if (!rst_n)
+      ok_r <= 1'b0;
+    else
+      ok_r <= ((crc ^ check) & mask) == 32'd0;
   end
 
   always @(posedge clk) begin

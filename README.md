@@ -48,6 +48,7 @@ Individual commands include `make lint`, `make dead-check`, `make synth-check`,
 ## Documentation
 
 - [Architecture, ISA, and host protocol](docs/architecture.md)
+- [External hardware, pins, and clocks](docs/hardware.md)
 - [Dynamic verification](test/README.md)
 - [Formal verification](formal/README.md)
 - [Tiny Tapeout datasheet text](docs/info.md)

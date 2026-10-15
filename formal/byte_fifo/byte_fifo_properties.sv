@@ -25,7 +25,7 @@ module byte_fifo_properties;
   reg [7:0] expected [0:3];
   reg [2:0] expected_count = 3'd0;
   wire pop_accept = pop && expected_count != 3'd0;
-  wire push_accept = push && (expected_count != 3'd4 || pop_accept);
+  wire push_accept = push && expected_count != 3'd4;
   integer i;
 
   always @(posedge clk) begin
@@ -56,7 +56,7 @@ module byte_fifo_properties;
         default: expected_count <= expected_count;
       endcase
 
-      cover(full && push && pop);
+      cover(full && push && pop);   // the pop is accepted, the push is not
       cover(empty && push);
     end
   end

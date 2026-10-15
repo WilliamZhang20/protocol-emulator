@@ -2,7 +2,8 @@
 
 // CRC tile (32-bit configuration) against the mirror-image formulation used
 // by software: a right-shifting register with the bit-reversed polynomial.
-// The two agree on every absorb, emit, init, output bit and residue match.
+// The two agree on every absorb, emit, init, output bit and residue match
+// (the match one cycle late, since `ok` is registered).
 module fabric_crc_properties;
   (* gclk *) reg formal_timestep;
   reg clk = 1'b0;
@@ -69,13 +70,17 @@ module fabric_crc_properties;
   end
 
   reg past_valid = 1'b0;
-  always @(posedge clk) past_valid <= rst_n && configured;
+  reg past_match = 1'b0;
+  always @(posedge clk) begin
+    past_valid <= rst_n && configured;
+    past_match <= r == reverse(check_s);
+  end
 
   always @(*) begin
     if (rst_n && past_valid) begin
       assert(value == reverse(r));
       assert(out == !r[0]);
-      assert(ok == (r == reverse(check_s)));
+      assert(ok == past_match);     // registered compare
       cover(ok && enable && poly_s == 32'h04c11db7);
     end
   end

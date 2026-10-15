@@ -39,10 +39,33 @@ async def test_held_command_acts_once(dut):
     await start_clock(dut)
     await reset_top(dut)
     await host_command(dut, 0x6, 0x5)          # stage low nibble
-    dut.ui_in.value = 0x7A                     # commit 0xA5, held 5 cycles
-    await ClockCycles(dut.clk, 5)
+    dut.ui_in.value = 0x7A                     # commit 0xA5, held 8 cycles
+    await ClockCycles(dut.clk, 8)
     dut.ui_in.value = 0
-    await ClockCycles(dut.clk, 1)
+    await ClockCycles(dut.clk, 3)
     assert (await fifo_levels(dut) >> 3) & 0b111 == 1, "held push must act once"
     await host_command(dut, 0x7, 0xA)          # re-armed by 8'h00
     assert (await fifo_levels(dut) >> 3) & 0b111 == 2
+
+
+@cocotb.test()
+async def test_half_changed_byte_is_ignored(dut):
+    """An asynchronous host changes ui_in bits at different moments. The
+    byte seen for one cycle mid-change (here 0x0A, itself a nonzero byte)
+    must not act, or the real command 0x5A that follows would be lost."""
+    await start_clock(dut)
+    await reset_top(dut)
+    for address in (0x2A0, 0x2A1):
+        await host_command(dut, 0x1, address)
+        await host_command(dut, 0x2, address >> 4)
+        await host_command(dut, 0x3, address >> 8)
+        await host_command(dut, 0x4, 0xA)      # stage low nibble A
+        dut.ui_in.value = 0x0A                 # low bits arrive first ...
+        await ClockCycles(dut.clk, 1)
+        dut.ui_in.value = 0x5A                 # ... then the high bits
+        await ClockCycles(dut.clk, 2)
+        dut.ui_in.value = 0
+        await ClockCycles(dut.clk, 3)
+    # Command 5 commits {payload, staged low nibble} = 0xAA.
+    assert await read_sram(dut, 0x2A0) == 0xAA
+    assert await read_sram(dut, 0x2A1) == 0xAA

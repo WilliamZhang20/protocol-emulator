@@ -13,12 +13,14 @@ from cocotb_tests.fabric import (
     shifter_stop, shifter_word, timer_fall, timer_out, timer_rise, truth,
 )
 
-UART_TX_PIN, UART_RX_PIN = 0, 1
-SPI_CS, SPI_SCK, SPI_MOSI, SPI_MISO = 3, 4, 5, 6
-I2C_SCL, I2C_SDA = 1, 2
-PS2_CLK, PS2_DATA = 4, 5
-USB_DP, USB_DM = 0, 1
-ETH_TD_P, ETH_TD_N = 0, 1
+# Default pins follow the Tiny Tapeout recommended uio pinouts where one
+# exists (https://tinytapeout.com/specs/pinouts/); any program may remap.
+UART_TX_PIN, UART_RX_PIN = 1, 2                    # UART top row: TXD, RXD
+SPI_CS, SPI_MOSI, SPI_MISO, SPI_SCK = 0, 1, 2, 3   # SPI top row
+I2C_SCL, I2C_SDA = 2, 3                            # I2C top row
+PS2_CLK, PS2_DATA = 4, 5                           # no standard: bottom row
+USB_DP, USB_DM = 4, 5                              # no standard: bottom row
+ETH_TD_P, ETH_TD_N = 6, 7                          # no standard: bottom row
 
 
 # --------------------------------------------------------------------- UART
@@ -215,22 +217,25 @@ def usb_ls_transmit(bit_cycles: int) -> list[int]:
     p = Px8()
     tick = timer_rise(0)
     stuff = counter_ge(0)
-    # Rank 0 (cells 0-3) sees glue values registered; rank 1 (4-7) also
-    # sees rank 0 live. Registered cells read the same either way.
+    # Glue cells see each other registered. X is registered every cycle:
+    # nothing it depends on changes in the cycle before a tick, so the NRZI
+    # cell and the stuffing counter read the same bit a cycle later.
     x, g, dp, dm, absorb, emit, se0, nrzi = (glue(i) for i in range(8))
     p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 1, pulse=True,
             start=shifter_active(0), stop=fire(1))
     p.shifter(0, shift=g)
     # X: the bit for this period (stuffed 0, data, or FCS).
     p.glue(0, truth(lambda st, act, so, co: (not st) and (so if act else co)),
-           [stuff, shifter_active(0), shifter_out(0), CRC_OUT])
+           [stuff, shifter_active(0), shifter_out(0), CRC_OUT], registered=True)
     # G: a tick that consumes a source bit.
     p.glue(1, truth(lambda e, st: e and not st, 2), [tick, stuff])
     p.glue(2, truth(lambda k, s0: k and not s0, 2), [nrzi, se0])
     p.glue(3, truth(lambda k, s0: (not k) and not s0, 2), [nrzi, se0])
-    p.glue(4, truth(lambda gg, act, f0: gg and act and f0, 3),
-           [g, shifter_active(0), flag(0)])
-    p.glue(5, truth(lambda gg, act: gg and not act, 2), [g, shifter_active(0)])
+    # Absorb and emit repeat G's terms (tick and not stuffed) inline.
+    p.glue(4, truth(lambda e, st, act, f0: e and not st and act and f0),
+           [tick, stuff, shifter_active(0), flag(0)])
+    p.glue(5, truth(lambda e, st, act: e and not st and not act, 3),
+           [tick, stuff, shifter_active(0)])
     # SE0 latch: begins at a tick after the controller asks, but never
     # in place of a pending stuffed bit.
     p.glue(6, truth(lambda f1, st, q: f1 and (not st or q), 3),
@@ -280,7 +285,8 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     p.glue(3, truth(lambda dp, dm: not dp and not dm, 2),
            [pin_level(USB_DP), pin_level(USB_DM)])
     p.glue(4, truth(lambda r, f: r or f, 2), [pin_rise(USB_DP), pin_fall(USB_DP)])
-    p.glue(5, truth(lambda g, f0: g and f0, 2), [glue(2), flag(0)])
+    p.glue(5, truth(lambda e, st, f0: e and not st and f0, 3),
+           [tick, counter_ge(0), flag(0)])
     # Mid-bit sampling: sync (2) + pulse register (1) + resync (1) + tick.
     p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 3, pulse=True,
             start=glue(4), resync=glue(4), stop=glue(3))
@@ -339,8 +345,9 @@ def ethernet_10baset_link(frame_bytes: int) -> list[int]:
     p.timer(0, reload=1, phase=1, idle=1, start=ONE)
     p.shifter(0, shift=edge)
     p.glue(0, truth(lambda a, so, co, h: (so if a else co) == h),
-           [act, shifter_out(0), CRC_OUT, half])
-    p.glue(1, truth(lambda a, c1, c0: a or (c1 and not c0), 3), [act, in_crc, fcs_done])
+           [act, shifter_out(0), CRC_OUT, half], registered=True)
+    p.glue(1, truth(lambda a, c1, c0: a or (c1 and not c0), 3), [act, in_crc, fcs_done],
+           registered=True)
     p.glue(2, truth(lambda e, a, c1: e and a and c1, 3), [edge, act, in_crc])
     p.glue(3, truth(lambda e, a, c1: e and not a and c1, 3), [edge, act, in_crc])
     p.glue(4, truth(lambda t: t, 1), [timer_out(0)], registered=True)
@@ -350,8 +357,9 @@ def ethernet_10baset_link(frame_bytes: int) -> list[int]:
     p.glue(6, truth(lambda w, m, c0, d: m if w else (c0 and not d)),
            [window, manchester, fcs_done, idl_done])
     p.glue(7, truth(lambda w, m: w and not m, 2), [window, manchester])
-    # Measured from the end of the last bit: high for reload + 2 cycles.
-    p.timer(3, reload=TP_IDL_CYCLES - 2, phase=0, start=fcs_done, stop=idl_done)
+    # Measured from the end of the last bit, which reaches the pins a cycle
+    # after fcs_done (manchester and window are registered): reload + 1.
+    p.timer(3, reload=TP_IDL_CYCLES - 1, phase=0, start=fcs_done, stop=idl_done)
     p.counter(0, match=32, step=emit, clear=fire(0))
     p.counter(1, match=8, step=shifter_word(0), clear=fire(0))
     p.crc(width=32, poly=ETH_CRC32_POLY, check=ETH_CRC32_RESIDUE,
