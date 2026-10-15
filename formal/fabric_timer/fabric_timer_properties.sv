@@ -4,10 +4,7 @@
 // resync the next tick lands exactly phase+1 cycles later and then every
 // reload+1 cycles, hold freezes time, stop wins over everything, and the
 // output only moves on a tick (or returns to idle while stopped).
-module fabric_timer_properties;
-  (* gclk *) reg formal_timestep;
-  reg clk = 1'b0;
-  always @(posedge formal_timestep) clk <= !clk;
+module fabric_timer_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
   wire rst_n = reset_cycles >= 2;
 

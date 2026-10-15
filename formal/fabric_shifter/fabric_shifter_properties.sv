@@ -11,10 +11,7 @@
 //    the end line was seen (or the FIFO ran dry) is the last, and every
 //    word pulses `word` and is pushed;
 //  * FIFO handshakes never drop or invent bytes, and overrun is flagged.
-module fabric_shifter_properties;
-  (* gclk *) reg formal_timestep;
-  reg clk = 1'b0;
-  always @(posedge formal_timestep) clk <= !clk;
+module fabric_shifter_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
   wire rst_n = reset_cycles >= 2;
 

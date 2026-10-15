@@ -29,7 +29,47 @@ class Mutation:
     top: str
 
 
+CORE_SOURCES = (
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v",
+)
+
 MUTATIONS = (
+    Mutation(
+        "host_unsynchronized_accept", "host_interface", "host_interface.v",
+        "wire stable = host_sync == host_prev;",
+        "wire stable = 1'b1;",
+        ("host_interface.v",), "host_interface_properties.sv", "host_interface_properties",
+    ),
+    Mutation(
+        "host_no_post_increment", "host_interface", "host_interface.v",
+        "address_register <= address_register + 1'b1;",
+        "address_register <= address_register;",
+        ("host_interface.v",), "host_interface_properties.sv", "host_interface_properties",
+    ),
+    Mutation(
+        "px8_prefix_dropped", "px8_controller", "px8_controller.v",
+        "oreg     <= op == OP_PFIX ? opnd[11:0] : 12'd0;",
+        "oreg     <= op == OP_PFIX ? {8'd0, n} : 12'd0;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_djnz_off_by_one", "px8_controller", "px8_controller.v",
+        "OP_DJNZ: if (cnt_dec != 16'd0) next_pc = opnd[9:0];",
+        "OP_DJNZ: if (cnt != 16'd0) next_pc = opnd[9:0];",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "lut_enable_ignored", "fabric_lut", "fabric_lut.v",
+        "else if (lines[{1'b0, mode[4:0]}])",
+        "else",
+        ("fabric_lut.v",), "fabric_lut_properties.sv", "fabric_lut_properties",
+    ),
+    Mutation(
+        "core_arm_bypassed", "fabric_core", "protocol_emulator_core.v",
+        "wire        live = enable && armed;",
+        "wire        live = enable;",
+        (CORE_SOURCES), "fabric_core_properties.sv", "fabric_core_properties",
+    ),
     Mutation(
         "fifo_count_direction", "byte_fifo", "byte_fifo.v",
         "2'b10: count <= count + 1'b1;",
@@ -115,7 +155,7 @@ def run_mutation(mutation: Mutation, sby: str, scratch: Path) -> bool:
     harness = ROOT / "formal" / mutation.target / mutation.harness
     config = scratch / mutation.name / "mutation.sby"
     config.write_text(
-        "[tasks]\nbmc\n\n[options]\nmode bmc\ndepth 48\nmulticlock on\n\n"
+        "[tasks]\nbmc\n\n[options]\nmode bmc\ndepth 24\n\n"
         "[engines]\nsmtbmc boolector\n\n[script]\n"
         + "\n".join(f"read -formal -sv {source.name}" for source in sources)
         + f"\nread -formal -sv {harness.name}\nprep -top {mutation.top}\n\n"
@@ -127,7 +167,7 @@ def run_mutation(mutation: Mutation, sby: str, scratch: Path) -> bool:
         [sby, "-f", "-d", str(scratch / mutation.name / "run"), str(config), "bmc"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=600,
         check=False,
     )
     log = result.stdout + result.stderr

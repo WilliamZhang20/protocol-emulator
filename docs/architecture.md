@@ -349,17 +349,23 @@ idle.
 - `make dead-check`: Verilator `-Wall` unused/undriven signals plus yosys
   constant or never-active flip-flops (including `opt_dff -sat`). Currently
   0 findings.
-- cocotb: 16 tests covering the protocols above, using pins and host
+- cocotb: 22 tests covering the protocols above, using pins and host
   commands only, so they are gate-level safe.
-- Formal (`make formal`), each target against an independent reference:
-  - timer: a cycle-count model;
-  - shifter: a frame builder with a loopback round-trip check;
-  - counter: a per-mode reference;
-  - CRC: the mirror-image reflected LFSR;
-  - FIFO and SRAM: proofs.
+- Formal (`make formal`, details in [formal/README.md](../formal/README.md)),
+  ten targets, each against an independent reference:
+  - whole core: no pin driven before an arm write is possible, pins
+    released when stopped, FIFO channel handshakes, for any program;
+  - PX8: an ISA reference model running a symbolic program;
+  - host link: the pin contract under an asynchronous, glitching host
+    (unbounded proof);
+  - timer: a cycle-count model; shifter: a frame builder (including burst
+    mode) with a loopback round-trip check;
+  - counter, CRC, glue cell, FIFO and SRAM: unbounded proofs against a
+    per-mode reference, the reflected software LFSR, the truth table, an
+    age-ordered queue, and a tracked-address abstraction.
 
-  `mutation_check.py` confirms the harnesses reject eight representative
-  RTL bugs.
+  `mutation_check.py` confirms the harnesses reject 17 representative RTL
+  bugs, at least one per target.
 - Area (liberty-mapped synthesis, IHP sg13cmos5l): about 194k µm². That
   includes the register-output shifter and CRC changes, which traded about
   12k µm² for shorter paths.
@@ -376,6 +382,6 @@ idle.
   are a registered CRC match, glue cells that see each other registered,
   and a FIFO that no longer accepts a push into a full FIFO on a
   same-cycle pop. The SRAM paths keep +3.2 ns slow-corner slack.
-- **Formal depth:** the tile formal targets are BMC + cover. Unbounded PDR
-  did not converge on the 16-bit counters, and counter saturation at 255 is
-  beyond the BMC depth.
+- **Formal depth:** the timer, shifter, controller and core targets are
+  bounded. PDR and k-induction did not converge on the timer or shifter
+  within 30 minutes, and the controller and core are too large for PDR.

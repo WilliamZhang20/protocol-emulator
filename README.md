@@ -39,8 +39,8 @@ make verify
 - a standalone compile/test of the delivered foundry SRAM model;
 - cocotb UART, SPI, I²C, PS/2, USB and 10BASE-T tests through the top-level
   pins; and
-- formal SRAM, FIFO, timer, shifter, counter and CRC checks with cover traces
-  and mutation testing.
+- formal checks of every block and of the whole core, with unbounded proofs
+  where they converge, cover traces, and mutation testing.
 
 Individual commands include `make lint`, `make dead-check`, `make synth-check`,
 `make gds-config-check`, `make memory-test`, `make sim`, and `make formal`.

@@ -5,12 +5,11 @@ cover
 [options]
 bmc: mode bmc
 cover: mode cover
-bmc: depth 30
+bmc: depth 24
 cover: depth 48
-multiclock on
 
 [engines]
-bmc: smtbmc boolector
+bmc: smtbmc bitwuzla
 cover: btor btormc
 
 [script]

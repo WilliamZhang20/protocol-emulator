@@ -6,7 +6,6 @@ cover
 bmc: mode bmc
 cover: mode cover
 depth 24
-multiclock on
 
 [engines]
 bmc: smtbmc boolector

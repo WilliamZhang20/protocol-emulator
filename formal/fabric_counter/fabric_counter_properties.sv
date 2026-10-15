@@ -3,10 +3,7 @@
 // Counter tile against a reference written per mode: event counting and the
 // three run-length modes, saturation at 255, clear priority, the >= level,
 // and a hit pulse exactly on the step that first reaches the threshold.
-module fabric_counter_properties;
-  (* gclk *) reg formal_timestep;
-  reg clk = 1'b0;
-  always @(posedge formal_timestep) clk <= !clk;
+module fabric_counter_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
   wire rst_n = reset_cycles >= 2;
 

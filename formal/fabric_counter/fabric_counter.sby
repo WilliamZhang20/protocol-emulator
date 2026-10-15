@@ -1,15 +1,17 @@
 [tasks]
 bmc
+prove
 cover
 
 [options]
 bmc: mode bmc
+prove: mode prove
 cover: mode cover
 depth 24
-multiclock on
 
 [engines]
 bmc: smtbmc boolector
+prove: abc pdr
 cover: btor btormc
 
 [script]
