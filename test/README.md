@@ -48,6 +48,11 @@ under `formal/models/`; neither model is synthesized into the ASIC.
 
 `test_top.py` checks that a reset engine leaves every protocol pin undriven.
 
+`test_host.py` writes SRAM through commands `4`/`5` and reads it back through
+`B` at several addresses. That test caught a readback that returned the
+previous read's data. It also checks that a command held on the pins for
+several cycles acts exactly once.
+
 `test_uart.py` checks that every edge of a UART frame lands exactly one bit
 period apart, streams four bytes through a reference receiver, and runs TX and
 RX concurrently (full duplex) with frames deliberately misaligned.

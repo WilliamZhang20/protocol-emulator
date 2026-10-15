@@ -31,6 +31,6 @@ VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPS
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet
+COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_host,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

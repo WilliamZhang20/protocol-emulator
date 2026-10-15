@@ -308,6 +308,10 @@ followed by `8'h00`:
 | `C` | FIFO levels `{tx_full, rx_empty, tx_level[2:0], rx_level[2:0]}` |
 | `D` | Peek RX without popping |
 
+Every command must be followed by `8'h00`. A command held for several
+cycles acts once, and `8'h00` re-arms the decoder. Commands `4` and `6`
+share one low-nibble stage, so stage and commit one byte at a time.
+
 `HALT` makes the host clear `enable`, which returns every tile and pin to
 idle.
 
