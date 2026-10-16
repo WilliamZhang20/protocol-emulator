@@ -39,6 +39,7 @@ module fabric_shifter (
     input  wire [2:0]  cfg_addr,
     input  wire [15:0] cfg_data,
     input  wire [63:0] lines,
+    output wire        pulls,       // auto pull: owns its TX FIFO channel
     output wire        tx_request,
     input  wire        tx_grant,
     input  wire [7:0]  tx_data,
@@ -160,6 +161,7 @@ module fabric_shifter (
   assign rx_byte    = push_byte;
   assign out        = out_r;
   assign active     = active_r;
+  assign pulls      = enable && auto_pull;
   assign word_pulse = done || burst_next;
   assign stop_pulse = done && !start;
   assign rx_data    = rx_word;

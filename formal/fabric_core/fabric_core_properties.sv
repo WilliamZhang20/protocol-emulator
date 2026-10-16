@@ -3,9 +3,10 @@
 // The whole spatial core (controller, all tiles, pin cells, FIFO channel
 // ports) running an arbitrary program from a symbolic SRAM against
 // arbitrary pins and FIFO states. Properties that hold for every program:
-//  * arming: arming the fabric takes a config write to 0x31, whose last
-//    byte is WCF n=1 (8'h81); until the SRAM has returned that byte no pin
-//    is ever driven;
+//  * arming: arming the fabric takes a config write to 0x31, which ends
+//    in the byte WCF n=1 (8'h81) or, in a block config load, starts with
+//    the address byte 8'h31; until the SRAM has returned one of those
+//    bytes no pin is ever driven;
 //  * the engine stopped means the pins are released a cycle later;
 //  * FIFO channels: no pop from an empty FIFO, no push into a full one;
 //  * a disabled engine is not halted a cycle later.
@@ -55,7 +56,7 @@ module fabric_core_properties (input wire clk);
     past_enable <= enable;
     if (!rst_n)
       arm_byte_seen <= 1'b0;
-    else if (instruction_data == 8'h81)
+    else if (instruction_data == 8'h81 || instruction_data == 8'h31)
       arm_byte_seen <= 1'b1;
   end
 

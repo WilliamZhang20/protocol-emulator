@@ -32,8 +32,8 @@ of N checks every input sequence of N cycles from reset.
 | `fabric_counter` | BMC, proof, cover | Count, threshold level and hit pulse against a per-mode reference (event count, run of ones/zeros/equal bits) with clear priority, including saturation at 255. |
 | `fabric_crc` | BMC, proof, cover | The 32-bit configuration against the mirror-image reflected LFSR used by software on every absorb, emit, init, output bit and (registered) residue match. |
 | `fabric_lut` | BMC, proof, cover | The glue cell's combinational output is the addressed truth-table entry; the registered output loads it exactly on enable-line cycles and clears while disabled. |
-| `px8_controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch address, every side-effect output (config writes, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes. |
-| `fabric_core` | BMC (24 cycles), cover | The whole spatial core running any program from a symbolic SRAM against arbitrary pins and FIFO states: no pin is ever driven before the SRAM has returned the byte that ends every arm write (WCF n=1, 8'h81); a stopped engine releases the pins; no pop from an empty FIFO channel, no push into a full one; the controller feeds one channel at a time. |
+| `px8_controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch and data-read addresses, every side-effect output (config writes, including each word of a block config load, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes, including level waits that never retire in their first cycle. |
+| `fabric_core` | BMC (24 cycles), cover | The whole spatial core running any program from a symbolic SRAM against arbitrary pins and FIFO states: no pin is ever driven before the SRAM has returned a byte every arm write needs (`WCF` n=1, 8'h81, or a block entry's address byte 8'h31); a stopped engine releases the pins; no pop from an empty FIFO channel, no push into a full one; the controller feeds one channel at a time. |
 
 The proofs are unbounded (`abc pdr`). PDR did not converge on the timer or
 the shifter within 30 minutes, nor did k-induction (their reference models
@@ -44,7 +44,8 @@ the controller and the core, whose state is too large for PDR.
 Each target also has cover statements so over-constrained harnesses are
 visible: a pulled three-word burst framed by start and stop bits, a
 prefixed constant reaching `A` and a prefixed config write, an LDM data
-load, a DJNZ loop, a pin driven after arming, SRAM readback, and so on.
+load at `P`, a two-word block config load, a level wait, a DJNZ loop, a
+pin driven after arming, SRAM readback, and so on.
 
 ## Mutation check
 
@@ -55,7 +56,7 @@ target to reject every one (the repository RTL is never modified):
 | Target | Mutations |
 | --- | --- |
 | `host_interface` | accept without the two-cycle stability check; no address post-increment |
-| `px8_controller` | prefix bits dropped; DJNZ testing `C` before the decrement |
+| `px8_controller` | prefix bits dropped; DJNZ testing `C` before the decrement; level wait retiring in its first cycle; block data bytes swapped; block pointer stuck |
 | `fabric_lut` | registered cell ignoring its enable line |
 | `fabric_core` | arm bit bypassed (pins live as soon as the engine runs) |
 | `byte_fifo` | count direction reversed |

@@ -134,18 +134,23 @@ module protocol_emulator_core (
   wire [31:2] consume_mask = (event_consume && !event_index[5]) ?
       (30'd1 << (event_index[4:0] - 5'd2)) : 30'd0;
   wire [31:0] sticky_view = {sticky, 1'b1, 1'b0};
-  wire event_ready = event_index[5] ? lines[event_index] :
+  // The controller sees level lines one cycle late (see px8_controller),
+  // so no fabric path reaches its state in the same cycle.
+  reg  event_level;
+  wire event_ready = event_index[5] ? event_level :
                                       sticky_view[event_index[4:0]];
 
   always @(posedge clk) begin
     if (!rst_n || !enable) begin
       pulse_reg <= 30'd0;
+      event_level <= 1'b0;
       hit_reg   <= 2'd0;
       sticky    <= 30'd0;
       flags     <= 2'd0;
       armed     <= 1'b0;
     end else begin
       pulse_reg <= pulse_next;
+      event_level <= lines[{1'b1, event_index[4:0]}];
       hit_reg   <= c_hit;
       sticky    <= clear_events ? 30'd0 :
                    ((sticky & ~consume_mask) | pulse_reg);
@@ -157,14 +162,16 @@ module protocol_emulator_core (
   end
 
   // ---------------------------------------------------------- FIFO channels
-  // Shifter k owns channel k. The controller reaches either channel and
-  // yields to the shifter that owns it in the same cycle.
-  wire [1:0]  sh_tx_request, sh_rx_request;
+  // Shifter k owns channel k. The controller reaches either channel. A
+  // shifter that auto-pulls owns its TX FIFO outright, so the controller's
+  // PULL grant never depends on fabric lines; on RX the controller yields
+  // to a pending shifter push (a register).
+  wire [1:0]  sh_pulls, sh_tx_request, sh_rx_request;
   wire [15:0] sh_rx_byte;
   wire [1:0]  sh_tx_grant = sh_tx_request & ~tx_empty;
   wire [1:0]  sh_rx_grant = sh_rx_request & ~rx_full;
   wire [1:0]  cpu_select = cpu_channel ? 2'b10 : 2'b01;
-  wire cpu_tx_grant = cpu_tx_request && |(cpu_select & ~sh_tx_request & ~tx_empty);
+  wire cpu_tx_grant = cpu_tx_request && |(cpu_select & ~sh_pulls & ~tx_empty);
   wire cpu_rx_grant = cpu_rx_request && |(cpu_select & ~sh_rx_request & ~rx_full);
   assign tx_pop  = sh_tx_grant | (cpu_tx_grant ? cpu_select : 2'b00);
   assign rx_push = sh_rx_grant | (cpu_rx_grant ? cpu_select : 2'b00);
@@ -249,6 +256,7 @@ module protocol_emulator_core (
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || cfg_addr == 8'h32)),
       .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
       .lines(lines),
+      .pulls(sh_pulls[0]),
       .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
       .tx_data(tx_data[7:0]),
       .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
@@ -263,6 +271,7 @@ module protocol_emulator_core (
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || cfg_addr == 8'h33)),
       .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
       .lines(lines),
+      .pulls(sh_pulls[1]),
       .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
       .tx_data(tx_data[15:8]),
       .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),

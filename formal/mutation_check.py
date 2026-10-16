@@ -59,6 +59,26 @@ MUTATIONS = (
         ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
     ),
     Mutation(
+        "px8_level_wait_same_cycle", "px8_controller", "px8_controller.v",
+        "OP_WEV:  retire = event_ready && (waiting || !opnd[5]);",
+        "OP_WEV:  retire = event_ready;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_block_bytes_swapped", "px8_controller", "px8_controller.v",
+        "assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;",
+        "assign cfg_data      = block ? {acc[7:0], instruction_data} : acc;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_block_pointer_stuck", "px8_controller", "px8_controller.v",
+        """          if (!block_last)
+            ptr <= ptr + 10'd1;""",
+        """          if (!block_last)
+            ptr <= ptr;""",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
         "lut_enable_ignored", "fabric_lut", "fabric_lut.v",
         "else if (lines[{1'b0, mode[4:0]}])",
         "else",

@@ -83,22 +83,45 @@ def truth(fn, inputs: int = 4) -> int:
 
 
 # ------------------------------------------------------------------ assembler
-OP_PFIX, OP_LDC, OP_ADC, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
+OP_PFIX, OP_LDC, OP_SETP, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
 OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_PIN, OP_DLY, OP_OPR, OP_ANDC = range(8, 16)
 OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C = 1, 2, 3, 4, 5
-OPR_TXP, OPR_LDM = 7, 8
+OPR_TXP, OPR_LDM, OPR_CFG = 7, 8, 9
 
 
 class Px8:
-    """Tiny two-pass assembler. Branch targets always use three nibbles so
-    forward references have a fixed size."""
+    """Tiny two-pass assembler. Branch and data-pointer targets always use
+    three nibbles so forward references have a fixed size.
+
+    Consecutive config writes are collected and emitted as one block load
+    (SETP, SETC n, CFG) whose {addr, lo, hi} words are placed after the
+    code; a lone write stays LDC + WCF. A block load leaves C = 0 and moves
+    P, so set C and P after the config writes they must survive."""
 
     def __init__(self) -> None:
         self.code: list[int] = []
+        self.data: list[int] = []
         self.labels: dict[str, int] = {}
         self.fixups: list[tuple[int, int, str]] = []
+        self.data_fixups: list[tuple[int, int]] = []    # (code at, data offset)
+        self.pending: list[tuple[int, int]] = []
+
+    def _flush(self) -> None:
+        writes, self.pending = self.pending, []
+        if len(writes) == 1:
+            addr, value = writes[0]
+            self._emit(OP_LDC, value)
+            self._emit(OP_WCF, addr)
+        elif writes:
+            self.data_fixups.append((len(self.code), len(self.data)))
+            self.code += [0, 0, 0]
+            for addr, value in writes:
+                self.data += [addr, value & 0xFF, (value >> 8) & 0xFF]
+            self._emit(OP_SETC, len(writes))
+            self._emit(OP_OPR, OPR_CFG)
 
     def _emit(self, op: int, value: int) -> None:
+        self._flush()
         value &= 0xFFFF
         digits = []
         while True:
@@ -111,10 +134,12 @@ class Px8:
         self.code.append((op << 4) | digits[-1])
 
     def _branch(self, op: int, label: str) -> None:
+        self._flush()
         self.fixups.append((len(self.code), op, label))
         self.code += [0, 0, 0]
 
     def label(self, name: str) -> None:
+        self._flush()
         self.labels[name] = len(self.code)
 
     def ldc(self, v: int) -> None: self._emit(OP_LDC, v)
@@ -126,11 +151,13 @@ class Px8:
     def wev(self, line: int) -> None: self._emit(OP_WEV, line)
     def fire(self, n: int) -> None: self._emit(OP_FIRE, n)
     def dly(self, cycles: int) -> None: self._emit(OP_DLY, cycles)
-    def pin(self, p: int, v: int) -> None: self.code.append((OP_PIN << 4) | (v << 3) | p)
+    def setp(self, v: int) -> None: self._emit(OP_SETP, v)
+    def pin(self, p: int, v: int) -> None: self._emit(OP_PIN, (v << 3) | p)
     def j(self, label: str) -> None: self._branch(OP_J, label)
     def jz(self, label: str) -> None: self._branch(OP_JZ, label)
     def djnz(self, label: str) -> None: self._branch(OP_DJNZ, label)
     def halt(self) -> None: self._emit(OP_OPR, OPR_HALT)
+    def pull(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_PULL)
     def push(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
     def a_from_c(self) -> None: self._emit(OP_OPR, OPR_A_FROM_C)
@@ -138,21 +165,18 @@ class Px8:
     def ldm(self) -> None: self._emit(OP_OPR, OPR_LDM)
 
     def stream_sram_to_tx(self, start: int, end: int, channel: int = 0) -> None:
-        """Copy SRAM[start:end] into a TX FIFO (about 25 cycles a byte)."""
-        loop, done = f"_copy{len(self.code)}", f"_copied{len(self.code)}"
-        self.setc(start)
+        """Copy SRAM[start:end] into a TX FIFO (11 cycles a byte)."""
+        assert end > start
+        loop = f"_copy{len(self.code)}"
+        self.setp(start)
+        self.setc(end - start)
         self.label(loop)
         self.ldm()
         self.txp(channel)
-        self.a_from_c()
-        self.xrc(end)
-        self.jz(done)
-        self.j(loop)
-        self.label(done)
+        self.djnz(loop)
 
     def cfg(self, addr: int, value: int) -> None:
-        self.ldc(value)
-        self.wcf(addr)
+        self.pending.append((addr, value & 0xFFFF))
 
     def idle_forever(self) -> None:
         name = f"_idle{len(self.code)}"
@@ -160,14 +184,18 @@ class Px8:
         self.j(name)
 
     def assemble(self) -> list[int]:
+        self._flush()
         code = list(self.code)
-        for at, op, label in self.fixups:
-            target = self.labels[label]
+        targets = [(at, op, self.labels[label]) for at, op, label in self.fixups]
+        targets += [(at, OP_SETP, len(code) + offset)
+                    for at, offset in self.data_fixups]
+        for at, op, target in targets:
             code[at] = (OP_PFIX << 4) | ((target >> 8) & 0xF)
             code[at + 1] = (OP_PFIX << 4) | ((target >> 4) & 0xF)
             code[at + 2] = (op << 4) | (target & 0xF)
-        assert len(code) <= 1024, len(code)
-        return code
+        image = code + self.data
+        assert len(image) <= 1024, len(image)
+        return image
 
     # ------------------------------------------------------------- fabric
     def timer(self, k: int, *, reload: int, phase: int, start: int = ZERO,

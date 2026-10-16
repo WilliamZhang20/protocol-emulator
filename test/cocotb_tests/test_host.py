@@ -4,7 +4,11 @@ import cocotb
 from cocotb.triggers import ClockCycles
 
 from cocotb_tests.common import host_command, reset_top, start_clock, wait_until_halted
-from cocotb_tests.fabric import Px8, load_program, pop_rx, push_tx, select_channel, start_engine
+from cocotb_tests.fabric import (MODE_PUSH_PULL, Px8, flag, load_program, pop_rx, push_tx,
+                                 select_channel, start_engine)
+
+
+OPR_CFG_BYTE = 0xE9      # OPR 9: block config load
 
 
 async def read_sram(dut, address: int) -> int:
@@ -100,3 +104,36 @@ async def test_fifo_channels_are_separate(dut):
     await select_channel(dut, 1)
     assert await fifo_levels(dut) == 0b00_001_001   # ch1: host byte, one RX byte
     assert await pop_rx(dut) == 0xC3
+
+
+@cocotb.test()
+async def test_block_config_and_controller_pull(dut):
+    """A block config load (pin cells, flags, arm) drives the pins, and the
+    controller pulls host bytes from a channel no shifter owns and pushes
+    results back on it."""
+    await start_clock(dut)
+    await reset_top(dut)
+    p = Px8()
+    p.pin_cell(0, src=flag(0), mode=MODE_PUSH_PULL)
+    p.pin_cell(1, src=flag(1), mode=MODE_PUSH_PULL)
+    p.flags(0b10)
+    p.arm()
+    for _ in range(2):
+        p.pull(channel=1)
+        p.xrc(0xFF)
+        p.push(channel=1)
+    p.halt()
+    program = p.assemble()
+    assert OPR_CFG_BYTE in program, "the four writes must form one block"
+    await load_program(dut, program)
+    await select_channel(dut, 1)
+    await start_engine(dut)
+    await ClockCycles(dut.clk, 60)
+    assert int(dut.uio_oe.value) & 0b11 == 0b11
+    assert int(dut.uio_out.value) & 0b11 == 0b10
+    await push_tx(dut, 0x5A)
+    await push_tx(dut, 0x0F)
+    await wait_until_halted(dut)
+    assert await pop_rx(dut) == 0xA5
+    assert await pop_rx(dut) == 0xF0
+

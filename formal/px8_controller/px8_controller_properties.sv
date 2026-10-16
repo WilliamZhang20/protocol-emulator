@@ -59,11 +59,20 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   );
 
   // ---------------------------------------------------- reference model
-  localparam M_FETCH = 2'd0, M_EXEC = 2'd1, M_LOAD = 2'd2, M_HALT = 2'd3;
-  reg [1:0]  m_state = M_FETCH;
-  reg [9:0]  m_pc = 10'd0;
+  localparam M_FETCH = 3'd0, M_EXEC = 3'd1, M_LOAD = 3'd2, M_HALT = 3'd3,
+             M_CFG = 3'd4;
+  reg [2:0]  m_state = M_FETCH;
+  reg [9:0]  m_pc = 10'd0, m_p = 10'd0;
   reg [15:0] m_a = 16'd0, m_c = 16'd0, m_o = 16'd0;   // O as a full word
   reg [15:0] m_waited = 16'd0;                        // EXEC cycles so far
+  // Block config load: the k-th byte to arrive is ROM[P + k]; bytes come
+  // in {addr, lo, hi} triples and each triple is one config write.
+  reg [9:0]  m_q = 10'd0;                             // address of this byte
+  reg [1:0]  m_b = 2'd0;                              // its place in the triple
+  reg [7:0]  m_ba = 8'd0, m_lo = 8'd0;
+  reg [3:0]  m_words = 4'd0;                          // words done (cover)
+  wire [7:0]  block_byte = rom_at(m_q);
+  wire [15:0] block_data = {block_byte, m_lo};
 
   wire [7:0]  ins  = rom_at(m_pc);
   wire [3:0]  op   = ins[7:4];
@@ -73,10 +82,22 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   wire [3:0]  sub  = opnd[3:0];
   wire        exec = enable && m_state == M_EXEC;
 
+  // The SRAM reads the model expects: the fetch, a data read issued by LDM
+  // or by a CFG with words to load, and the block's next byte (none after
+  // its last byte has arrived).
+  wire in_block    = enable && m_state == M_CFG;
+  wire block_write = in_block && m_b == 2'd2;      // a triple completes
+  wire block_last  = block_write && m_c == 16'd1;
+  wire block_read  = in_block && !block_last;
+  wire ldm         = exec && opr && sub == 4'd8;
+  wire cfg_start   = exec && opr && sub == 4'd9 && m_c != 16'd0;
+  wire data_read   = ldm || cfg_start;
+
   reg m_retire;
   always @(*) begin
     case (op)
-      4'ha:    m_retire = event_ready;
+      // A level wait (lines 32-63) never retires in its first cycle.
+      4'ha:    m_retire = event_ready && (m_waited != 16'd0 || !opnd[5]);
       4'hd:    m_retire = m_waited == opnd;
       4'he:    m_retire = sub == 4'd2 ? tx_grant :
                           sub == 4'd3 ? rx_grant :
@@ -89,7 +110,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n || !enable) begin
-      m_state <= M_FETCH; m_pc <= 10'd0;
+      m_state <= M_FETCH; m_pc <= 10'd0; m_p <= 10'd0;
       m_a <= 16'd0; m_c <= 16'd0; m_o <= 16'd0; m_waited <= 16'd0;
     end else begin
       case (m_state)
@@ -101,7 +122,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
           case (op)
             4'h0: m_o <= opnd << 4;
             4'h1: m_a <= opnd;
-            4'h2: m_a <= m_a + opnd;
+            4'h2: m_p <= opnd[9:0];
             4'h3: m_a <= m_a ^ opnd;
             4'h4: m_pc <= opnd[9:0];
             4'h5: if (m_a == 16'd0) m_pc <= opnd[9:0];
@@ -118,15 +139,35 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
               4'd5: m_a <= m_c;
               4'd6: m_c <= m_a;
               4'd8: m_state <= M_LOAD;
+              4'd9: if (m_c != 16'd0) begin
+                m_state <= M_CFG; m_q <= m_p; m_b <= 2'd0; m_words <= 4'd0;
+              end
               default: begin end
             endcase
             default: begin end
           endcase
         end
         M_LOAD: begin
-          m_a <= {8'd0, rom_at(m_c[9:0])};
-          m_c <= m_c + 16'd1;
+          m_a <= {8'd0, rom_at(m_p)};
+          m_p <= m_p + 10'd1;
           m_state <= M_FETCH;
+        end
+        M_CFG: begin
+          m_q <= m_q + 10'd1;
+          m_b <= m_b == 2'd2 ? 2'd0 : m_b + 2'd1;
+          case (m_b)
+            2'd0: m_ba <= block_byte;
+            2'd1: m_lo <= block_byte;
+            default: begin
+              m_a <= block_data;
+              m_c <= m_c - 16'd1;
+              m_words <= m_words + 4'd1;
+              if (m_c == 16'd1) begin
+                m_state <= M_FETCH;
+                m_p <= m_q + 10'd1;
+              end
+            end
+          endcase
         end
         default: begin end
       endcase
@@ -140,13 +181,15 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   always @(*) begin
     if (rst_n && past_valid && enable) begin
       assert(halted == (m_state == M_HALT));
-      assert(instruction_read == (m_state == M_FETCH || (exec && opr && sub == 4'd8)));
+      assert(instruction_read == (m_state == M_FETCH || data_read || block_read));
       if (m_state == M_FETCH) assert(instruction_address == m_pc);
-      if (exec && opr && sub == 4'd8) assert(instruction_address == m_c[9:0]);
-      assert(cfg_we == (exec && op == 4'h8));
-      if (cfg_we) assert(cfg_addr == opnd[7:0] && cfg_data == m_a);
+      if (data_read)          assert(instruction_address == m_p);
+      if (block_read)         assert(instruction_address == m_q + 10'd1);
+      assert(cfg_we == ((exec && op == 4'h8) || block_write));
+      if (exec && op == 4'h8) assert(cfg_addr == opnd[7:0] && cfg_data == m_a);
+      if (block_write) assert(cfg_addr == m_ba && cfg_data == block_data);
       if (exec && op == 4'h9) assert(rd_addr == opnd[3:0]);
-      assert(event_consume == (exec && op == 4'ha && event_ready));
+      assert(event_consume == (exec && op == 4'ha && m_retire));
       if (exec && op == 4'ha) assert(event_index == opnd[5:0]);
       assert(clear_events == (exec && opr && sub == 4'd4));
       assert(fire == ((exec && op == 4'hb) ? (opnd[0] ? 2'b10 : 2'b01) : 2'b00));
@@ -165,7 +208,9 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
     if (rst_n && past_valid && enable) begin
       cover(halted && m_a == 16'h0123);            // a prefixed constant
       cover(cfg_we && cfg_addr == 8'h31);          // a prefixed config write
-      cover(m_state == M_LOAD && m_c == 16'd5);    // LDM from data
+      cover(m_state == M_LOAD && m_p == 10'd5);    // LDM from data at P
+      cover(block_last && m_words == 4'd1);       // a 2-word block
+      cover(exec && op == 4'ha && opnd[5] && m_retire);       // level wait
       cover(exec && op == 4'h6 && m_c == 16'd2 && m_pc == 10'd3);  // a DJNZ loop
     end
   end

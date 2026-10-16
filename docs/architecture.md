@@ -146,7 +146,8 @@ pulse mode reports every tick as a rise.
   auto-pushed, so a counter stepping on the word line with threshold
   N − 1 ends an N-word burst.
 - Shifter k owns FIFO channel k: it pulls from TX FIFO k and pushes to RX
-  FIFO k, so the two shifters never contend.
+  FIFO k, so the two shifters never contend. While it auto-pulls, the
+  controller's `PULL` on that channel waits (see below).
 - A received word waits in a one-byte slot for the RX FIFO. A second word
   before then sets `status[14]` (overrun).
 
@@ -207,20 +208,40 @@ is the controller pin left at 0.
 
 One-byte instructions `{op, n}`. Wider operands are built with
 Transputer-style prefixes (`opnd = O | n`; `PFIX` does `O = opnd << 4`).
-Each instruction takes 2 cycles plus any stall; `LDM` takes 3. `LDM` and
-`TXP` let a program stream data stored in SRAM after its code (for example
-an Ethernet frame) into a TX FIFO at about 25 cycles per byte. While a
-program feeds a TX FIFO, the host must not push to that channel.
+Each instruction takes 2 cycles plus any stall; `LDM` takes 3.
+
+The controller's job is to load the fabric and react to it, and the ISA
+is shaped around that rather than around computation:
+
+- **Block config load.** `CFG` writes `C` config words stored in SRAM at
+  `P` as `{addr, data[7:0], data[15:8]}` triples, at 3 cycles a word
+  (`LDC` + `WCF` with prefixes takes about 10). It leaves `P` past the
+  block, `C = 0` and `A` = the last word. The assembler turns every run
+  of two or more consecutive config writes into one block placed after
+  the code.
+- **Data pointer.** `LDM` reads `SRAM[P]` and advances `P`, so `C` stays
+  free as a loop counter: `SETP src; SETC n; loop: LDM; TXP; DJNZ loop`
+  streams data stored after the code (for example an Ethernet frame) into
+  a TX FIFO at 11 cycles a byte. While a program feeds a TX FIFO, the host
+  must not push to that channel.
+- **Waits see registered inputs.** Bit timing lives in the fabric, so the
+  controller never needs to react in the cycle a line changes. A `WEV` on
+  a level line (32–63) sees the level one cycle late and never retires in
+  its first execute cycle; pulse lines (2–31) are already sticky
+  registers. The controller's `PULL` never contends with a shifter: a
+  shifter that auto-pulls owns its TX FIFO outright, and the controller
+  pulls only channels whose shifter does not. On RX, the controller's
+  `PUSH` yields to a pending shifter push. No fabric line reaches the
+  controller's state in the same cycle.
 
 `PULL`, `PUSH` and `TXP` act on FIFO channel `opnd[4]` (a `PFIX 1` prefix
-selects channel 1). On a cycle where the shifter that owns the channel
-also wants it, the shifter goes first and the controller stalls.
+selects channel 1).
 
 | op | Name | Effect |
 | --- | --- | --- |
 | 0 | `PFIX` | `O = (O \| n) << 4` |
 | 1 | `LDC` | `A = opnd` |
-| 2 | `ADC` | `A = A + opnd` |
+| 2 | `SETP` | `P = opnd` (data pointer) |
 | 3 | `XRC` | `A = A ^ opnd` |
 | 4 | `J` | `pc = opnd` |
 | 5 | `JZ` | if `A == 0`: `pc = opnd` |
@@ -228,11 +249,11 @@ also wants it, the shifter goes first and the controller stalls.
 | 7 | `SETC` | `C = opnd` |
 | 8 | `WCF` | `cfg[opnd] = A` |
 | 9 | `RD` | `A = rd[opnd]` |
-| A | `WEV` | wait for line `opnd`; pulse lines are sticky and consumed |
+| A | `WEV` | wait for line `opnd`; pulse lines are sticky and consumed, level lines are seen one cycle late |
 | B | `FIRE` | pulse line `2 + opnd[0]` |
 | C | `PIN` | controller pin `n[2:0]` := `n[3]` |
 | D | `DLY` | stall `opnd` extra cycles |
-| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A`, 7 TXP (TX FIFO = `A`), 8 LDM (`A = SRAM[C]`, `C += 1`); PULL/PUSH/TXP use channel `opnd[4]` |
+| E | `OPR` | 0 NOP, 1 HALT, 2 PULL, 3 PUSH, 4 CLREV, 5 `A = C`, 6 `C = A`, 7 TXP (TX FIFO = `A`), 8 LDM (`A = SRAM[P]`, `P += 1`), 9 CFG (block config load of `C` words at `P`); PULL/PUSH/TXP use channel `opnd[4]` |
 | F | `ANDC` | `A = A & opnd` |
 
 Readback: 0 pins, 1/3 shifter data, 2/4 shifter status, 5/6 counter
