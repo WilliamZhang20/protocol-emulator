@@ -30,6 +30,13 @@
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
   "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
 
+  "//": "Setup margin and a post-route repair pass. Signoff gates only the typical",
+  "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
+  "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
+  "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
+  "RUN_POST_GRT_RESIZER_TIMING": 1,
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.0,
+
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
   "LINTER_INCLUDE_PDK_MODELS": 1,
