@@ -8,8 +8,28 @@
 // payload bytes are assembled from low/high nibble commands so all eight
 // pins remain available as host data.
 //
-// Command E selects the FIFO channel (one per shifter) that the TX, RX,
-// status and level commands use.
+// A command byte is {command[3:0], payload[3:0]}. Commands do one of two
+// things: change interface state (address, data, strobes, enable,
+// channel), or put a response on host_out. host_out is a register that
+// holds the last response until another response command replaces it.
+//
+// State commands (host_out keeps its last response):
+//   1 / 2 / 3  address[3:0] / [7:4] / [9:8] = payload
+//   4 / 6      low nibble = payload (for 5 / 7)
+//   5          SRAM[address] = {payload, low nibble}; address += 1
+//              (stopped only)
+//   7          TX push {payload, low nibble} (dropped if full)
+//   8          payload[0] start, payload[1] stop
+//   E          FIFO channel = payload[0]
+// Response commands (the answer goes to host_out):
+//   9          pop RX (if not empty)
+//   A          status {enable, halted, tx_full, rx_empty, 4'b0}
+//   B          SRAM[address], two cycles later (stopped only)
+//   C          levels {tx_full, rx_empty, tx_level, rx_level}
+//   D          peek RX without popping (if not empty)
+//
+// TX, RX, status and level commands use the channel selected by E (one
+// FIFO channel per shifter).
 //
 // One low-nibble stage and one data register serve both program writes and
 // TX pushes: a byte is committed by its high-nibble command, and the 8'h00
@@ -54,6 +74,13 @@ module host_interface (
   reg rx_pop_register;
   reg read_capture;            // SRAM data is valid the cycle after a read
   reg channel_register;
+
+  localparam CMD_ADDR_0   = 4'h1, CMD_ADDR_1  = 4'h2, CMD_ADDR_2 = 4'h3;
+  localparam CMD_PROG_LO  = 4'h4, CMD_PROG_HI = 4'h5;
+  localparam CMD_TX_LO    = 4'h6, CMD_TX_HI   = 4'h7;
+  localparam CMD_ENGINE   = 4'h8, CMD_RX_POP  = 4'h9, CMD_STATUS = 4'ha;
+  localparam CMD_SRAM_READ = 4'hb, CMD_LEVELS = 4'hc, CMD_RX_PEEK = 4'hd;
+  localparam CMD_CHANNEL  = 4'he;
 
   wire stable = host_sync == host_prev;
   wire command_valid = stable && host_sync != 8'h00 && !seen;
@@ -116,50 +143,63 @@ module host_interface (
       else if (command_valid) begin
         seen <= 1'b1;
         case (command)
-          4'h1: address_register[3:0] <= payload;
-          4'h2: address_register[7:4] <= payload;
-          4'h3: address_register[9:8] <= payload[1:0];
-          4'h4, 4'h6: low_nibble <= payload;
-          4'h5: begin
+          // ---- state commands: host_out keeps its last response
+          CMD_ADDR_0: address_register[3:0] <= payload;
+          CMD_ADDR_1: address_register[7:4] <= payload;
+          CMD_ADDR_2: address_register[9:8] <= payload[1:0];
+          // The low nibble waits here until its high-nibble command
+          // commits the whole byte.
+          CMD_PROG_LO, CMD_TX_LO: low_nibble <= payload;
+          // Program write: only while stopped, so the engine owns the SRAM
+          // whenever it runs.
+          CMD_PROG_HI: begin
             data_register <= {payload, low_nibble};
             if (!engine_enable_register)
               program_write_register <= 1'b1;
           end
-          4'h7: begin
+          // TX push: a byte sent to a full FIFO is dropped.
+          CMD_TX_HI: begin
             data_register <= {payload, low_nibble};
             if (!tx_full)
               tx_push_register <= 1'b1;
           end
-          4'h8: begin
+          CMD_ENGINE: begin
             if (payload[0])
               engine_enable_register <= 1'b1;
             if (payload[1])
               engine_enable_register <= 1'b0;
           end
-          4'h9: begin
+          CMD_CHANNEL: channel_register <= payload[0];
+
+          // ---- response commands: the answer goes to host_out
+          // Pop: the byte leaves the FIFO. On an empty FIFO nothing is
+          // popped and host_out keeps its last value (check status first).
+          CMD_RX_POP: begin
             if (!rx_empty) begin
               output_register <= rx_pop_data;
               rx_pop_register <= 1'b1;
             end
           end
-          4'ha: output_register <= {
+          CMD_STATUS: output_register <= {
               engine_enable_register, engine_halted, tx_full, rx_empty, 4'b0
           };
-          4'hb: begin
+          // SRAM readback (stopped only): the strobe goes out now, and the
+          // byte reaches host_out through read_capture above.
+          CMD_SRAM_READ: begin
             if (!engine_enable_register)
               program_read_register <= 1'b1;
           end
-          // Streaming aids: FIFO levels for polled drivers, and RX peek
-          // without consuming.
-          4'hc: output_register <= {
+          // Streaming aids: FIFO levels for polled drivers, and an RX peek
+          // that leaves the byte in the FIFO.
+          CMD_LEVELS: output_register <= {
               tx_full, rx_empty, tx_level, rx_level
           };
-          4'hd: begin
+          CMD_RX_PEEK: begin
             if (!rx_empty)
               output_register <= rx_pop_data;
           end
-          4'he: channel_register <= payload[0];
-          default: output_register <= output_register;
+          // 0 never reaches here (it separates commands); F is unused.
+          default: begin end
         endcase
       end
     end
