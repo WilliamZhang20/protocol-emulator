@@ -39,6 +39,20 @@ def flag(n: int) -> int: return 54 + n
 def glue(k: int) -> int: return 56 + k
 
 
+# ---------------------------------------------------------- byte layer
+# Byte tile t = {channel, rx, stage}: TX FIFO -> stage 0 -> stage 1 ->
+# shifter, and shifter -> stage 0 -> stage 1 -> RX FIFO.
+def tx_tile(channel: int, stage: int) -> int: return 4 * channel + stage
+def rx_tile(channel: int, stage: int) -> int: return 4 * channel + 2 + stage
+def tile_event(t: int) -> int: return 64 + t     # WEV index of tile t's event
+
+
+TILE_PASS, TILE_ESCAPE, TILE_UNESCAPE, TILE_TAG, TILE_CHECK, TILE_MATCH = range(6)
+# (c0, m0, c1, m1, esc, delim) escape maps; {c0, c1} = {delim, esc}.
+HDLC_CODES = (0x7E, 0x5E, 0x7D, 0x5D, 0x7D, 0x7E)   # async HDLC / PPP
+SLIP_CODES = (0xC0, 0xDC, 0xDB, 0xDD, 0xDB, 0xC0)   # RFC 1055
+
+
 # --------------------------------------------------------------- pin modes
 MODE_INPUT = 0
 MODE_PUSH_PULL = 1
@@ -158,10 +172,12 @@ class Px8:
     def djnz(self, label: str) -> None: self._branch(OP_DJNZ, label)
     def halt(self) -> None: self._emit(OP_OPR, OPR_HALT)
     def pull(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_PULL)
-    def push(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_PUSH)
+    def push(self, channel: int = 0, eop: bool = False, err: bool = False) -> None:
+        self._emit(OP_OPR, (int(err) << 6) | (int(eop) << 5) | (channel << 4) | OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
     def a_from_c(self) -> None: self._emit(OP_OPR, OPR_A_FROM_C)
-    def txp(self, channel: int = 0) -> None: self._emit(OP_OPR, (channel << 4) | OPR_TXP)
+    def txp(self, channel: int = 0, eop: bool = False, err: bool = False) -> None:
+        self._emit(OP_OPR, (int(err) << 6) | (int(eop) << 5) | (channel << 4) | OPR_TXP)
     def ldm(self) -> None: self._emit(OP_OPR, OPR_LDM)
 
     def stream_sram_to_tx(self, start: int, end: int, channel: int = 0) -> None:
@@ -224,10 +240,40 @@ class Px8:
         self.cfg(base + 1, frame)
         self.cfg(base + 2, shift | (sample << 6))
 
-    def shifter_burst(self, k: int, *, end: int) -> None:
+    def shifter_burst(self, k: int, *, end: int, on_eop: bool = False) -> None:
         """Burst mode: words follow each other with no pre/parity/post bits
-        until the word in which level line `end` has been high."""
-        self.cfg(0x32 + k, _level(end) | (1 << 5))
+        until the word in which level line `end` has been high (or, with
+        `on_eop`, a word pulled tagged eop)."""
+        self.cfg(0x32 + k, _level(end) | (1 << 5) | (int(on_eop) << 6))
+
+    # ------------------------------------------------------------ byte layer
+    def _tile(self, t: int, mode: int, a: int = 0, b: int = 0, c: int = 0) -> None:
+        base = 0x60 + 4 * t
+        self.cfg(base + 1, a)
+        self.cfg(base + 2, b)
+        self.cfg(base + 3, c)
+        self.cfg(base + 0, mode)
+
+    def tile_escape(self, t: int, codes: tuple, *, append: bool = True,
+                    prepend: bool = False) -> None:
+        c0, m0, c1, m1, esc, delim = codes
+        self._tile(t, TILE_ESCAPE | (int(append) << 3) | (int(prepend) << 4),
+                   c0 | (c1 << 8), m0 | (m1 << 8), esc | (delim << 8))
+
+    def tile_unescape(self, t: int, codes: tuple) -> None:
+        c0, m0, c1, m1, esc, delim = codes
+        self._tile(t, TILE_UNESCAPE, c0 | (c1 << 8), m0 | (m1 << 8), esc | (delim << 8))
+
+    def tile_tag(self, t: int, *, end: int = ZERO, err: int = ZERO, length: int = 0) -> None:
+        """Packets end when line `end` fires (or after `length` bytes); a
+        packet is flagged err if line `err` was high during it."""
+        self._tile(t, TILE_TAG, length, end | (err << 6))
+
+    def tile_check(self, t: int, *, verify: bool, xor: bool = False, init: int = 0) -> None:
+        self._tile(t, TILE_CHECK | (int(xor) << 5) | (int(verify) << 6), init)
+
+    def tile_match(self, t: int, *, value: int, mask: int = 0xFF) -> None:
+        self._tile(t, TILE_MATCH, value | (mask << 8))
 
     def shifter_data(self, k: int, value: int) -> None:
         self.cfg(0x10 + 4 * k, value)
@@ -313,9 +359,17 @@ async def select_channel(dut, channel: int) -> None:
     await host_command(dut, 0xE, channel)
 
 
-async def push_tx(dut, byte: int) -> None:
+async def push_tx(dut, byte: int, eop: bool = False) -> None:
+    """Push a byte; `eop` tags it as the last byte of a packet (command F)."""
     await host_command(dut, 0x6, byte)
-    await host_command(dut, 0x7, byte >> 4)
+    await host_command(dut, 0xF if eop else 0x7, byte >> 4)
+
+
+async def push_packet(dut, data: list[int]) -> None:
+    for i, byte in enumerate(data):
+        while await tx_full(dut):
+            pass
+        await push_tx(dut, byte, eop=i == len(data) - 1)
 
 
 async def start_engine(dut) -> None:
@@ -330,6 +384,28 @@ async def pop_rx(dut) -> int:
 async def rx_empty(dut) -> bool:
     await host_command(dut, 0xA)
     return bool(int(dut.uo_out.value) & 0x10)
+
+
+async def pop_rx_tagged(dut) -> tuple[int, bool, bool] | None:
+    """(byte, eop, err) of the next RX byte, or None if the FIFO is empty."""
+    await host_command(dut, 0xA)
+    status = int(dut.uo_out.value)
+    if status & 0x10:
+        return None
+    return await pop_rx(dut), bool(status & 0x02), bool(status & 0x01)
+
+
+async def drain_rx_tagged(dut, settle_polls: int = 40) -> list[tuple[int, bool, bool]]:
+    """Pop tagged bytes until the FIFO stays empty for `settle_polls` polls."""
+    received, idle = [], 0
+    while idle < settle_polls:
+        entry = await pop_rx_tagged(dut)
+        if entry is None:
+            idle += 1
+        else:
+            received.append(entry)
+            idle = 0
+    return received
 
 
 async def tx_full(dut) -> bool:

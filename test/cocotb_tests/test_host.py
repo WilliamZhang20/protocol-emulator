@@ -4,8 +4,8 @@ import cocotb
 from cocotb.triggers import ClockCycles
 
 from cocotb_tests.common import host_command, reset_top, start_clock, wait_until_halted
-from cocotb_tests.fabric import (MODE_PUSH_PULL, Px8, flag, load_program, pop_rx, push_tx,
-                                 select_channel, start_engine)
+from cocotb_tests.fabric import (MODE_PUSH_PULL, Px8, drain_rx_tagged, flag, load_program,
+                                 pop_rx, push_tx, select_channel, start_engine)
 
 
 OPR_CFG_BYTE = 0xE9      # OPR 9: block config load
@@ -136,4 +136,32 @@ async def test_block_config_and_controller_pull(dut):
     await wait_until_halted(dut)
     assert await pop_rx(dut) == 0xA5
     assert await pop_rx(dut) == 0xF0
+
+
+@cocotb.test()
+async def test_packet_tags_cross_host_and_controller(dut):
+    """The host tags a byte eop (command F); the controller sees the tag in
+    A[8] after PULL, and its own PUSH can tag a byte eop and err, which the
+    host reads back in status."""
+    await start_clock(dut)
+    await reset_top(dut)
+    p = Px8()
+    p.arm()
+    for n in range(2):
+        p.pull(channel=1)
+        p.push(channel=1)                # the byte itself, untagged
+        p.andc(0x100)                    # A[8]: the eop tag
+        p.jz(f"more{n}")
+        p.ldc(0xEE)
+        p.push(channel=1, eop=True, err=True)
+        p.label(f"more{n}")
+    p.halt()
+    await load_program(dut, p.assemble())
+    await select_channel(dut, 1)
+    await push_tx(dut, 0x12)
+    await push_tx(dut, 0x34, eop=True)
+    await start_engine(dut)
+    await wait_until_halted(dut)
+    assert await drain_rx_tagged(dut, settle_polls=4) == [
+        (0x12, False, False), (0x34, False, False), (0xEE, True, True)]
 

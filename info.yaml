@@ -25,6 +25,7 @@ project:
     - "fabric_counter.v"
     - "fabric_crc.v"
     - "fabric_lut.v"
+    - "byte_tile.v"
     - "program_memory.v"
     - "byte_fifo.v"
     - "host_interface.v"

@@ -24,6 +24,10 @@
 //          {addr, data[7:0], data[15:8]} at P; then P += 3C, C = 0 and
 //          A = the last word)
 //        PULL, PUSH and TXP use FIFO channel opnd[4] (PFIX 1 for channel 1).
+//        FIFO bytes carry tags {err, eop}: PULL loads A = {err, eop, byte},
+//        and PUSH and TXP tag their byte eop when opnd[5] is set and err
+//        when opnd[6] is (on TX, err asks for an injected error).
+//   WEV opnd 64+t waits for byte tile t's event.
 //
 // The controller only reacts to the fabric; bit timing never depends on
 // it. So waits see registered inputs: a WEV on a level line (32-63) sees
@@ -45,7 +49,7 @@ module px8_controller (
     input  wire [15:0] rd_data,
     input  wire        event_ready,
     output wire        event_consume,
-    output wire [5:0]  event_index,
+    output wire [6:0]  event_index,
     output wire        clear_events,
     output wire [1:0]  fire,
     output wire        pin_we,
@@ -54,12 +58,14 @@ module px8_controller (
     output wire        channel,
     output wire        tx_request,
     input  wire        tx_grant,
-    input  wire [7:0]  tx_data,
+    input  wire [9:0]  tx_data,        // {err, eop, byte}
     output wire        tx_push,
     input  wire        tx_space,
     output wire        rx_request,
     input  wire        rx_grant,
     output wire [7:0]  rx_data,
+    output wire        push_eop,       // PUSH/TXP tag the byte eop
+    output wire        push_err,       // ... and err
     output wire        halted
 );
   localparam ST_FETCH = 3'd0;
@@ -148,7 +154,7 @@ module px8_controller (
   assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;
   assign rd_addr       = opnd[3:0];
   assign event_consume = exec && op == OP_WEV && retire;
-  assign event_index   = opnd[5:0];
+  assign event_index   = opnd[6:0];
   assign clear_events  = exec && op == OP_OPR && opnd[3:0] == 4'd4;
   assign fire          = (exec && op == OP_FIRE) ?
                          (opnd[0] ? 2'b10 : 2'b01) : 2'b00;
@@ -159,6 +165,8 @@ module px8_controller (
   assign tx_request    = exec && is_pull;
   assign rx_request    = exec && is_push;
   assign rx_data       = acc[7:0];
+  assign push_eop      = opnd[5];
+  assign push_err      = opnd[6];
   assign tx_push       = exec && is_txp && tx_space;
   assign halted        = state == ST_HALT;
 
@@ -198,7 +206,7 @@ module px8_controller (
               OP_OPR: begin
                 case (opnd[3:0])
                   4'd1: state <= ST_HALT;
-                  4'd2: acc <= {8'd0, tx_data};
+                  4'd2: acc <= {6'd0, tx_data};
                   4'd5: acc <= cnt;
                   4'd6: cnt <= acc;
                   4'd9: if (cnt != 16'd0) begin

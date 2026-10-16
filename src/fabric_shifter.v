@@ -18,6 +18,12 @@
 //   3 io     [5:0] start line  [10:6] input level (signal space 32-63)
 //            [11] auto pull TX FIFO  [12] auto push RX FIFO
 //   4 burst  [4:0] burst-end level (signal space 32-63)  [5] burst mode
+//            [6] a pulled byte tagged eop also ends the burst
+//
+// FIFO bytes carry tags. TX: a byte pulled tagged err is sent with its
+// parity bit inverted (error injection). RX: an auto-pushed byte is tagged
+// eop when it is the last word of a burst frame, and err when its frame
+// ended with a wrong parity bit or a wrong post bit.
 //
 // A frame starts when the start line is high, or (start line 0 with auto
 // pull) whenever the TX FIFO grants a byte. A new frame may start in the
@@ -29,8 +35,9 @@
 // first data bit, so pre, parity and post bits appear only around the
 // whole burst. The next word is pulled from the TX FIFO (auto pull) or is
 // the data register again. The word during which the burst-end line has
-// been high (or auto pull finds the FIFO empty at its end) is the last one;
-// parity covers that word only.
+// been high (or auto pull finds the FIFO empty at its end, or, with [6],
+// the word was pulled with the eop tag) is the last one; parity covers
+// that word only.
 module fabric_shifter (
     input  wire        clk,
     input  wire        rst_n,
@@ -43,9 +50,13 @@ module fabric_shifter (
     output wire        tx_request,
     input  wire        tx_grant,
     input  wire [7:0]  tx_data,
+    input  wire        tx_eop,
+    input  wire        tx_err,
     output wire        rx_request,
     input  wire        rx_grant,
     output wire [7:0]  rx_byte,
+    output wire        rx_eop,
+    output wire        rx_err,
     output wire        out,
     output wire        active,
     output wire        word_pulse,
@@ -57,17 +68,21 @@ module fabric_shifter (
   reg [15:0] frame;
   reg [11:0] step;
   reg [12:0] io;
-  reg [5:0]  burst;
+  reg [6:0]  burst;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
+  reg        par_cap, post_wrong;    // RX framing check (see below)
   reg [4:0]  index;
   reg        active_r;
   reg        lead_wait;
   reg        push_pending;
   reg [7:0]  push_byte;
+  reg        push_eop, push_err;
   reg        overrun;
   reg        out_r;
   reg        burst_end_seen;
+  reg        word_eop;           // the word in flight was pulled tagged eop
+  reg        word_err;           // ... or tagged err: invert its parity bit
 
   wire [4:0] pre_n     = {3'b0, frame[5:4]};
   wire       pre_val   = frame[6];
@@ -121,7 +136,7 @@ module fabric_shifter (
       else if (i < data_end)
         frame_bit_at = w[msb_first ? (frame[3:0] - raw) : raw];
       else if (i < par_end)
-        frame_bit_at = (^(w & len_mask)) ^ odd_parity;
+        frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;
       else
         frame_bit_at = post_val;
     end
@@ -140,7 +155,7 @@ module fabric_shifter (
   // A burst continues past this word's last data bit unless the end line
   // has been seen; with auto pull it also needs the next byte.
   wire burst_want = enable && burst_mode && index == data_last && end_evt &&
-                    !(burst_end_seen || levels[burst[4:0]]);
+                    !(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));
   wire burst_next = burst_want && (!auto_pull || tx_grant);
   wire frame_end = enable && at_last && end_evt;
   wire done = frame_end && !burst_next;
@@ -153,12 +168,24 @@ module fabric_shifter (
       ((rx_word & ~data_bit_mask) | (in_bit ? data_bit_mask : 16'd0)) :
       rx_word;
 
+  // Received framing check by bit position, including this cycle's sample
+  // (any number of samples per bit): the last parity sample must match the
+  // data, and every post sample must equal the post value.
+  wire post_sample = sample_now && !in_pre && !in_data;
+  wire at_parity   = index < par_end;            // past the data bits
+  wire par_now  = (post_sample && at_parity) ? in_bit : par_cap;
+  wire post_bad = post_wrong || (post_sample && !at_parity && in_bit != post_val);
+  wire par_bad  = frame[11:10] != 2'd0 &&
+                  par_now != ((^(rx_next & len_mask)) ^ odd_parity);
+
   // Requested from frame_end, not done, so the grant never feeds back into
   // its own request; the two differ only when burst_want already requests.
   assign tx_request = auto_pull &&
       (burst_want || (enable && (!active_r || frame_end) && trigger));
   assign rx_request = push_pending;
   assign rx_byte    = push_byte;
+  assign rx_eop     = push_eop;
+  assign rx_err     = push_err;
   assign out        = out_r;
   assign active     = active_r;
   assign pulls      = enable && auto_pull;
@@ -172,13 +199,13 @@ module fabric_shifter (
       frame <= 16'd0;
       step  <= 12'd0;
       io    <= 13'd0;
-      burst <= 6'd0;
+      burst <= 7'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
         3'd1: frame <= cfg_data;
         3'd2: step  <= cfg_data[11:0];
         3'd3: io    <= cfg_data[12:0];
-        3'd4: burst <= cfg_data[5:0];
+        3'd4: burst <= cfg_data[6:0];
         default: begin end
       endcase
     end
@@ -222,13 +249,19 @@ module fabric_shifter (
     if (!rst_n || !enable) begin
       rx_word      <= 16'd0;
       post_cap     <= 4'd0;
+      par_cap      <= 1'b0;
+      post_wrong   <= 1'b0;
       index        <= 5'd0;
       active_r     <= 1'b0;
       lead_wait    <= 1'b0;
       push_pending <= 1'b0;
       push_byte    <= 8'd0;
+      push_eop     <= 1'b0;
+      push_err     <= 1'b0;
       overrun      <= 1'b0;
       burst_end_seen <= 1'b0;
+      word_eop     <= 1'b0;
+      word_err     <= 1'b0;
     end else begin
       if (rx_grant)
         push_pending <= 1'b0;
@@ -238,14 +271,22 @@ module fabric_shifter (
         push_pending <= 1'b1;
         // Include a data bit captured on this same cycle.
         push_byte <= rx_next[7:0];
+        push_eop  <= done && burst_mode;
+        push_err  <= done && (post_bad || par_bad);
       end
 
+      if (start || burst_next) begin
+        word_eop <= auto_pull && tx_eop;
+        word_err <= auto_pull && tx_err;
+      end
       if (start) begin
         active_r  <= 1'b1;
         index     <= 5'd0;
         lead_wait <= lead;
         rx_word   <= 16'd0;
         post_cap  <= 4'd0;
+        par_cap   <= 1'b0;
+        post_wrong <= 1'b0;
         burst_end_seen <= 1'b0;
       end else if (burst_next) begin
         index     <= pre_n;
@@ -255,8 +296,13 @@ module fabric_shifter (
         if (levels[burst[4:0]])
           burst_end_seen <= 1'b1;
         rx_word <= rx_next;
-        if (sample_now && !in_pre && !in_data)
+        if (post_sample) begin
           post_cap <= {post_cap[2:0], in_bit};
+          if (at_parity)
+            par_cap <= in_bit;
+          else if (in_bit != post_val)
+            post_wrong <= 1'b1;
+        end
         if (shift_evt) begin
           if (lead_wait)
             lead_wait <= 1'b0;

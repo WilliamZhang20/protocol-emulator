@@ -7,7 +7,8 @@ from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock
 from cocotb_tests.fabric import (
-    Bus, load_program, pop_rx, push_tx, rx_empty, select_channel, start_engine,
+    Bus, drain_rx_tagged, load_program, pop_rx, push_tx, rx_empty, select_channel,
+    start_engine,
 )
 from cocotb_tests.protocols import (
     UART_RX_PIN, UART_TX_PIN, framed_burst_loop, uart_dual_transmit, uart_full_duplex,
@@ -142,7 +143,8 @@ async def test_fifo_channels_stream_independently(dut):
 async def test_burst_frames_words_without_inner_framing(dut):
     """Burst mode: start bit, three bytes back to back, parity over the last
     byte, stop bit. The transmitter's bit stream is checked bit by bit and
-    replayed into the receiver, which pushes each byte on its own."""
+    replayed into the receiver, which pushes each byte on its own and tags
+    the frame's last byte eop."""
     await start_clock(dut)
     await reset_top(dut)
     bus = Bus(dut)
@@ -173,7 +175,5 @@ async def test_burst_frames_words_without_inner_framing(dut):
         await ClockCycles(dut.clk, BIT)
     await ClockCycles(dut.clk, 2 * BIT)
     await select_channel(dut, 1)
-    received = []
-    while not await rx_empty(dut):
-        received.append(await pop_rx(dut))
-    assert received == data
+    assert await drain_rx_tagged(dut) == [(0xA7, False, False), (0x3C, False, False),
+                                          (0x01, True, False)]

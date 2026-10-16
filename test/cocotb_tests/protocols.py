@@ -9,8 +9,9 @@ values absorb a fixed, documented latency.
 from cocotb_tests.fabric import (
     CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RUN_ONES,
     Px8, counter_ge, fire, flag, glue, pin_fall, pin_level,
-    pin_rise, rd_shifter_data, rd_shifter_status, shifter_active, shifter_out,
-    shifter_stop, shifter_word, timer_fall, timer_out, timer_rise, truth,
+    pin_rise, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
+    shifter_stop, shifter_word, tile_event, timer_fall, timer_out, timer_rise, truth,
+    tx_tile,
 )
 
 # Default pins follow the Tiny Tapeout recommended uio pinouts where one
@@ -39,7 +40,7 @@ def uart_full_duplex(bit_cycles: int) -> list[int]:
     # middle of the start bit, net of synchronizer latency) and the shifter.
     p.timer(1, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
             start=pin_fall(UART_RX_PIN), stop=shifter_stop(1))
-    p.shifter(1, pre=1, post=1, shift=timer_rise(1), sample=timer_rise(1))
+    p.shifter(1, pre=1, post=1, post_val=1, shift=timer_rise(1), sample=timer_rise(1))
     p.shifter_io(1, start=pin_fall(UART_RX_PIN),
                  data_in=pin_level(UART_RX_PIN), push=True)
     p.shifter_io(0, pull=True)
@@ -80,11 +81,112 @@ def framed_burst_loop(bit_cycles: int, words: int) -> list[int]:
         p.shifter_burst(k, end=counter_ge(k))
     p.shifter(0, pre=1, pre_val=0, post=1, post_val=1, parity=1, idle=1,
               shift=timer_rise(0))
-    p.shifter(1, pre=1, post=1, parity=1, shift=timer_rise(1), sample=timer_rise(1))
+    p.shifter(1, pre=1, post=1, post_val=1, parity=1, shift=timer_rise(1),
+              sample=timer_rise(1))
     p.pin_cell(UART_TX_PIN, src=shifter_out(0), mode=MODE_PUSH_PULL)
     p.shifter_io(0, pull=True)
     p.shifter_io(1, start=pin_fall(UART_RX_PIN),
                  data_in=pin_level(UART_RX_PIN), push=True)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
+# ------------------------------------------------- packets over UART (bytes)
+def _uart_tx(p: Px8, k: int, bit_cycles: int, pin: int, **frame) -> None:
+    p.timer(k, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
+            start=shifter_active(k), stop=shifter_stop(k))
+    p.shifter(k, pre=1, pre_val=0, post=1, post_val=1, idle=1,
+              shift=timer_rise(k), **frame)
+    p.pin_cell(pin, src=shifter_out(k), mode=MODE_PUSH_PULL)
+
+
+def _uart_rx(p: Px8, k: int, timer: int, bit_cycles: int, pin: int, **frame) -> None:
+    p.timer(timer, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
+            start=pin_fall(pin), stop=shifter_stop(k))
+    p.shifter(k, pre=1, post=1, post_val=1, shift=timer_rise(timer),
+              sample=timer_rise(timer), **frame)
+    p.shifter_io(k, start=pin_fall(pin), data_in=pin_level(pin), push=True)
+
+
+def uart_packet_link(bit_cycles: int, codes: tuple, *, prepend: bool,
+                     xor: bool = False,
+                     program_packets: tuple = ()) -> list[int]:
+    """Byte-stuffed packets with a checksum over 8N1 UART, sent on the TX
+    pin and received back from the same pin.
+
+    TX (channel 0): CHECK appends a checksum, ESCAPE stuffs the delimiter
+    and escape bytes and frames the packet with the delimiter. RX (shifter
+    1, channel 1): UNESCAPE delimits and unstuffs, CHECK verifies; the host
+    sees each packet's last byte (the checksum) tagged eop, and err if the
+    checksum failed. `program_packets` are (bytes, inject_error) sent by
+    the controller after the host's packets."""
+    p = Px8()
+    _uart_tx(p, 0, bit_cycles, UART_TX_PIN)
+    p.shifter_io(0, pull=True)
+    p.tile_check(tx_tile(0, 0), verify=False, xor=xor)
+    p.tile_escape(tx_tile(0, 1), codes, append=True, prepend=prepend)
+    _uart_rx(p, 1, 1, bit_cycles, UART_TX_PIN)
+    p.tile_unescape(rx_tile(1, 0), codes)
+    p.tile_check(rx_tile(1, 1), verify=True, xor=xor)
+    p.arm()
+    for data, inject in program_packets:
+        for i, byte in enumerate(data):
+            last = i == len(data) - 1
+            p.ldc(byte)
+            p.txp(0, eop=last, err=last and inject)
+    p.idle_forever()
+    return p.assemble()
+
+
+MODBUS_DONE_PIN = 5
+
+
+def idle_framed_receiver(bit_cycles: int, gap_bits: int, address: int) -> list[int]:
+    """Modbus-RTU-style receiver: packets are delimited by line idle time,
+    and only packets whose first byte is `address` reach the host.
+
+    The bit layer finds the gaps: glue cell 0 marks every RX pin edge and
+    restarts timer 2, which fires only after `gap_bits` without an edge.
+    The byte layer packetizes on that event (TAG) and filters on the
+    address (MATCH). The controller waits for the first match and then
+    raises a pin."""
+    p = Px8()
+    _uart_rx(p, 0, 1, bit_cycles, UART_RX_PIN)
+    edge = glue(0)
+    p.glue(0, truth(lambda r, f: r or f, 2),
+           [pin_rise(UART_RX_PIN), pin_fall(UART_RX_PIN)], registered=True)
+    gap = gap_bits * bit_cycles
+    p.timer(2, reload=gap - 1, phase=gap - 1, pulse=True,
+            start=pin_fall(UART_RX_PIN), resync=edge)
+    p.tile_tag(rx_tile(0, 0), end=timer_rise(2))
+    p.tile_match(rx_tile(0, 1), value=address)
+    p.pin_cell(MODBUS_DONE_PIN, cpu=True, mode=MODE_PUSH_PULL)
+    p.arm()
+    p.wev(tile_event(rx_tile(0, 1)))
+    p.pin(MODBUS_DONE_PIN, 1)
+    p.idle_forever()
+    return p.assemble()
+
+
+def uart_packet_bursts(bit_cycles: int) -> list[int]:
+    """Each host packet is one burst frame: a start bit, the packet's bytes
+    back to back, even parity over the last byte, a stop bit. The burst
+    ends on the byte tagged eop; nothing counts words."""
+    p = Px8()
+    _uart_tx(p, 0, bit_cycles, UART_TX_PIN, parity=1)
+    p.shifter_burst(0, end=flag(0), on_eop=True)    # flag 0 stays low
+    p.shifter_io(0, pull=True)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
+def uart_receiver(bit_cycles: int, *, parity: int) -> list[int]:
+    """8-bit UART receiver on the RX pin (shifter 0, channel 0); bytes whose
+    parity or stop bit is wrong reach the host tagged err."""
+    p = Px8()
+    _uart_rx(p, 0, 1, bit_cycles, UART_RX_PIN, parity=parity)
     p.arm()
     p.idle_forever()
     return p.assemble()
@@ -123,70 +225,84 @@ def spi_master(mode: int, half_cycles: int) -> list[int]:
 
 # ---------------------------------------------------------------------- I2C
 class _I2c:
-    """I2C master: timer 0 drives SCL (held while a slave stretches it),
-    shifter 0 drives SDA and samples it on the observed SCL rising edge.
-    START, repeated START, and STOP are controller pin sequences."""
+    """I2C master, every edge timed by the fabric. Bytes: timer 0 drives SCL
+    (held while a slave stretches it), shifter 0 drives SDA and samples it
+    on the observed SCL rising edge. Conditions (START, repeated START,
+    STOP) are short two-pin patterns: shifter 0 plays the SDA pattern and
+    shifter 1 the SCL pattern, both stepped by timer 1 every half period;
+    timer 1 freezes while SCL is released but still low, so a stretching
+    slave is honoured here too. The controller only chooses which
+    condition or byte comes next; it never drives a pin.
+
+    No pin's rest level is ever reconfigured (a configuration write would
+    move the pin at once): SDA rests released, which is legal after every
+    condition because SCL is low then, and SCL rests at the last bit of
+    the last condition, captured by a registered glue cell.
+
+    Glue: 0 SCL (the condition pattern while one plays, else timer 0 or
+    the rest level), 1 shifter 0 start (either FIRE), 2 shifter 0 step (a
+    byte tick or a condition tick), 3 SCL rest, inverted so it powers up
+    released, 4 byte phase (starts timer 0), 5 condition stretch."""
 
     def __init__(self, half_cycles: int) -> None:
         self.h = half_cycles
         p = self.p = Px8()
-        p.pin(I2C_SCL, 1)
-        p.pin(I2C_SDA, 1)
-        self._cpu_owns_bus()
+        byte_phase = self.byte_phase = glue(4)
+        self.step = glue(2)
+        # Timer 0 idles low and runs only in a byte, where the rest is low.
+        p.glue(0, truth(lambda a1, c, t, rest_n: c if a1 else (t or not rest_n)),
+               [shifter_active(1), shifter_out(1), timer_out(0), glue(3)])
+        p.glue(1, truth(lambda f0, f1: f0 or f1, 2), [fire(0), fire(1)])
+        p.glue(2, truth(lambda b, c: b or c, 2), [timer_fall(0), timer_rise(1)])
+        p.glue(3, truth(lambda a1, c, rest_n: (not c) if a1 else rest_n, 3),
+               [shifter_active(1), shifter_out(1), glue(3)], registered=True)
+        p.glue(5, truth(lambda c, scl: c and not scl, 2),
+               [shifter_out(1), pin_level(I2C_SCL)])
+        p.glue(4, truth(lambda a0, a1: a0 and not a1, 2),
+               [shifter_active(0), shifter_active(1)])
         p.timer(0, reload=half_cycles - 1, phase=half_cycles - 1, idle=0,
-                start=shifter_active(0), stop=shifter_stop(0),
+                start=byte_phase, stop=shifter_stop(0),
                 hold=pin_level(I2C_SCL), hold_invert=True)
-        self._configure_shifter(1)
-        p.shifter_io(0, start=fire(0), data_in=pin_level(I2C_SDA))
+        p.timer(1, reload=half_cycles - 1, phase=half_cycles - 1, idle=1, pulse=True,
+                start=shifter_active(1), stop=shifter_stop(1), hold=glue(5))
+        p.shifter(0, idle=1, shift=self.step)
+        p.shifter(1, shift=timer_rise(1))
+        p.shifter_io(0, start=glue(1), data_in=pin_level(I2C_SDA))
+        p.shifter_io(1, start=fire(1))
+        p.pin_cell(I2C_SCL, src=glue(0), mode=MODE_OPEN_DRAIN)
+        p.pin_cell(I2C_SDA, src=shifter_out(0), mode=MODE_OPEN_DRAIN)
         p.arm()
 
     def _configure_shifter(self, ninth: int) -> None:
         self.p.shifter(0, msb=True, post=1, post_val=ninth, idle=1,
-                       shift=timer_fall(0), sample=pin_rise(I2C_SCL))
+                       shift=self.step, sample=pin_rise(I2C_SCL))
 
-    def _cpu_owns_bus(self) -> None:
-        self.p.pin_cell(I2C_SCL, cpu=True, mode=MODE_OPEN_DRAIN)
-        self.p.pin_cell(I2C_SDA, cpu=True, mode=MODE_OPEN_DRAIN)
-
-    def _fabric_owns_bus(self) -> None:
-        self.p.pin_cell(I2C_SCL, src=timer_out(0), mode=MODE_OPEN_DRAIN)
-        self.p.pin_cell(I2C_SDA, src=shifter_out(0), mode=MODE_OPEN_DRAIN)
-
-    def _release_scl(self) -> None:
-        """Release SCL and wait until the bus really is high, so a
-        stretching slave is honoured by START/STOP as well."""
+    def _condition(self, sda: list[int], scl: list[int]) -> None:
+        """Play one half period per slot on both pins; SCL then rests at its
+        last level, SDA is released. Patterns never change SDA and SCL
+        together."""
         p = self.p
-        p.clrev()
-        p.pin(I2C_SCL, 1)
-        p.wev(pin_rise(I2C_SCL))
-        p.dly(self.h)
+        bits = lambda levels: sum(v << i for i, v in enumerate(levels))
+        p.shifter(0, length=len(sda), idle=1, shift=self.step)
+        p.shifter_data(0, bits(sda))
+        p.shifter(1, length=len(scl), shift=timer_rise(1))
+        p.shifter_data(1, bits(scl))
+        p.fire(1)
+        p.wev(shifter_stop(1))
+        p.wev(shifter_stop(0))      # both end together; leave no stale event
 
     def start(self) -> None:
-        p = self.p
-        p.pin(I2C_SDA, 0)
-        p.dly(self.h)
-        p.pin(I2C_SCL, 0)
-        p.dly(self.h)
-        self._fabric_owns_bus()
+        # From an idle bus: SDA falls while SCL is high, then SCL falls.
+        self._condition(sda=[0, 0], scl=[1, 0])
 
     def restart(self) -> None:
-        p = self.p
-        p.pin(I2C_SCL, 0)
-        p.pin(I2C_SDA, 1)
-        self._cpu_owns_bus()
-        p.dly(self.h)
-        self._release_scl()
-        self.start()
+        # From SCL low: release SDA, release SCL (stretching honoured),
+        # SDA falls while SCL is high, SCL falls.
+        self._condition(sda=[1, 1, 0, 0], scl=[0, 1, 1, 0])
 
     def stop(self) -> None:
-        p = self.p
-        p.pin(I2C_SCL, 0)
-        p.pin(I2C_SDA, 0)
-        self._cpu_owns_bus()
-        p.dly(self.h)
-        self._release_scl()
-        p.pin(I2C_SDA, 1)
-        p.dly(self.h)
+        # From SCL low: SDA low, release SCL, SDA rises while SCL is high.
+        self._condition(sda=[0, 0, 1], scl=[0, 1, 1])
 
     def _byte(self, data: int, ninth: int) -> None:
         p = self.p
@@ -236,7 +352,7 @@ def ps2_receive() -> list[int]:
     parity, stop) clocked by the device. Shifter 1 restarts forever; each
     synchronized CLK falling edge samples and advances one bit."""
     p = Px8()
-    p.shifter(1, pre=1, post=1, parity=2,
+    p.shifter(1, pre=1, post=1, post_val=1, parity=2,
               shift=pin_fall(PS2_CLK), sample=pin_fall(PS2_CLK))
     p.shifter_io(1, start=ONE, data_in=pin_level(PS2_DATA), push=True)
     p.arm()
@@ -365,13 +481,16 @@ NLP_TICKS = 10
 TP_IDL_CYCLES = 12            # 300 ns high after the last bit (>= 250 ns)
 
 
-def ethernet_10baset_link(frame_bytes: int) -> list[int]:
+def ethernet_10baset_link(frame_bytes: int, nlp_tick: int = NLP_TICK) -> list[int]:
     """10BASE-T transmitter for a 40 MHz clock (2 cycles per half bit).
 
     Sequence: link pulse, 16 ms, link pulse, one frame streamed from SRAM
     (preamble, SFD and frame bytes; the fabric appends the CRC32 FCS and the
     TP_IDL end-of-frame high), 16 ms, link pulse. Link pulses and the frame
-    share the TD+/TD- pair; the controller swaps the pin sources.
+    share the TD+/TD- pair; the controller swaps the pin sources. The 16 ms
+    after the frame is counted in link-pulse ticks from the frame's end, so
+    a frame must be shorter than one tick (any 802.3 frame, at most 1.2 ms,
+    is shorter than the 1.6 ms tick).
 
     Frame path: timer 0 runs continuously; the shifter starts and advances
     on its fall line, and glue cell 4 delays the timer output one cycle so
@@ -409,7 +528,7 @@ def ethernet_10baset_link(frame_bytes: int) -> list[int]:
     p.shifter_io(0, start=edge, pull=True)
     # ---- link pulses: timer 1 ticks every 1.6 ms; timer 2 is a 100 ns
     # one-shot that stops itself on its own falling edge.
-    p.timer(1, reload=NLP_TICK - 1, phase=NLP_TICK - 1, pulse=True, start=ONE)
+    p.timer(1, reload=nlp_tick - 1, phase=nlp_tick - 1, pulse=True, start=ONE)
     p.timer(2, reload=3, phase=0, idle=0, start=fire(1), stop=timer_fall(2))
 
     def link_pins() -> None:

@@ -17,7 +17,7 @@ module fabric_core_properties (input wire clk);
 
   (* anyconst *) reg [255:0] rom;
   (* anyseq *) reg        enable;
-  (* anyseq *) reg [15:0] tx_data;
+  (* anyseq *) reg [19:0] tx_data;
   (* anyseq *) reg [1:0]  tx_empty;
   (* anyseq *) reg [1:0]  tx_full;
   (* anyseq *) reg [1:0]  rx_full;
@@ -26,8 +26,9 @@ module fabric_core_properties (input wire clk);
   wire [9:0]  instruction_address;
   wire        instruction_read;
   wire [1:0]  tx_pop, tx_push, rx_push;
-  wire [7:0]  tx_push_data, gpio_out, gpio_oe;
-  wire [15:0] rx_data;
+  wire [9:0]  tx_push_data;
+  wire [7:0]  gpio_out, gpio_oe;
+  wire [19:0] rx_data;
   wire        halted;
 
   reg [7:0] instruction_data = 8'd0;

@@ -18,12 +18,14 @@
 //   4 / 6      low nibble = payload (for 5 / 7)
 //   5          SRAM[address] = {payload, low nibble}; address += 1
 //              (stopped only)
-//   7          TX push {payload, low nibble} (dropped if full)
+//   7 / F      TX push {payload, low nibble} (dropped if full); F tags the
+//              byte eop, the last byte of a packet
 //   8          payload[0] start, payload[1] stop
 //   E          FIFO channel = payload[0]
 // Response commands (the answer goes to host_out):
 //   9          pop RX (if not empty)
-//   A          status {enable, halted, tx_full, rx_empty, 4'b0}
+//   A          status {enable, halted, tx_full, rx_empty, 2'b0, eop, err};
+//              eop/err are the tags of the RX byte that 9 would pop next
 //   B          SRAM[address], two cycles later (stopped only)
 //   C          levels {tx_full, rx_empty, tx_level, rx_level}
 //   D          peek RX without popping (if not empty)
@@ -50,11 +52,11 @@ module host_interface (
     input  wire [7:0] program_read_data,
     output wire       channel,           // FIFO channel for TX/RX commands
     output wire       tx_push,
-    output wire [7:0] tx_push_data,
+    output wire [9:0] tx_push_data,      // {err, eop, byte}
     input  wire       tx_full,
     input  wire [2:0] tx_level,
     output wire       rx_pop,
-    input  wire [7:0] rx_pop_data,
+    input  wire [9:0] rx_pop_data,       // {err, eop, byte}
     input  wire       rx_empty,
     input  wire [2:0] rx_level,
     input  wire       engine_halted
@@ -66,6 +68,7 @@ module host_interface (
   reg [9:0] address_register;
   reg [3:0] low_nibble;
   reg [7:0] data_register;
+  reg       eop_register;      // the TX byte being pushed ends a packet
   reg [7:0] output_register;
   reg engine_enable_register;
   reg program_write_register;
@@ -80,7 +83,7 @@ module host_interface (
   localparam CMD_TX_LO    = 4'h6, CMD_TX_HI   = 4'h7;
   localparam CMD_ENGINE   = 4'h8, CMD_RX_POP  = 4'h9, CMD_STATUS = 4'ha;
   localparam CMD_SRAM_READ = 4'hb, CMD_LEVELS = 4'hc, CMD_RX_PEEK = 4'hd;
-  localparam CMD_CHANNEL  = 4'he;
+  localparam CMD_CHANNEL  = 4'he, CMD_TX_EOP = 4'hf;
 
   wire stable = host_sync == host_prev;
   wire command_valid = stable && host_sync != 8'h00 && !seen;
@@ -97,7 +100,7 @@ module host_interface (
   assign program_write_mask = 8'hff;
   assign channel = channel_register;
   assign tx_push = tx_push_register;
-  assign tx_push_data = data_register;
+  assign tx_push_data = {1'b0, eop_register, data_register};
   assign rx_pop = rx_pop_register;
 
   always @(posedge clk) begin
@@ -109,6 +112,7 @@ module host_interface (
       address_register <= 10'b0;
       low_nibble <= 4'b0;
       data_register <= 8'b0;
+      eop_register <= 1'b0;
       output_register <= 8'b0;
       engine_enable_register <= 1'b0;
       program_write_register <= 1'b0;
@@ -157,9 +161,11 @@ module host_interface (
             if (!engine_enable_register)
               program_write_register <= 1'b1;
           end
-          // TX push: a byte sent to a full FIFO is dropped.
-          CMD_TX_HI: begin
+          // TX push: a byte sent to a full FIFO is dropped. F also tags it
+          // as the last byte of a packet.
+          CMD_TX_HI, CMD_TX_EOP: begin
             data_register <= {payload, low_nibble};
+            eop_register  <= command == CMD_TX_EOP;
             if (!tx_full)
               tx_push_register <= 1'b1;
           end
@@ -176,12 +182,13 @@ module host_interface (
           // popped and host_out keeps its last value (check status first).
           CMD_RX_POP: begin
             if (!rx_empty) begin
-              output_register <= rx_pop_data;
+              output_register <= rx_pop_data[7:0];
               rx_pop_register <= 1'b1;
             end
           end
           CMD_STATUS: output_register <= {
-              engine_enable_register, engine_halted, tx_full, rx_empty, 4'b0
+              engine_enable_register, engine_halted, tx_full, rx_empty, 2'b0,
+              rx_pop_data[8], rx_pop_data[9]
           };
           // SRAM readback (stopped only): the strobe goes out now, and the
           // byte reaches host_out through read_capture above.
@@ -196,9 +203,9 @@ module host_interface (
           };
           CMD_RX_PEEK: begin
             if (!rx_empty)
-              output_register <= rx_pop_data;
+              output_register <= rx_pop_data[7:0];
           end
-          // 0 never reaches here (it separates commands); F is unused.
+          // 0 never reaches here: it separates commands.
           default: begin end
         endcase
       end

@@ -17,8 +17,13 @@ with no instruction fetch.
 - **One signal space** connects everything. Every tile input is a 6-bit
   select over 64 lines, so "the SCK falling edge advances the shifter" is a
   configuration value, not code.
+- **A byte layer** sits between each shifter and its FIFO channel: stream
+  tiles that work on tagged bytes `{err, eop, data}` with valid/ready
+  handshakes (byte stuffing, packet delimiting, checksums, filtering).
+  Bits stay in the bit fabric, where the wire's timing is; packets exist
+  only from the byte layer up, where stalling a byte is possible.
 - **A small controller (PX8)** writes the configuration and makes
-  transaction-level decisions (I2C START/STOP, EOP sequencing, CRC verdicts).
+  transaction-level decisions (which I2C condition or byte is next, EOP sequencing, CRC verdicts).
   It never times a bit.
 
 UART, SPI, I2C, PS/2, low-speed USB, and 10BASE-T transmit are all
@@ -204,6 +209,52 @@ previous bit, an SE0 latch.
 1 push-pull, 2 open-drain). Any level line can drive any pin. A constant 0
 is the controller pin left at 0.
 
+### Byte tiles (×8), config `0x60 + 4t`
+
+Tile `t = {channel, rx, stage}`. Each FIFO channel has two TX stages
+(TX FIFO → stage 0 → stage 1 → shifter) and two RX stages (shifter →
+stage 0 → stage 1 → RX FIFO). Every stage is the same tile and can be any
+function, so the order of operations is chosen by configuration. A tile in
+`PASS` (the reset state) is transparent.
+
+| Reg | Fields |
+| --- | --- |
+| 0 | `[2:0]` function, `[3]` ESCAPE: append delimiter, `[4]` ESCAPE: delimiter before a packet, `[5]` CHECK: xor (else add), `[6]` CHECK: verify (else generate) |
+| 1 | ESCAPE/UNESCAPE `{c1, c0}`; MATCH `{mask, value}`; CHECK initial value; TAG packet length |
+| 2 | ESCAPE/UNESCAPE `{m1, m0}`; TAG `[5:0]` end line, `[11:6]` error line |
+| 3 | ESCAPE/UNESCAPE `{F, E}` (delimiter, escape) |
+
+| Function | Behavior |
+| --- | --- |
+| 0 `PASS` | Bytes and tags unchanged. |
+| 1 `ESCAPE` | `c0` → `E m0`, `c1` → `E m1`; optionally frames each packet with `F`. |
+| 2 `UNESCAPE` | The inverse: `F` ends a packet (eop on the byte before it), escapes are undone, a bad escape or a packet ended inside one is tagged err. |
+| 3 `TAG` | Packets from fabric events: a packet ends when the end line fires, after `length` bytes, or on an input eop; err if the error line was high during it. |
+| 4 `CHECK` | 8-bit add or xor checksum per packet. Generate appends the byte that makes the total zero (or a wrong one if the last byte is tagged err: error injection); verify tags err on a packet whose total is not zero. |
+| 5 `MATCH` | Keeps packets whose first byte matches `value` under `mask`. |
+
+- **Handshake.** A tile's output is one register and its `in_ready`
+  depends only on its own registers, never on the downstream ready, so no
+  combinational path crosses a tile. That halves throughput (one byte every
+  two cycles) instead of adding a two-entry skid buffer; the fastest serial
+  byte here (10BASE-T) takes 32 cycles.
+- **Tags at the ends.** Host bytes are tagged eop with command `F`; the
+  controller tags `TXP`/`PUSH` bytes with `opnd[5]` (eop) and `opnd[6]`
+  (err) and sees a pulled byte's tags in `A[9:8]`. The shifter tags what it
+  receives (eop at the end of a burst frame, err on a wrong parity or post
+  bit) and, on TX, ends a burst on an eop byte (burst register `[6]`) and
+  inverts the parity bit of a byte tagged err.
+- **Across layers.** Byte tiles read fabric lines (TAG's end and error
+  lines, e.g. an idle timer), the eop tag ends shifter bursts, and each
+  tile's event (a packet passed, matched, or failed its check) is a sticky
+  controller event at `WEV 64 + t`.
+- **Ownership.** A shifter that auto-pulls owns its TX FIFO through its
+  TX stages. The controller's `PUSH` waits while a byte is in flight from
+  the shifter, so it never overtakes stream bytes.
+- **Valid escape maps** have `{c0, c1} = {F, E}`, `F ≠ E`, `m0 ≠ m1`, and
+  neither `m0` nor `m1` equal to `F` or `E`. Async HDLC/PPP is
+  `7E→7D 5E, 7D→7D 5D`; SLIP is `C0→DB DC, DB→DB DD`.
+
 ## PX8 controller
 
 One-byte instructions `{op, n}`. Wider operands are built with
@@ -271,11 +322,17 @@ against independent reference models through the top-level pins only.
 | Two independent UART transmitters | 2 timers, 2 shifters | each shifter streams its own FIFO channel at its own bit rate |
 | UART 8N1, full duplex | 2 timers, 2 shifters | every edge exactly one bit period; TX and RX concurrently |
 | SPI master, modes 0–3 | timer (SCK), shifter | full-duplex bytes against a reference slave |
-| I2C master | timer (SCL + hold), shifter, controller START/STOP | write, repeated START, read, ACK/NACK, clock stretching |
+| I2C master | 2 timers (SCL + hold; condition slots + hold), 2 shifters (SDA/SCL patterns), 6 glue cells; START/STOP fabric-timed | write, repeated START, read, ACK/NACK, clock stretching in bytes and conditions; SDA changes while SCL is high only as START/STOP, each with a half-period setup and hold |
 | PS/2 receive | shifter clocked by the device | 11-bit frames with odd parity |
 | USB low speed, transmit | timer, shifter, 2 counters, CRC16, 8 glue cells | NRZI, bit stuffing (incl. in the CRC), CRC16, EOP; every transition on the bit grid |
 | USB low speed, receive | timer with resync, counter, CRC16, 6 glue cells | clock recovery from a 3% slow sender, destuffing, CRC16 residue verdict, bad-CRC detection |
 | 10BASE-T link session (40 MHz clock) | 4 timers, shifter, 2 counters, CRC32, 8 glue cells, controller streaming the frame from SRAM | link pulses exactly 100 ns wide and exactly 16 ms apart; a frame on the same TD± pair with exact 2-cycle half bits, preamble/SFD, FCS equal to `zlib.crc32`, and 300 ns TP_IDL |
+| Async HDLC / PPP framing over UART | 2 timers, 2 shifters, 4 byte tiles (CHECK, ESCAPE; UNESCAPE, CHECK) | 7E delimiters and 7D escapes on the wire exactly as the reference stuffer produces them; received back unstuffed, checksum verified, last byte tagged eop |
+| SLIP framing over UART | the same tiles, reconfigured | C0 / DB DC / DB DD stuffing, xor checksum |
+| Injected checksum error | the same tiles; controller sends the packets | a packet whose last byte the controller tagged err goes out with a wrong checksum and is received tagged err; a clean packet is not |
+| Modbus-RTU-style idle framing + address filter | timer (idle gap, restarted by a glue cell on every RX edge), shifter, 2 byte tiles (TAG, MATCH), controller | packets delimited only by line idle time; only packets for address 0x11 reach the host; the match event reaches the controller, which raises a pin |
+| Packet bursts | timer, shifter in burst mode ended by the eop tag | each host packet is exactly one frame: start bit, bytes back to back, parity over the last byte, stop bit |
+| UART 8E1 framing errors | timer, shifter | wrong parity and wrong stop bits reach the host tagged err; clean bytes do not |
 
 ### How USB transmit composes
 

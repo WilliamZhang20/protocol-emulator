@@ -70,19 +70,20 @@ def levels(changes: list, first: int, last: int) -> tuple[list[int], list[int]]:
     return plus, minus
 
 
-@cocotb.test()
-async def test_10baset_link_session(dut):
+async def run_session(dut, frame: bytes, nlp_tick: int = NLP_TICK) -> None:
+    """Run the link-session program on `frame` and check every pulse, bit,
+    the FCS and TP_IDL on the pins."""
+    period = nlp_tick * NLP_TICKS
     await start_clock(dut, CLOCK_NS)
     await reset_top(dut)
-    frame = test_frame()
     stream = PREAMBLE + frame
-    await load_program(dut, ethernet_10baset_link(len(stream)))
+    await load_program(dut, ethernet_10baset_link(len(stream), nlp_tick))
     await load_program(dut, list(stream), address=ETH_FRAME_ADDR)
     changes: list = []
     cocotb.start_soon(record_pins(dut, changes))
     await start_engine(dut)
-    await Timer((3 * NLP_PERIOD // 2 + 2 * NLP_TICK) * CLOCK_NS, "ns")
-    await Timer((NLP_PERIOD // 2 + NLP_TICK) * CLOCK_NS, "ns")
+    await Timer((3 * period // 2 + 2 * nlp_tick) * CLOCK_NS, "ns")
+    await Timer((period // 2 + nlp_tick) * CLOCK_NS, "ns")
 
     runs = high_runs(changes)
     # Link pulses are isolated 100 ns highs; frame bits are packed together.
@@ -93,7 +94,7 @@ async def test_10baset_link_session(dut):
     assert pulses == isolated, f"every isolated high must be a 100 ns pulse: {isolated}"
     assert len(pulses) == 3, f"expected 3 link pulses, saw runs {runs[:6]} ..."
     starts = [start for start, _ in pulses]
-    assert [b - a for a, b in zip(starts, starts[1:])] == [NLP_PERIOD] * 2
+    assert [b - a for a, b in zip(starts, starts[1:])] == [period] * 2
 
     # The frame lies between the second and third pulse.
     frame_changes = [c for c in changes if starts[1] + 4 < c[0] < starts[2]]
@@ -124,3 +125,34 @@ async def test_10baset_link_session(dut):
     high_after_frame = held - (mid + 4 * total_bits)
     assert high_after_frame == TP_IDL_CYCLES, high_after_frame
     assert not any(plus[held:]) and not any(minus[held:]), "line must idle after TP_IDL"
+
+
+@cocotb.test()
+async def test_10baset_link_session(dut):
+    """The real timing: link pulses exactly 16 ms apart around one frame."""
+    await run_session(dut, test_frame())
+
+
+def frame_with(payload: bytes) -> bytes:
+    return bytes.fromhex("ffffffffffff02123456789a0800") + payload
+
+
+FRAME_CASES = {
+    "zeros": frame_with(bytes(46)),         # long runs of one Manchester phase
+    "ones": frame_with(bytes([0xFF]) * 46),
+    "alternating": frame_with(bytes([0xAA, 0x55]) * 23),
+    "random_100": frame_with(bytes(random.Random(3).randrange(256) for _ in range(100))),
+    "random_400": frame_with(bytes(random.Random(4).randrange(256) for _ in range(400))),
+}
+
+
+@cocotb.test()
+@cocotb.parametrize(case=list(FRAME_CASES))
+async def test_10baset_frames(dut, case):
+    """Frame contents and lengths up to 400 payload bytes (the frame fills
+    most of the SRAM after the program), with link pulses on a short tick:
+    every bit, the FCS against zlib, TP_IDL and the pulses still check."""
+    # The tick must outlast the frame: the program counts the next 16 ms
+    # from the frame's end (true at the real 1.6 ms tick for any 802.3
+    # frame, at most 1.2 ms long).
+    await run_session(dut, FRAME_CASES[case], nlp_tick=16000)

@@ -5,7 +5,7 @@ PYTHON ?= $(PROJECT_ROOT)/.venv/bin/python
 SBY ?= $(if $(wildcard $(EDA_BIN)/sby),$(EDA_BIN)/sby,sby)
 BUILD_DIR ?= $(PROJECT_ROOT)/build/formal
 TARGETS := program_memory byte_fifo host_interface fabric_timer fabric_shifter \
-	fabric_counter fabric_crc fabric_lut px8_controller fabric_core
+	fabric_counter fabric_crc fabric_lut byte_tile px8_controller fabric_core
 program_memory_TASKS := bmc prove cover
 byte_fifo_TASKS := bmc prove cover
 host_interface_TASKS := bmc prove cover
@@ -14,6 +14,7 @@ fabric_shifter_TASKS := bmc cover
 fabric_counter_TASKS := bmc prove cover
 fabric_crc_TASKS := bmc prove cover
 fabric_lut_TASKS := bmc prove cover
+byte_tile_TASKS := roundtrip checksum cover_roundtrip cover_checksum
 px8_controller_TASKS := bmc cover
 fabric_core_TASKS := bmc cover
 

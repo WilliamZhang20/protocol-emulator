@@ -15,18 +15,18 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   (* anyseq *) reg [15:0] rd_data;
   (* anyseq *) reg        event_ready;
   (* anyseq *) reg        tx_grant_any;
-  (* anyseq *) reg [7:0]  tx_data;
+  (* anyseq *) reg [9:0]  tx_data;     // {err, eop, byte}
   (* anyseq *) reg        tx_space;
   (* anyseq *) reg        rx_grant_any;
 
   wire [9:0]  instruction_address;
   wire        instruction_read;
   wire        cfg_we, event_consume, clear_events, pin_we, pin_value, channel;
-  wire        tx_request, tx_push, rx_request, halted;
+  wire        tx_request, tx_push, rx_request, halted, push_eop, push_err;
   wire [7:0]  cfg_addr, rx_data;
   wire [15:0] cfg_data;
   wire [3:0]  rd_addr;
-  wire [5:0]  event_index;
+  wire [6:0]  event_index;
   wire [1:0]  fire;
   wire [2:0]  pin_index;
   wire tx_grant = tx_grant_any && tx_request;
@@ -55,6 +55,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       .tx_request(tx_request), .tx_grant(tx_grant), .tx_data(tx_data),
       .tx_push(tx_push), .tx_space(tx_space),
       .rx_request(rx_request), .rx_grant(rx_grant), .rx_data(rx_data),
+      .push_eop(push_eop), .push_err(push_err),
       .halted(halted)
   );
 
@@ -135,7 +136,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
             4'hf: m_a <= m_a & opnd;
             4'he: case (sub)
               4'd1: m_state <= M_HALT;
-              4'd2: m_a <= {8'd0, tx_data};
+              4'd2: m_a <= {6'd0, tx_data};
               4'd5: m_a <= m_c;
               4'd6: m_c <= m_a;
               4'd8: m_state <= M_LOAD;
@@ -190,7 +191,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       if (block_write) assert(cfg_addr == m_ba && cfg_data == block_data);
       if (exec && op == 4'h9) assert(rd_addr == opnd[3:0]);
       assert(event_consume == (exec && op == 4'ha && m_retire));
-      if (exec && op == 4'ha) assert(event_index == opnd[5:0]);
+      if (exec && op == 4'ha) assert(event_index == opnd[6:0]);
       assert(clear_events == (exec && opr && sub == 4'd4));
       assert(fire == ((exec && op == 4'hb) ? (opnd[0] ? 2'b10 : 2'b01) : 2'b00));
       assert(pin_we == (exec && op == 4'hc));
@@ -201,6 +202,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       if (rx_request) assert(rx_data == m_a[7:0]);
       if (tx_push) assert(rx_data == m_a[7:0]);
       if (tx_request || rx_request || tx_push) assert(channel == opnd[4]);
+      if (rx_request || tx_push) assert(push_eop == opnd[5] && push_err == opnd[6]);
     end
   end
 

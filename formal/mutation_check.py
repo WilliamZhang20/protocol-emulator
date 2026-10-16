@@ -27,10 +27,11 @@ class Mutation:
     sources: tuple[str, ...]
     harness: str
     top: str
+    engine: str = "smtbmc boolector"
 
 
 CORE_SOURCES = (
-    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v",
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v", "byte_tile.v",
 )
 
 MUTATIONS = (
@@ -122,8 +123,8 @@ MUTATIONS = (
     ),
     Mutation(
         "shifter_parity_polarity", "fabric_shifter", "fabric_shifter.v",
-        "frame_bit_at = (^(w & len_mask)) ^ odd_parity;",
-        "frame_bit_at = (^(w & len_mask)) ^ !odd_parity;",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
+        "frame_bit_at = (^(w & len_mask)) ^ !odd_parity ^ word_err;",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
@@ -134,8 +135,8 @@ MUTATIONS = (
     ),
     Mutation(
         "shifter_burst_end_forgotten", "fabric_shifter", "fabric_shifter.v",
-        "!(burst_end_seen || levels[burst[4:0]]);",
-        "!levels[burst[4:0]];",
+        "!(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));",
+        "!(levels[burst[4:0]] || (burst[6] && word_eop));",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
@@ -143,6 +144,55 @@ MUTATIONS = (
         "        index     <= pre_n;",
         "        index     <= 5'd0;",
         ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_injection_ignored", "fabric_shifter", "fabric_shifter.v",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity;",
+        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_rx_eop_lost", "fabric_shifter", "fabric_shifter.v",
+        "push_eop  <= done && burst_mode;",
+        "push_eop  <= 1'b0;",
+        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "tile_escape_map_swapped", "byte_tile", "byte_tile.v",
+        "wire [7:0]  mapped   = in_data == c0 ? m0 : m1;",
+        "wire [7:0]  mapped   = in_data == c0 ? m1 : m0;",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_unescape_wrong_byte", "byte_tile", "byte_tile.v",
+        "wire [7:0]  restored = in_data == m0 ? c0 : in_data == m1 ? c1 : in_data;",
+        "wire [7:0]  restored = in_data == m0 ? c1 : in_data == m1 ? c1 : in_data;",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_checksum_not_negated", "byte_tile", "byte_tile.v",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next) ^ {8{in_err}};",
+        "p_data <= acc_next ^ {8{in_err}};",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_checksum",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_injection_ignored", "byte_tile", "byte_tile.v",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next) ^ {8{in_err}};",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next);",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_checksum",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_output_dropped", "byte_tile", "byte_tile.v",
+        """      if (o_valid && out_ready)
+        o_valid <= 1'b0;""",
+        """      if (o_valid)
+        o_valid <= 1'b0;""",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
     ),
     Mutation(
         "counter_equal_restart", "fabric_counter", "fabric_counter.v",
@@ -176,22 +226,25 @@ def run_mutation(mutation: Mutation, sby: str, scratch: Path) -> bool:
     config = scratch / mutation.name / "mutation.sby"
     config.write_text(
         "[tasks]\nbmc\n\n[options]\nmode bmc\ndepth 24\n\n"
-        "[engines]\nsmtbmc boolector\n\n[script]\n"
+        f"[engines]\n{mutation.engine}\n\n[script]\n"
         + "\n".join(f"read -formal -sv {source.name}" for source in sources)
         + f"\nread -formal -sv {harness.name}\nprep -top {mutation.top}\n\n"
         "[files]\n"
         + "\n".join(str(source) for source in sources)
         + f"\n{harness}\n"
     )
-    result = subprocess.run(
-        [sby, "-f", "-d", str(scratch / mutation.name / "run"), str(config), "bmc"],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-    )
-    log = result.stdout + result.stderr
-    caught = result.returncode != 0 and "DONE (FAIL" in log
+    try:
+        result = subprocess.run(
+            [sby, "-f", "-d", str(scratch / mutation.name / "run"), str(config), "bmc"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        log = result.stdout + result.stderr
+        caught = result.returncode != 0 and "DONE (FAIL" in log
+    except subprocess.TimeoutExpired:
+        log, caught = "timed out after 600 s", False
     if not caught:
         print(f"{mutation.name}: verification did not reject the mutation")
         print("\n".join(log.splitlines()[-12:]))

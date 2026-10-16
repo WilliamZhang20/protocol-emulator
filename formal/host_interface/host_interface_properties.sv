@@ -16,12 +16,13 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
   (* anyseq *) reg [7:0] program_read_data;
   (* anyseq *) reg       tx_full;
   (* anyseq *) reg [2:0] tx_level;
-  (* anyseq *) reg [7:0] rx_pop_data;
+  (* anyseq *) reg [9:0] rx_pop_data;     // {err, eop, byte}
   (* anyseq *) reg       rx_empty;
   (* anyseq *) reg [2:0] rx_level;
   (* anyseq *) reg       engine_halted;
 
-  wire [7:0] host_out, program_write_data, program_write_mask, tx_push_data;
+  wire [7:0] host_out, program_write_data, program_write_mask;
+  wire [9:0] tx_push_data;
   wire [9:0] program_address;
   wire engine_enable, program_enable, program_write, program_read;
   wire channel, tx_push, rx_pop;
@@ -48,6 +49,7 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
   reg past_read2 = 1'b0, past_halted = 1'b0;
   reg [9:0] past_address = 10'd0;
   reg [7:0] past_read_data = 8'd0;
+  reg [9:0] past_rx_entry = 10'd0;
   reg past_channel = 1'b0;
   reg rearmed = 1'b1;           // 8'h00 seen stable since the last strobe
 
@@ -74,6 +76,7 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
     past_halted <= engine_halted;
     past_address <= program_address;
     past_read_data <= program_read_data;
+    past_rx_entry <= rx_pop_data;
     past_channel <= channel;
     if (!rst_n) begin
       age <= 3'd0;
@@ -89,7 +92,9 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
       // Soundness: the strobe's command was stable on the pins.
       if (program_write) assert(stable_cmd && cmd == 4'h5 && !past_enable);
       if (program_read)  assert(stable_cmd && cmd == 4'hb && !past_enable);
-      if (tx_push)       assert(stable_cmd && cmd == 4'h7 && !past_tx_full);
+      if (tx_push)       assert(stable_cmd && (cmd == 4'h7 || cmd == 4'hf) && !past_tx_full);
+      // F tags the pushed byte as a packet's last; host bytes never carry err.
+      if (tx_push)       assert(tx_push_data[8] == (cmd == 4'hf) && !tx_push_data[9]);
       if (rx_pop)        assert(stable_cmd && cmd == 4'h9 && !past_rx_empty);
       if (strobe)        assert(rearmed_now);
       assert(!(program_write && program_read) && !(tx_push && rx_pop));
@@ -99,7 +104,9 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
       if (zero_gap && stable_cmd) begin
         if (cmd == 4'h5) assert(program_write == !past_enable);
         if (cmd == 4'hb) assert(program_read == !past_enable);
-        if (cmd == 4'h7) assert(tx_push == !past_tx_full);
+        if (cmd == 4'h7 || cmd == 4'hf) assert(tx_push == !past_tx_full);
+        // Status reports the next RX byte's tags in its low bits.
+        if (cmd == 4'ha) assert(host_out[1:0] == {past_rx_entry[8], past_rx_entry[9]});
         if (cmd == 4'h9) assert(rx_pop == !past_rx_empty);
         if (cmd == 4'he) assert(channel == p3[0]);
       end
@@ -116,7 +123,7 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
       if (engine_enable != past_enable && !past_halted) assert(stable_cmd && cmd == 4'h8);
       assert(program_enable == (program_write || program_read));
       assert(program_write_mask == 8'hff);
-      assert(tx_push_data == program_write_data);
+      assert(tx_push_data[7:0] == program_write_data);
     end
   end
 
@@ -125,6 +132,7 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
       cover(program_write && program_address == 10'd3);
       cover(past_read2 && host_out == 8'ha5);
       cover(tx_push && channel);
+      cover(tx_push && tx_push_data[8]);
     end
   end
 endmodule
