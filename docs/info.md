@@ -9,19 +9,24 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-A spatial protocol engine. Instead of a CPU that times bits with
-instructions, the chip contains a fabric of generic hardware tiles: 4
-timers, 2 shifters, 2 counters, a CRC engine, 8 LUT4+FF glue cells and 8 pin
-cells, all connected through one 64-line signal space. A protocol is a
-configuration: which lines start, stop, shift, sample and step each tile,
-what each glue cell computes, and which line drives each pin. Once armed,
-the fabric runs every clock with cycle-exact timing. A tiny prefix-encoded
-controller (PX8), executing from on-chip SRAM, writes the configuration and
-handles transaction-level decisions.
+This chip speaks serial protocols on its pins, but none of them is built
+into the hardware. Instead it has general-purpose blocks:
 
-UART, SPI, I2C, PS/2, low-speed USB (transmit and receive) and 10BASE-T
-transmit are SRAM programs; there is no protocol-specific logic. See the
-[architecture reference](architecture.md).
+- 4 timers, 2 shifters and 2 counters;
+- a CRC engine;
+- 8 small logic cells and 8 pin drivers;
+- 8 byte tiles for packet work: escaping, checksums, filtering.
+
+A program in on-chip SRAM **connects** these blocks for one protocol,
+through 64 shared wires, then steps aside. The connected blocks run every
+clock cycle on their own, so the timing is exact. A tiny controller (PX8)
+loads the setup and makes the step-by-step decisions, but it never drives
+a pin or times a bit. Every block holds two setups, and can switch
+between them in one step.
+
+UART, SPI, I2C, PS/2, low-speed USB (send and receive), 10BASE-T Ethernet
+(send and receive), HDLC and SLIP are all programs. See
+[the documentation](README.md).
 
 ## How to test
 
@@ -45,8 +50,9 @@ protocol pins follow the Tiny Tapeout recommended pinouts:
 - **Low-speed USB:** `uio[4]` D+, `uio[5]` D−. Needs series resistors and a
   1.5 kΩ (device) or 15 kΩ (host) termination; a buffer helps on long
   cables.
-- **10BASE-T transmit:** `uio[6]` TD+, `uio[7]` TD−. Needs a 40 MHz clock,
-  a line driver, a resistor network, and magnetics.
+- **10BASE-T:** `uio[6]` TD+, `uio[7]` TD− (send), `uio[4]` RD (receive).
+  Needs a 40 MHz clock, a line driver, a resistor network, magnetics, and
+  a receive comparator.
 
 See [hardware.md](hardware.md) for clock choices, host-link timing, and
 details.

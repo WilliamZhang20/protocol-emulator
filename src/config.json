@@ -28,7 +28,7 @@
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.1,
 
   "//": "Setup margin and a post-route repair pass. Signoff gates only the typical",
   "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
@@ -61,13 +61,13 @@
         "pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
       ],
       "lib": {
-        "nom_*": [
+        "nom_typ_1p20V_25C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
         ],
-        "min_*": [
+        "nom_fast_1p32V_m40C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
         ],
-        "max_*": [
+        "nom_slow_1p08V_125C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
         ]
       },

@@ -15,10 +15,12 @@ prove: abc pdr
 cover: btor btormc
 
 [script]
+read -formal -sv config_bank.v
 read -formal -sv fabric_counter.v
 read -formal -sv fabric_counter_properties.sv
 prep -top fabric_counter_properties
 
 [files]
+../../src/config_bank.v
 ../../src/fabric_counter.v
 fabric_counter_properties.sv

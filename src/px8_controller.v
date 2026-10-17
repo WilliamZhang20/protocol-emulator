@@ -11,8 +11,8 @@
 //   2 SETP  P = opnd (data pointer) A WEV   wait for line opnd (pulse lines
 //                                           are sticky and consumed)
 //   3 XRC   A = A ^ opnd            B FIRE  pulse line 2 + opnd[0]
-//   4 J     pc = opnd               C PIN   CPU pin n[2:0] := n[3]
-//   5 JZ    if A == 0: pc = opnd    D DLY   stall opnd extra cycles
+//   4 J     pc = opnd               C -     reserved (no operation)
+//   5 JZ    if A == 0: pc = opnd    D -     reserved (no operation)
 //   6 DJNZ  C -= 1; if C != 0: pc   E OPR   misc (below)
 //   7 SETC  C = opnd                F ANDC  A = A & opnd
 //
@@ -29,9 +29,11 @@
 //        when opnd[6] is (on TX, err asks for an injected error).
 //   WEV opnd 64+t waits for byte tile t's event.
 //
-// The controller only reacts to the fabric; bit timing never depends on
-// it. So waits see registered inputs: a WEV on a level line (32-63) sees
-// the level one cycle late and never retires in its first execute cycle.
+// The controller has no pin or delay instructions. It configures the
+// fabric (and can switch its contexts through flag lines) and reacts to
+// it, but bit timing never depends on it. So waits see registered inputs:
+// a WEV on a level line (32-63) sees the level one cycle late and never
+// retires in its first execute cycle.
 //
 // Timing: every instruction takes 2 cycles (fetch + execute) plus stalls;
 // LDM takes 3, a level WEV at least 3, and CFG 1 + 3 per word.
@@ -52,9 +54,6 @@ module px8_controller (
     output wire [6:0]  event_index,
     output wire        clear_events,
     output wire [1:0]  fire,
-    output wire        pin_we,
-    output wire [2:0]  pin_index,
-    output wire        pin_value,
     output wire        channel,
     output wire        tx_request,
     input  wire        tx_grant,
@@ -86,8 +85,6 @@ module px8_controller (
   localparam OP_RD   = 4'h9;
   localparam OP_WEV  = 4'ha;
   localparam OP_FIRE = 4'hb;
-  localparam OP_PIN  = 4'hc;
-  localparam OP_DLY  = 4'hd;
   localparam OP_OPR  = 4'he;
   localparam OP_ANDC = 4'hf;
 
@@ -97,7 +94,6 @@ module px8_controller (
   reg [11:0] oreg;      // O[15:4]; a prefix always leaves O[3:0] zero
   reg [15:0] acc;
   reg [15:0] cnt;
-  reg [15:0] delay;
   reg        waiting;   // the executing instruction has already stalled
   reg [7:0]  blk_addr;  // CFG: address byte of the word being loaded
   reg [1:0]  blk_byte;  // CFG: which byte of {addr, lo, hi} arrives now
@@ -124,7 +120,6 @@ module px8_controller (
   always @(*) begin
     case (op)
       OP_WEV:  retire = event_ready && (waiting || !opnd[5]);
-      OP_DLY:  retire = waiting ? delay == 16'd1 : opnd == 16'd0;
       OP_OPR:  retire = is_pull ? tx_grant : is_push ? rx_grant :
                         is_txp ? tx_space : 1'b1;
       default: retire = 1'b1;
@@ -158,9 +153,6 @@ module px8_controller (
   assign clear_events  = exec && op == OP_OPR && opnd[3:0] == 4'd4;
   assign fire          = (exec && op == OP_FIRE) ?
                          (opnd[0] ? 2'b10 : 2'b01) : 2'b00;
-  assign pin_we        = exec && op == OP_PIN;
-  assign pin_index     = n[2:0];
-  assign pin_value     = n[3];
   assign channel       = opnd[4];
   assign tx_request    = exec && is_pull;
   assign rx_request    = exec && is_push;
@@ -178,7 +170,6 @@ module px8_controller (
       oreg     <= 12'd0;
       acc      <= 16'd0;
       cnt      <= 16'd0;
-      delay    <= 16'd0;
       waiting  <= 1'b0;
       blk_addr <= 8'd0;
       blk_byte <= 2'd0;
@@ -187,8 +178,6 @@ module px8_controller (
         ST_FETCH: state <= ST_EXEC;
         ST_EXEC: begin
           waiting <= !retire;
-          if (op == OP_DLY && !retire)
-            delay <= waiting ? delay - 16'd1 : opnd;
           if (retire) begin
             pc       <= next_pc;
             oreg     <= op == OP_PFIX ? opnd[11:0] : 12'd0;

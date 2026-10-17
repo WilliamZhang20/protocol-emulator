@@ -8,7 +8,7 @@ values absorb a fixed, documented latency.
 
 from cocotb_tests.fabric import (
     CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RUN_ONES,
-    Px8, counter_ge, fire, flag, glue, pin_fall, pin_level,
+    CRC_OK, Px8, counter_ge, counter_hit, fire, flag, glue, pin_fall, pin_level,
     pin_rise, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
     shifter_stop, shifter_word, tile_event, timer_fall, timer_out, timer_rise, truth,
     tx_tile,
@@ -22,6 +22,7 @@ I2C_SCL, I2C_SDA = 2, 3                            # I2C top row
 PS2_CLK, PS2_DATA = 4, 5                           # no standard: bottom row
 USB_DP, USB_DM = 4, 5                              # no standard: bottom row
 ETH_TD_P, ETH_TD_N = 6, 7                          # no standard: bottom row
+ETH_RD = 4                                         # receiver comparator output
 
 
 # --------------------------------------------------------------------- UART
@@ -150,7 +151,7 @@ def idle_framed_receiver(bit_cycles: int, gap_bits: int, address: int) -> list[i
     restarts timer 2, which fires only after `gap_bits` without an edge.
     The byte layer packetizes on that event (TAG) and filters on the
     address (MATCH). The controller waits for the first match and then
-    raises a pin."""
+    raises a pin through a flag line."""
     p = Px8()
     _uart_rx(p, 0, 1, bit_cycles, UART_RX_PIN)
     edge = glue(0)
@@ -161,10 +162,10 @@ def idle_framed_receiver(bit_cycles: int, gap_bits: int, address: int) -> list[i
             start=pin_fall(UART_RX_PIN), resync=edge)
     p.tile_tag(rx_tile(0, 0), end=timer_rise(2))
     p.tile_match(rx_tile(0, 1), value=address)
-    p.pin_cell(MODBUS_DONE_PIN, cpu=True, mode=MODE_PUSH_PULL)
+    p.pin_cell(MODBUS_DONE_PIN, src=flag(0), mode=MODE_PUSH_PULL)
     p.arm()
     p.wev(tile_event(rx_tile(0, 1)))
-    p.pin(MODBUS_DONE_PIN, 1)
+    p.flags(0b01)
     p.idle_forever()
     return p.assemble()
 
@@ -194,16 +195,27 @@ def uart_receiver(bit_cycles: int, *, parity: int) -> list[int]:
 
 # ---------------------------------------------------------------------- SPI
 def spi_master(mode: int, half_cycles: int) -> list[int]:
-    """Full-duplex SPI master, MSB first, any CPOL/CPHA. Timer 0 is SCK and
-    runs continuously across back-to-back bytes."""
+    """Full-duplex SPI master, MSB first, any CPOL/CPHA, every edge timed by
+    the fabric. Timer 0 is SCK and runs continuously across back-to-back
+    bytes. CS is glue cell 0: FIRE 0 pulls it low, and timer 2, a one-shot
+    started when the shifter stops, raises it a half period after the last
+    edge. The shifter runs while CS is low, so SCK's first edge comes a
+    half period after CS falls (timer 0 starts with the shifter)."""
     cpol, cpha = mode >> 1, mode & 1
     leading = timer_fall(0) if cpol else timer_rise(0)
     trailing = timer_rise(0) if cpol else timer_fall(0)
+    cs_low = glue(0)
     p = Px8()
-    p.pin(SPI_CS, 1)
-    p.pin_cell(SPI_CS, cpu=True, mode=MODE_PUSH_PULL)
+    p.glue(0, truth(lambda go, done, low: go or (low and not done), 3),
+           [fire(0), timer_rise(2), cs_low], registered=True)
+    p.glue(1, truth(lambda low: not low, 1), [cs_low])
+    p.pin_cell(SPI_CS, src=glue(1), mode=MODE_PUSH_PULL)
     p.timer(0, reload=half_cycles - 1, phase=half_cycles - 1, idle=cpol,
             start=shifter_active(0), stop=shifter_stop(0))
+    p.timer(2, reload=half_cycles - 1, phase=half_cycles - 1, pulse=True,
+            start=shifter_stop(0), stop=timer_rise(2))
+    # Timer 1: CS stays high a few cycles before the program halts.
+    p.timer(1, reload=3, phase=3, pulse=True, start=timer_rise(2), stop=timer_rise(1))
     p.pin_cell(SPI_SCK, src=timer_out(0), mode=MODE_PUSH_PULL)
     if cpha == 0:
         p.shifter(0, msb=True, shift=trailing, sample=leading)
@@ -211,14 +223,11 @@ def spi_master(mode: int, half_cycles: int) -> list[int]:
         p.shifter(0, msb=True, lead=True, end_on_sample=True,
                   shift=leading, sample=trailing)
     p.pin_cell(SPI_MOSI, src=shifter_out(0), mode=MODE_PUSH_PULL)
+    p.shifter_io(0, start=cs_low, data_in=pin_level(SPI_MISO), pull=True, push=True)
     p.arm()
-    p.pin(SPI_CS, 0)
-    p.dly(half_cycles)
-    p.shifter_io(0, data_in=pin_level(SPI_MISO), pull=True, push=True)
-    p.wev(shifter_stop(0))
-    p.dly(half_cycles)
-    p.pin(SPI_CS, 1)
-    p.dly(4)
+    p.fire(0)
+    p.wev(timer_rise(2))
+    p.wev(timer_rise(1))
     p.halt()
     return p.assemble()
 
@@ -496,6 +505,7 @@ def ethernet_10baset_link(frame_bytes: int, nlp_tick: int = NLP_TICK) -> list[in
     on its fall line, and glue cell 4 delays the timer output one cycle so
     the half-bit phase lines up exactly with the shifter output."""
     p = Px8()
+    p.write_contexts(3)            # shared by both pin contexts
     edge = timer_fall(0)
     act = shifter_active(0)
     in_crc = counter_ge(1)        # preamble + SFD (8 words) passed
@@ -531,34 +541,87 @@ def ethernet_10baset_link(frame_bytes: int, nlp_tick: int = NLP_TICK) -> list[in
     p.timer(1, reload=nlp_tick - 1, phase=nlp_tick - 1, pulse=True, start=ONE)
     p.timer(2, reload=3, phase=0, idle=0, start=fire(1), stop=timer_fall(2))
 
-    def link_pins() -> None:
-        p.pin_cell(ETH_TD_P, src=timer_out(2), mode=MODE_PUSH_PULL)
-        p.pin_cell(ETH_TD_N, cpu=True, mode=MODE_PUSH_PULL)   # controller pin, held 0
+    # ---- pins: context 0 carries link pulses (TD- held low), context 1 the
+    # frame; controller flag 1 selects the context, so swapping the pair's
+    # sources is one flag write, not four pin-cell rewrites.
+    p.write_contexts(1)
+    p.pin_cell(ETH_TD_P, src=timer_out(2), mode=MODE_PUSH_PULL)
+    p.pin_cell(ETH_TD_N, const=0, mode=MODE_PUSH_PULL)
+    p.write_contexts(2)
+    p.pin_cell(ETH_TD_P, src=td_p, mode=MODE_PUSH_PULL)
+    p.pin_cell(ETH_TD_N, src=td_n, mode=MODE_PUSH_PULL)
+    p.write_contexts(1)
+    p.context_select(flag(1))
 
     def wait_16ms() -> None:
         p.clrev()
         for _ in range(NLP_TICKS):
             p.wev(timer_rise(1))
 
-    link_pins()
+    def link_pulse() -> None:
+        p.clrev()
+        p.fire(1)
+        p.wev(timer_fall(2))       # the 100 ns pulse has ended
+
     p.arm()
     p.clrev()
     p.wev(timer_rise(1))          # align every pulse to a timer-1 tick
-    p.fire(1)
+    link_pulse()
     wait_16ms()
-    p.fire(1)
+    link_pulse()
     # ---- one frame
-    p.dly(16)
+    p.flags(0b10)
     p.fire(0)
-    p.pin_cell(ETH_TD_P, src=td_p, mode=MODE_PUSH_PULL)
-    p.pin_cell(ETH_TD_N, src=td_n, mode=MODE_PUSH_PULL)
     p.stream_sram_to_tx(ETH_FRAME_ADDR, ETH_FRAME_ADDR + frame_bytes)
     p.wev(idl_done)
-    link_pins()
+    p.flags(0b00)
     wait_16ms()
-    p.fire(1)
-    p.dly(16)
+    link_pulse()
     p.halt()
     program = p.assemble()
     assert len(program) <= ETH_FRAME_ADDR, len(program)
     return program
+
+
+def ethernet_10baset_receive() -> list[int]:
+    """10BASE-T receiver for a 40 MHz clock (4 cycles per bit), from the
+    digital output of an external line receiver on ETH_RD. Bytes from the
+    first one after the SFD through the FCS reach the host on channel 1,
+    the last tagged eop, and err if the FCS residue failed.
+
+    Clock recovery: every Manchester bit has a mid-bit edge, the value is
+    the level after it. An edge is accepted only once a window has opened,
+    3 cycles after the last accepted edge, so bit-boundary edges (2 cycles
+    after) are ignored; the alternating preamble has no boundary edges, so
+    the window locks onto mid-bit edges by itself. A run-of-ones counter
+    finds the SFD's final 11 and marks the frame; timer 1 fires once about
+    2 bits pass without an accepted edge (carrier loss), which aborts the
+    shifter's partial word, re-initializes the CRC, clears the frame mark
+    and ends the packet in the byte layer."""
+    p = Px8()
+    rd = pin_level(ETH_RD)
+    prev, win, acc, absorb, in_frame, bad = (glue(i) for i in range(6))
+    lost = timer_rise(1)
+    p.glue(0, truth(lambda d: d, 1), [rd], registered=True)
+    p.glue(1, truth(lambda t, d, pv, w: (not (d != pv and w)) and (t or w)),
+           [timer_rise(0), rd, prev, win], registered=True)
+    p.glue(2, truth(lambda d, pv, w: d != pv and w, 3), [rd, prev, win])
+    p.glue(3, truth(lambda d, pv, w, f: d != pv and w and f), [rd, prev, win, in_frame])
+    p.glue(4, truth(lambda gone, hit, f: (not gone) and (hit or f), 3),
+           [lost, counter_hit(0), in_frame], registered=True)
+    p.glue(5, truth(lambda gone, ok: gone and not ok, 2), [lost, CRC_OK])
+    # Window: opens 3 cycles after an accepted edge (resync + pulse + glue).
+    p.timer(0, reload=15, phase=0, pulse=True, start=ONE, resync=acc)
+    # Carrier: fires 8 cycles after the last accepted edge.
+    p.timer(1, reload=7, phase=6, pulse=True, start=ONE, resync=acc)
+    p.counter(0, match=2, step=acc, data=rd, mode=RUN_ONES, clear=lost)
+    p.crc(width=32, poly=ETH_CRC32_POLY, check=ETH_CRC32_RESIDUE,
+          absorb=absorb, data=rd, init=lost)
+    p.shifter(1, shift=acc, sample=acc)
+    p.shifter_io(1, start=in_frame, data_in=rd, push=True)
+    p.shifter_abort(1, lost)
+    p.tile_tag(rx_tile(1, 0), end=lost, err=bad)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+

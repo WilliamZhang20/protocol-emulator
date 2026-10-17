@@ -27,16 +27,17 @@ module fabric_timer (
     input  wire        cfg_we,
     input  wire [1:0]  cfg_addr,
     input  wire [15:0] cfg_data,
+    input  wire [1:0]  cfg_bank,      // contexts a write goes to
+    input  wire        ctx,       // active context
     input  wire [63:0] lines,
     output wire        out,
     output wire        rise,
     output wire        fall
 );
-  reg [15:0] reload;
-  reg [15:0] phase;
-  reg [13:0] ctl;
-  reg [12:0] sync;
-  reg [15:0] count;
+  wire [15:0] reload, phase;
+  wire [13:0] ctl;
+  wire [12:0] sync;
+  reg  [15:0] count;
   reg        out_r;
   reg        run;
 
@@ -55,21 +56,18 @@ module fabric_timer (
   assign rise = tick && (pulse || !out_r);
   assign fall = tick && !pulse && out_r;
 
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      reload <= 16'd0;
-      phase  <= 16'd0;
-      ctl    <= 14'd0;
-      sync   <= 13'd0;
-    end else if (cfg_we) begin
-      case (cfg_addr)
-        2'd0: reload <= cfg_data;
-        2'd1: phase  <= cfg_data;
-        2'd2: ctl    <= cfg_data[13:0];
-        default: sync <= cfg_data[12:0];
-      endcase
-    end
-  end
+  config_bank #(.WIDTH(16)) reload_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd0), .write_bank(cfg_bank), .data(cfg_data),
+      .ctx(ctx), .ctx_next(ctx), .value(reload), .next());
+  config_bank #(.WIDTH(16)) phase_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd1), .write_bank(cfg_bank), .data(cfg_data),
+      .ctx(ctx), .ctx_next(ctx), .value(phase), .next());
+  config_bank #(.WIDTH(14)) ctl_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd2), .write_bank(cfg_bank), .data(cfg_data[13:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(ctl), .next());
+  config_bank #(.WIDTH(13)) sync_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(sync), .next());
 
   always @(posedge clk) begin
     if (!rst_n || !enable) begin

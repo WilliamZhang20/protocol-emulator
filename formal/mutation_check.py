@@ -31,7 +31,7 @@ class Mutation:
 
 
 CORE_SOURCES = (
-    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v", "byte_tile.v",
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v", "byte_tile.v", "config_bank.v",
 )
 
 MUTATIONS = (
@@ -80,10 +80,22 @@ MUTATIONS = (
         ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
     ),
     Mutation(
+        "context_write_ignores_mask", "fabric_lut", "config_bank.v",
+        "wire [WIDTH-1:0] bank1_next = (we && write_bank[1]) ? data : bank1;",
+        "wire [WIDTH-1:0] bank1_next = we ? data : bank1;",
+        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
+    ),
+    Mutation(
+        "context_select_inverted", "fabric_lut", "config_bank.v",
+        "assign value = ctx ? bank1 : bank0;",
+        "assign value = ctx ? bank0 : bank1;",
+        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
+    ),
+    Mutation(
         "lut_enable_ignored", "fabric_lut", "fabric_lut.v",
         "else if (lines[{1'b0, mode[4:0]}])",
         "else",
-        ("fabric_lut.v",), "fabric_lut_properties.sv", "fabric_lut_properties",
+        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
     ),
     Mutation(
         "core_arm_bypassed", "fabric_core", "protocol_emulator_core.v",
@@ -101,61 +113,67 @@ MUTATIONS = (
         "timer_reload_off_by_one", "fabric_timer", "fabric_timer.v",
         "count <= reload;",
         "count <= reload + 16'd1;",
-        ("fabric_timer.v",), "fabric_timer_properties.sv", "fabric_timer_properties",
+        ("config_bank.v", "fabric_timer.v"), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
         "timer_hold_ignored", "fabric_timer", "fabric_timer.v",
         "wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);",
         "wire hold       = 1'b0;",
-        ("fabric_timer.v",), "fabric_timer_properties.sv", "fabric_timer_properties",
+        ("config_bank.v", "fabric_timer.v"), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
         "shifter_rx_bit_order", "fabric_shifter", "fabric_shifter.v",
         "wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;",
         "wire [3:0] data_pos = data_pos_raw;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_tx_bit_order", "fabric_shifter", "fabric_shifter.v",
         "frame_bit_at = w[msb_first ? (frame[3:0] - raw) : raw];",
         "frame_bit_at = w[raw];",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_parity_polarity", "fabric_shifter", "fabric_shifter.v",
         "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
         "frame_bit_at = (^(w & len_mask)) ^ !odd_parity ^ word_err;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_overrun_lost", "fabric_shifter", "fabric_shifter.v",
         "          overrun <= 1'b1;",
         "          overrun <= 1'b0;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_burst_end_forgotten", "fabric_shifter", "fabric_shifter.v",
         "!(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));",
         "!(levels[burst[4:0]] || (burst[6] && word_eop));",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_burst_keeps_pre", "fabric_shifter", "fabric_shifter.v",
         "        index     <= pre_n;",
         "        index     <= 5'd0;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_injection_ignored", "fabric_shifter", "fabric_shifter.v",
         "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
         "frame_bit_at = (^(w & len_mask)) ^ odd_parity;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_abort_ignored", "fabric_shifter", "fabric_shifter.v",
+        "        if (done || abort)",
+        "        if (done)",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "shifter_rx_eop_lost", "fabric_shifter", "fabric_shifter.v",
         "push_eop  <= done && burst_mode;",
         "push_eop  <= 1'b0;",
-        ("fabric_shifter.v",), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
         "tile_escape_map_swapped", "byte_tile", "byte_tile.v",
@@ -198,7 +216,7 @@ MUTATIONS = (
         "counter_equal_restart", "fabric_counter", "fabric_counter.v",
         "default: next = data == last ? inc : 8'd1;",
         "default: next = data == last ? inc : 8'd0;",
-        ("fabric_counter.v",), "fabric_counter_properties.sv", "fabric_counter_properties",
+        ("config_bank.v", "fabric_counter.v"), "fabric_counter_properties.sv", "fabric_counter_properties",
     ),
     Mutation(
         "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",

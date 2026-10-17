@@ -12,10 +12,12 @@ bmc: smtbmc boolector
 cover: btor btormc
 
 [script]
+read -formal -sv config_bank.v
 read -formal -sv fabric_timer.v
 read -formal -sv fabric_timer_properties.sv
 prep -top fabric_timer_properties
 
 [files]
+../../src/config_bank.v
 ../../src/fabric_timer.v
 fabric_timer_properties.sv

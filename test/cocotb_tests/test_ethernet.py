@@ -8,15 +8,17 @@ TD+/TD- pair."""
 import random
 
 import cocotb
-from cocotb.triggers import Edge, First, Timer
+from cocotb.triggers import ClockCycles, Edge, First, Timer
 from cocotb.utils import get_sim_time
 
 from cocotb_tests.common import reset_top, start_clock
-from cocotb_tests.fabric import load_program, start_engine
-from cocotb_tests.line_codes import bits_to_bytes, ethernet_fcs
+from cocotb_tests.fabric import (
+    Bus, drain_rx_tagged, load_program, select_channel, start_engine,
+)
+from cocotb_tests.line_codes import bits_to_bytes, ethernet_fcs, lsb_bits
 from cocotb_tests.protocols import (
-    ETH_FRAME_ADDR, ETH_TD_N, ETH_TD_P, NLP_TICK, NLP_TICKS, TP_IDL_CYCLES,
-    ethernet_10baset_link,
+    ETH_FRAME_ADDR, ETH_RD, ETH_TD_N, ETH_TD_P, NLP_TICK, NLP_TICKS, TP_IDL_CYCLES,
+    ethernet_10baset_link, ethernet_10baset_receive,
 )
 
 CLOCK_NS = 25       # 40 MHz: one 10 Mb/s bit = 4 cycles
@@ -156,3 +158,88 @@ async def test_10baset_frames(dut, case):
     # from the frame's end (true at the real 1.6 ms tick for any 802.3
     # frame, at most 1.2 ms long).
     await run_session(dut, FRAME_CASES[case], nlp_tick=16000)
+
+
+# ---------------------------------------------------------------- receive
+async def send_manchester(dut, bus: Bus, frames: list[bytes], gap_bits: int = 96,
+                          link_pulses: int = 0) -> None:
+    """Reference transmitter on the RD pin: each frame as preamble, SFD,
+    bytes LSB first in Manchester (a 1 is low then high, 2 cycles each),
+    then TP_IDL high, then idle low for the inter-frame gap."""
+    bus.drive[ETH_RD] = 0
+    await ClockCycles(dut.clk, 200)
+    for frame in frames:
+        for _ in range(link_pulses):            # 100 ns highs, 1.6 us apart
+            bus.drive[ETH_RD] = 1
+            await ClockCycles(dut.clk, 4)
+            bus.drive[ETH_RD] = 0
+            await ClockCycles(dut.clk, 60)
+        for bit in lsb_bits(PREAMBLE + frame):
+            bus.drive[ETH_RD] = 1 - bit
+            await ClockCycles(dut.clk, 2)
+            bus.drive[ETH_RD] = bit
+            await ClockCycles(dut.clk, 2)
+        bus.drive[ETH_RD] = 1
+        await ClockCycles(dut.clk, TP_IDL_CYCLES)
+        bus.drive[ETH_RD] = 0
+        await ClockCycles(dut.clk, 4 * gap_bits)
+
+
+async def receive(dut, frames: list[bytes], link_pulses: int = 0) -> list[tuple[int, bool, bool]]:
+    await start_clock(dut, CLOCK_NS)
+    await reset_top(dut)
+    bus = Bus(dut)
+    await load_program(dut, ethernet_10baset_receive())
+    await select_channel(dut, 1)
+    await start_engine(dut)
+    sender = cocotb.start_soon(send_manchester(dut, bus, frames, link_pulses=link_pulses))
+    # An empty poll is one 5-cycle status command; outlast any gap between
+    # frames (inter-frame gap, link pulses, preamble).
+    received = await drain_rx_tagged(dut, settle_polls=400)
+    await sender
+    return received
+
+
+def as_packet(data: bytes, err: bool = False) -> list[tuple[int, bool, bool]]:
+    return [(b, i == len(data) - 1, err and i == len(data) - 1) for i, b in enumerate(data)]
+
+
+def with_fcs(frame: bytes) -> bytes:
+    return frame + ethernet_fcs(frame)
+
+
+@cocotb.test()
+async def test_10baset_receive_frame(dut):
+    """A minimum frame is recovered from Manchester on the pin: every byte
+    after the SFD through the FCS, the last tagged eop, the FCS good."""
+    wire = with_fcs(test_frame())
+    assert await receive(dut, [wire]) == as_packet(wire)
+
+
+@cocotb.test()
+async def test_10baset_receive_bad_fcs(dut):
+    """One corrupted payload byte: the bytes arrive as sent, and the
+    packet's last byte is tagged err."""
+    wire = bytearray(with_fcs(test_frame()))
+    wire[30] ^= 0x10
+    assert await receive(dut, [bytes(wire)]) == as_packet(bytes(wire), err=True)
+
+
+@cocotb.test()
+async def test_10baset_receive_back_to_back(dut):
+    """Two frames separated by the 96-bit inter-frame gap become two
+    packets; the receiver re-locks on the second preamble."""
+    first = with_fcs(frame_with(bytes(random.Random(8).randrange(256) for _ in range(46))))
+    second = with_fcs(frame_with(bytes([0xFF] * 46)))
+    assert await receive(dut, [first, second]) == as_packet(first) + as_packet(second)
+
+
+@cocotb.test()
+async def test_10baset_receive_ignores_link_pulses(dut):
+    """Link pulses before each frame neither start a packet nor disturb the
+    next frame's lock."""
+    first = with_fcs(test_frame())
+    second = with_fcs(frame_with(bytes([0x00] * 46)))
+    received = await receive(dut, [first, second], link_pulses=3)
+    assert received == as_packet(first) + as_packet(second)
+

@@ -21,14 +21,13 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
 
   wire [9:0]  instruction_address;
   wire        instruction_read;
-  wire        cfg_we, event_consume, clear_events, pin_we, pin_value, channel;
+  wire        cfg_we, event_consume, clear_events, channel;
   wire        tx_request, tx_push, rx_request, halted, push_eop, push_err;
   wire [7:0]  cfg_addr, rx_data;
   wire [15:0] cfg_data;
   wire [3:0]  rd_addr;
   wire [6:0]  event_index;
   wire [1:0]  fire;
-  wire [2:0]  pin_index;
   wire tx_grant = tx_grant_any && tx_request;
   wire rx_grant = rx_grant_any && rx_request;
 
@@ -50,8 +49,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       .rd_addr(rd_addr), .rd_data(rd_data),
       .event_ready(event_ready), .event_consume(event_consume),
       .event_index(event_index), .clear_events(clear_events),
-      .fire(fire), .pin_we(pin_we), .pin_index(pin_index),
-      .pin_value(pin_value), .channel(channel),
+      .fire(fire), .channel(channel),
       .tx_request(tx_request), .tx_grant(tx_grant), .tx_data(tx_data),
       .tx_push(tx_push), .tx_space(tx_space),
       .rx_request(rx_request), .rx_grant(rx_grant), .rx_data(rx_data),
@@ -99,7 +97,6 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
     case (op)
       // A level wait (lines 32-63) never retires in its first cycle.
       4'ha:    m_retire = event_ready && (m_waited != 16'd0 || !opnd[5]);
-      4'hd:    m_retire = m_waited == opnd;
       4'he:    m_retire = sub == 4'd2 ? tx_grant :
                           sub == 4'd3 ? rx_grant :
                           sub == 4'd7 ? tx_space : 1'b1;
@@ -194,8 +191,8 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       if (exec && op == 4'ha) assert(event_index == opnd[6:0]);
       assert(clear_events == (exec && opr && sub == 4'd4));
       assert(fire == ((exec && op == 4'hb) ? (opnd[0] ? 2'b10 : 2'b01) : 2'b00));
-      assert(pin_we == (exec && op == 4'hc));
-      if (pin_we) assert(pin_index == n[2:0] && pin_value == n[3]);
+      // C and D are reserved: like NOP they only advance the PC, which the
+      // fetch-address and output assertions above already pin down.
       assert(tx_request == (exec && opr && sub == 4'd2));
       assert(rx_request == (exec && opr && sub == 4'd3));
       assert(tx_push == (exec && opr && sub == 4'd7 && tx_space));

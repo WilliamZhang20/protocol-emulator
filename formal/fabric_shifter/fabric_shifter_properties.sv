@@ -15,6 +15,8 @@
 //    pushes are tagged eop exactly at the end of a burst frame and, with
 //    the frame fully sampled in loopback, err exactly when its parity was
 //    injected (a clean frame is never flagged);
+//  * an abort line drops the frame in progress: the tile goes idle with no
+//    word pulse and no push, and starts nothing while the line is high;
 //  * FIFO handshakes never drop or invent bytes, and overrun is flagged.
 module fabric_shifter_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
@@ -41,7 +43,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   reg [15:0] frame_s = 16'd0, data_s = 16'd0;
   reg [11:0] step_s = 12'd0;
   reg [12:0] io_s = 13'd0;
-  reg [6:0]  burst_s = 7'd0;
+  reg [12:0] burst_s = 13'd0;
 
   // Loop the selected input level line back to the shifter's own output.
   wire [5:0] in_sel = {1'b1, io_s[10:6]};
@@ -51,6 +53,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   fabric_shifter dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data),
+      .cfg_bank(2'b01), .ctx(1'b0), .ctx_next(1'b0),  // contexts: checked in fabric_lut
       .lines(lines),
       .pulls(pulls),
       .tx_request(tx_request), .tx_grant(tx_grant), .tx_data(tx_data),
@@ -62,8 +65,10 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   );
 
   wire trigger = io_s[5:0] != 6'd0 ? lines[io_s[5:0]] : io_s[11];
+  wire abort_m = lines[burst_s[12:7]];
+  wire run_m = enable && !abort_m;
   always @(*) if (rst_n && cfg_we && cfg_addr != 3'd0)
-    assume(!active && !(enable && trigger && (!io_s[11] || tx_grant)));
+    assume(!active && !(run_m && trigger && (!io_s[11] || tx_grant)));
   always @(*) if (rst_n && cfg_we) assume(cfg_addr <= 3'd4);
 
   wire [4:0] len  = {1'b0, frame_s[3:0]} + 5'd1;
@@ -115,12 +120,12 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   wire end_evt = end_on_sample ? sample_now : (shift_evt && !r_lead);
   wire end_line = lines[{1'b1, burst_s[4:0]}];
   // Burst: the word continues into the next one at its last data bit.
-  wire burst_go = enable && burst_s[5] && r_idx == {3'd0, npre} + len - 5'd1 &&
+  wire burst_go = run_m && burst_s[5] && r_idx == {3'd0, npre} + len - 5'd1 &&
                   end_evt && !(r_end_seen || end_line || (burst_s[6] && w_eop));
   wire burst_pull = burst_go && io_s[11];
   wire expect_next = burst_go && (!io_s[11] || tx_grant);
-  wire expect_done = enable && r_active && at_last && end_evt && !expect_next;
-  wire start_pulse = enable && (!r_active || expect_done) && trigger &&
+  wire expect_done = run_m && r_active && at_last && end_evt && !expect_next;
+  wire start_pulse = run_m && (!r_active || expect_done) && trigger &&
                      (!io_s[11] || tx_grant);
   wire [15:0] len_mask = 16'hffff >> (5'd16 - len);
   wire [15:0] sampled_now = r_sampled |
@@ -137,7 +142,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
       frame_s <= 16'd0; step_s <= 12'd0; data_s <= 16'd0; io_s <= 13'd0;
-      burst_s <= 7'd0; word <= 16'd0; w_eop <= 1'b0; w_err <= 1'b0;
+      burst_s <= 13'd0; word <= 16'd0; w_eop <= 1'b0; w_err <= 1'b0;
       r_idx <= 5'd0; r_lead <= 1'b0; r_sampled <= 16'd0;
       r_active <= 1'b0; r_end_seen <= 1'b0; burst_words <= 2'd0; r_tail <= 32'd0;
     end else begin
@@ -151,12 +156,12 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
           3'd1: frame_s <= cfg_data;
           3'd2: step_s <= cfg_data[11:0];
           3'd3: io_s <= cfg_data[12:0];
-          default: burst_s <= cfg_data[6:0];
+          default: burst_s <= cfg_data[12:0];
         endcase
       end
       if ((start_pulse || expect_next) && io_s[11])
         data_s <= {8'd0, tx_data};   // a pulled byte replaces the data word
-      if (!enable)
+      if (!run_m)
         r_active <= 1'b0;
       else if (start_pulse)
         r_active <= 1'b1;
@@ -240,6 +245,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
       cover(word_pulse && !stop_pulse && io_s[11]);   // gapless restart
       cover(expect_done && burst_s[6] && w_eop && burst_words == 2'd1);  // eop ends
       cover(past_push_check && past_err_check && rx_err);  // injected, caught
+      cover(r_active && abort_m && enable && burst_s[12:7] != 6'd0);  // aborted
       // A three-word pulled burst framed by a start and a stop bit.
       cover(expect_done && burst_s[5] && io_s[11] && npre == 2'd1 &&
             npost == 2'd1 && has_par && burst_words == 2'd2);

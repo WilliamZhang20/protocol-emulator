@@ -106,7 +106,8 @@ module host_interface_properties (input wire clk);   // one solver step = one cl
         if (cmd == 4'hb) assert(program_read == !past_enable);
         if (cmd == 4'h7 || cmd == 4'hf) assert(tx_push == !past_tx_full);
         // Status reports the next RX byte's tags in its low bits.
-        if (cmd == 4'ha) assert(host_out[1:0] == {past_rx_entry[8], past_rx_entry[9]});
+        if (cmd == 4'ha) assert(host_out[1:0] == (past_rx_empty ? 2'b00 :
+                                                  {past_rx_entry[8], past_rx_entry[9]}));
         if (cmd == 4'h9) assert(rx_pop == !past_rx_empty);
         if (cmd == 4'he) assert(channel == p3[0]);
       end

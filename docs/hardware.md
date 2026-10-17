@@ -42,7 +42,7 @@ with the clock.
 
 The host link uses all of `ui_in[7:0]` (command bytes) and `uo_out[7:0]`
 (responses). The demo board's microcontroller drives it, and the commands
-are listed in [architecture.md](architecture.md#host-interface).
+are listed in [host-link.md](host-link.md).
 The board's alternative uses of these pins (the UART bridge on
 `ui_in[3]`/`uo_out[4]`, the gamepad Pmod on `ui_in[4:6]`) are therefore not
 available.
@@ -71,7 +71,8 @@ the Tiny Tapeout recommended pinouts where one exists. The Pmod top row is
 | I2C master | `uio[2]` SCL, `uio[3]` SDA | I2C top row (INT/RESET unused) | **Pull-ups required** (2.2–4.7 kΩ to 3.3 V) on the Pmod or target: the chip only pulls low (open drain via output enable). 5 V devices need a bidirectional level shifter (PCA9306 or BSS138 type). |
 | PS/2 receive | `uio[4]` CLK, `uio[5]` DATA | none (bottom row) | PS/2 devices are 5 V open-collector, so use a **bidirectional level shifter** with pull-ups to 5 V (device side) and 3.3 V (chip side), and supply 5 V to the device. Host-to-device commands are not implemented. |
 | USB low speed | `uio[4]` D+, `uio[5]` D− | none (bottom row) | 27–33 Ω series resistors. Device role: 1.5 kΩ pull-up from D− to 3.3 V. Host role: 15 kΩ pull-downs on both lines. 4 mA drive is marginal against cable capacitance, so for more than a short cable add a buffer or a low-speed USB transceiver, plus ESD protection. Packet level only: no turnaround or handshake timing, not USB compliant. |
-| 10BASE-T transmit | `uio[6]` TD+, `uio[7]` TD− | none (bottom row) | 40 MHz clock. 4 mA cannot drive the line, so add a **line driver** (fast 3.3 V buffer), a resistor network setting about 2.5 V differential into 100 Ω, and a pulse transformer or an RJ45 jack with integrated magnetics. No waveform pre-distortion and transmit only, so this is hobby-grade, not a compliant PHY. |
+| 10BASE-T transmit | `uio[6]` TD+, `uio[7]` TD− | none (bottom row) | 40 MHz clock. 4 mA cannot drive the line, so add a **line driver** (fast 3.3 V buffer), a resistor network setting about 2.5 V differential into 100 Ω, and a pulse transformer or an RJ45 jack with integrated magnetics. No waveform pre-distortion, so this is hobby-grade, not a compliant PHY. |
+| 10BASE-T receive | `uio[4]` RD | none (bottom row) | 40 MHz clock. The RX pair (through the magnetics) needs a **differential receiver or fast comparator** with squelch, giving a 3.3 V logic level on RD (high = RD+ above RD−). The host must drain the RX FIFO at about one byte per 32 cycles, e.g. the RP2040 driving the host link from PIO; MicroPython is too slow. |
 
 Two protocols can share a row only when their pins don't overlap. For
 example, UART (`uio[1:2]`) and USB (`uio[4:5]`) can run together.

@@ -25,11 +25,17 @@ async def spi_slave(dut, bus: Bus, mode: int, replies: list[int], seen: list[int
     received_bits = 0
     previous = bus.level(SPI_SCK)
     assert previous == cpol, "SCK not at idle level when CS asserted"
+    since_cs, since_edge, first_edge = 0, 0, None
     while bus.level(SPI_CS) == 0:
         await RisingEdge(dut.clk)
+        since_cs += 1
+        since_edge += 1
         level = bus.level(SPI_SCK)
         if level == previous:
             continue
+        if first_edge is None:
+            first_edge = since_cs
+        since_edge = 0
         leading = level != cpol
         previous = level
         sample_edge = leading if cpha == 0 else not leading
@@ -50,6 +56,9 @@ async def spi_slave(dut, bus: Bus, mode: int, replies: list[int], seen: list[int
                 if bit < 0:
                     out = replies.pop(0) if replies else 0
                     bit = 7
+    # CS setup before the first SCK edge and hold after the last one.
+    assert first_edge is not None and first_edge >= HALF, ("CS setup", first_edge)
+    assert since_edge >= HALF, ("CS hold", since_edge)
 
 
 async def run_mode(dut, mode: int) -> None:

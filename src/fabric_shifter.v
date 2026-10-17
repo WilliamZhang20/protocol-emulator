@@ -19,6 +19,9 @@
 //            [11] auto pull TX FIFO  [12] auto push RX FIFO
 //   4 burst  [4:0] burst-end level (signal space 32-63)  [5] burst mode
 //            [6] a pulled byte tagged eop also ends the burst
+//            [12:7] abort line: while it is high the tile is idle and a
+//            frame in progress is dropped without a word pulse or push
+//            (e.g. carrier loss in the middle of a word); 0 never aborts
 //
 // FIFO bytes carry tags. TX: a byte pulled tagged err is sent with its
 // parity bit inverted (error injection). RX: an auto-pushed byte is tagged
@@ -45,6 +48,9 @@ module fabric_shifter (
     input  wire        cfg_we,
     input  wire [2:0]  cfg_addr,
     input  wire [15:0] cfg_data,
+    input  wire [1:0]  cfg_bank,      // contexts a write goes to
+    input  wire        ctx,       // active context
+    input  wire        ctx_next,  // active context next cycle
     input  wire [63:0] lines,
     output wire        pulls,       // auto pull: owns its TX FIFO channel
     output wire        tx_request,
@@ -65,10 +71,15 @@ module fabric_shifter (
     output wire [15:0] status
 );
   reg [15:0] tx_word;
-  reg [15:0] frame;
-  reg [11:0] step;
-  reg [12:0] io;
-  reg [6:0]  burst;
+  // Each frame bit is read through one view only: the boundary fields and
+  // the idle level from `frame_next` (precomputed below), the rest from
+  // `frame`; the other view's copy of those bits is unused, not dead.
+  /* verilator lint_off UNUSEDSIGNAL */
+  wire [15:0] frame, frame_next;
+  /* verilator lint_on UNUSEDSIGNAL */
+  wire [11:0] step;
+  wire [12:0] io;
+  wire [12:0] burst;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
   reg        par_cap, post_wrong;    // RX framing check (see below)
@@ -95,16 +106,18 @@ module fabric_shifter (
   wire       auto_pull = io[11];
   wire       auto_push = io[12];
   wire       burst_mode = burst[5];
+  wire       abort = lines[burst[12:7]];
+  wire       run   = enable && !abort;
 
   // Frame boundaries depend only on the frame register, so they are
-  // registered alongside it (computed from the value being written) instead
-  // of passing through an adder chain every cycle.
-  wire        frame_we   = cfg_we && cfg_addr == 3'd1;
-  wire [3:0]  len_m1_next = frame_we ? cfg_data[3:0] : frame[3:0];
-  wire [1:0]  pre_next    = frame_we ? cfg_data[5:4] : frame[5:4];
-  wire [1:0]  post_next   = frame_we ? cfg_data[8:7] : frame[8:7];
-  wire [1:0]  parity_next = frame_we ? cfg_data[11:10] : frame[11:10];
-  wire        idle_next   = frame_we ? cfg_data[15] : frame[15];
+  // registered alongside it (computed from the value active next cycle,
+  // including a write or a context switch) instead of passing through an
+  // adder chain every cycle.
+  wire [3:0]  len_m1_next = frame_next[3:0];
+  wire [1:0]  pre_next    = frame_next[5:4];
+  wire [1:0]  post_next   = frame_next[8:7];
+  wire [1:0]  parity_next = frame_next[11:10];
+  wire        idle_next   = frame_next[15];
   wire [4:0]  len_next   = {1'b0, len_m1_next} + 5'd1;
   wire [4:0]  data_end_next = {3'b0, pre_next} + len_next;
   wire [4:0]  par_end_next  = data_end_next + {4'b0, parity_next != 2'd0};
@@ -150,17 +163,19 @@ module fabric_shifter (
   wire shift_evt  = active_r && lines[step[5:0]];
   wire sample_now = active_r && lines[step[11:6]] && !lead_wait;
   wire end_evt = end_on_sample ? sample_now : (shift_evt && !lead_wait);
-  wire at_last = index == last_index;
+  // `>=` rather than `==`: if the framing changes under a frame in progress
+  // (a context switch), the frame still ends at its next end event.
+  wire at_last = index >= last_index;
   wire [31:0] levels = lines[63:32];
   // A burst continues past this word's last data bit unless the end line
   // has been seen; with auto pull it also needs the next byte.
-  wire burst_want = enable && burst_mode && index == data_last && end_evt &&
+  wire burst_want = run && burst_mode && index == data_last && end_evt &&
                     !(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));
   wire burst_next = burst_want && (!auto_pull || tx_grant);
-  wire frame_end = enable && at_last && end_evt;
+  wire frame_end = run && at_last && end_evt;
   wire done = frame_end && !burst_next;
   wire trigger = start_sel != 6'd0 ? lines[start_sel] : auto_pull;
-  wire start = enable && (!active_r || done) && trigger &&
+  wire start = run && (!active_r || done) && trigger &&
                (!auto_pull || tx_grant);
   wire in_bit = levels[io[10:6]];
   wire [15:0] data_bit_mask = 16'd1 << data_pos;
@@ -170,18 +185,20 @@ module fabric_shifter (
 
   // Received framing check by bit position, including this cycle's sample
   // (any number of samples per bit): the last parity sample must match the
-  // data, and every post sample must equal the post value.
+  // data, and every post sample must equal the post value. The parity bit
+  // comes after the data, so by then rx_word holds every data bit; using it
+  // instead of rx_next keeps the pin and the data mux off this path.
   wire post_sample = sample_now && !in_pre && !in_data;
   wire at_parity   = index < par_end;            // past the data bits
   wire par_now  = (post_sample && at_parity) ? in_bit : par_cap;
   wire post_bad = post_wrong || (post_sample && !at_parity && in_bit != post_val);
   wire par_bad  = frame[11:10] != 2'd0 &&
-                  par_now != ((^(rx_next & len_mask)) ^ odd_parity);
+                  par_now != ((^(rx_word & len_mask)) ^ odd_parity);
 
   // Requested from frame_end, not done, so the grant never feeds back into
   // its own request; the two differ only when burst_want already requests.
   assign tx_request = auto_pull &&
-      (burst_want || (enable && (!active_r || frame_end) && trigger));
+      (burst_want || (run && (!active_r || frame_end) && trigger));
   assign rx_request = push_pending;
   assign rx_byte    = push_byte;
   assign rx_eop     = push_eop;
@@ -194,22 +211,18 @@ module fabric_shifter (
   assign rx_data    = rx_word;
   assign status = {active_r, overrun, push_pending, 9'b0, post_cap};
 
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      frame <= 16'd0;
-      step  <= 12'd0;
-      io    <= 13'd0;
-      burst <= 7'd0;
-    end else if (cfg_we) begin
-      case (cfg_addr)
-        3'd1: frame <= cfg_data;
-        3'd2: step  <= cfg_data[11:0];
-        3'd3: io    <= cfg_data[12:0];
-        3'd4: burst <= cfg_data[6:0];
-        default: begin end
-      endcase
-    end
-  end
+  config_bank #(.WIDTH(16)) frame_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd1), .write_bank(cfg_bank), .data(cfg_data),
+      .ctx(ctx), .ctx_next(ctx_next), .value(frame), .next(frame_next));
+  config_bank #(.WIDTH(12)) step_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd2), .write_bank(cfg_bank), .data(cfg_data[11:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(step), .next());
+  config_bank #(.WIDTH(13)) io_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(io), .next());
+  config_bank #(.WIDTH(13)) burst_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(burst), .next());
 
   // The output is a register so downstream glue and tiles start their
   // paths at a flop. Each candidate (new frame, advance, hold) is
@@ -229,7 +242,7 @@ module fabric_shifter (
       out_r <= bit_start;
     else if (burst_next)
       out_r <= bit_burst;
-    else if (!active_r || done || !enable)
+    else if (!active_r || done || !run)
       out_r <= idle_next;
     else
       out_r <= advance ? bit_next : bit_hold;
@@ -309,7 +322,7 @@ module fabric_shifter (
           else if (!at_last)
             index <= index + 5'd1;
         end
-        if (done)
+        if (done || abort)
           active_r <= 1'b0;
       end
     end

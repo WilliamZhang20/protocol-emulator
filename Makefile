@@ -18,6 +18,7 @@ RTL_SOURCES := \
 	src/fabric_crc.v \
 	src/fabric_lut.v \
 	src/byte_tile.v \
+	src/config_bank.v \
 	src/program_memory.v \
 	src/byte_fifo.v \
 	src/host_interface.v

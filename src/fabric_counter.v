@@ -21,15 +21,17 @@ module fabric_counter (
     input  wire        cfg_we,
     input  wire [1:0]  cfg_addr,
     input  wire [12:0] cfg_data,
+    input  wire [1:0]  cfg_bank,      // contexts a write goes to
+    input  wire        ctx,       // active context
     input  wire [63:0] lines,
     output wire        ge,
     output wire        hit,
     output wire [7:0]  count
 );
-  reg [7:0]  match;
-  reg [12:0] step;
-  reg [4:0]  clear;
-  reg [7:0]  value;
+  wire [7:0]  match;
+  wire [12:0] step;
+  wire [4:0]  clear;
+  reg  [7:0]  value;
   reg        last;
 
   wire step_now  = lines[step[5:0]];
@@ -51,20 +53,15 @@ module fabric_counter (
   assign hit   = enable && !clear_now && step_now && !ge && next >= match;
   assign count = value;
 
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      match <= 8'd0;
-      step  <= 13'd0;
-      clear <= 5'd0;
-    end else if (cfg_we) begin
-      case (cfg_addr)
-        2'd0: match <= cfg_data[7:0];
-        2'd1: step  <= cfg_data;
-        2'd2: clear <= cfg_data[4:0];
-        default: begin end
-      endcase
-    end
-  end
+  config_bank #(.WIDTH(8)) match_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd0), .write_bank(cfg_bank), .data(cfg_data[7:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(match), .next());
+  config_bank #(.WIDTH(13)) step_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd1), .write_bank(cfg_bank), .data(cfg_data),
+      .ctx(ctx), .ctx_next(ctx), .value(step), .next());
+  config_bank #(.WIDTH(5)) clear_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd2), .write_bank(cfg_bank), .data(cfg_data[4:0]),
+      .ctx(ctx), .ctx_next(ctx), .value(clear), .next());
 
   always @(posedge clk) begin
     if (!rst_n || !enable) begin

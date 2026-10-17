@@ -2,18 +2,17 @@
 
 # Spatial Protocol Emulator
 
-This Tiny Tapeout design is a spatial, reconfigurable protocol engine. Bit-level
-behavior comes from a fabric of generic tiles (4 timers, 2 shifters, 2
-counters, a CRC engine, 8 LUT4+FF glue cells, and 8 pin cells) connected
-through one 64-line signal space. Once configured, the fabric runs every
-clock with no instruction fetch, so timing is exact by construction. A small
-prefix-encoded controller (PX8) executes from the on-chip foundry SRAM: it
-writes the configuration and makes transaction-level decisions.
+A Tiny Tapeout chip that speaks serial protocols on its pins (UART, SPI,
+I²C, PS/2, low-speed USB, 10BASE-T Ethernet, HDLC, SLIP and more) without
+any of them being built into the hardware.
 
-UART (full duplex), SPI (modes 0–3), I²C (with clock stretching), PS/2,
-low-speed USB transmit and receive (NRZI, bit stuffing, CRC16, clock
-recovery), and 10BASE-T transmit (Manchester + CRC32 FCS, at 40 MHz) are all
-configurations, not RTL. See [architecture.md](docs/architecture.md).
+Instead, the chip has general-purpose hardware blocks: timers, shifters,
+counters, a CRC engine, small logic cells and pin drivers. A program in
+on-chip memory **connects** these blocks for one protocol, then steps
+aside. The connected blocks run every clock cycle on their own, so every
+bit comes out at exactly the right time.
+
+New to the project? Start with [docs/README.md](docs/README.md).
 
 ## Local verification
 
@@ -47,7 +46,7 @@ Individual commands include `make lint`, `make dead-check`, `make synth-check`,
 
 ## Documentation
 
-- [Architecture, ISA, and host protocol](docs/architecture.md)
+- [Start here: reading order and glossary](docs/README.md)
 - [External hardware, pins, and clocks](docs/hardware.md)
 - [Dynamic verification](test/README.md)
 - [Formal verification](formal/README.md)

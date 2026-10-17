@@ -98,7 +98,7 @@ def truth(fn, inputs: int = 4) -> int:
 
 # ------------------------------------------------------------------ assembler
 OP_PFIX, OP_LDC, OP_SETP, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
-OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_PIN, OP_DLY, OP_OPR, OP_ANDC = range(8, 16)
+OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_RESERVED_C, OP_RESERVED_D, OP_OPR, OP_ANDC = range(8, 16)
 OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C = 1, 2, 3, 4, 5
 OPR_TXP, OPR_LDM, OPR_CFG = 7, 8, 9
 
@@ -164,9 +164,7 @@ class Px8:
     def rd(self, addr: int) -> None: self._emit(OP_RD, addr)
     def wev(self, line: int) -> None: self._emit(OP_WEV, line)
     def fire(self, n: int) -> None: self._emit(OP_FIRE, n)
-    def dly(self, cycles: int) -> None: self._emit(OP_DLY, cycles)
     def setp(self, v: int) -> None: self._emit(OP_SETP, v)
-    def pin(self, p: int, v: int) -> None: self._emit(OP_PIN, (v << 3) | p)
     def j(self, label: str) -> None: self._branch(OP_J, label)
     def jz(self, label: str) -> None: self._branch(OP_JZ, label)
     def djnz(self, label: str) -> None: self._branch(OP_DJNZ, label)
@@ -240,11 +238,17 @@ class Px8:
         self.cfg(base + 1, frame)
         self.cfg(base + 2, shift | (sample << 6))
 
-    def shifter_burst(self, k: int, *, end: int, on_eop: bool = False) -> None:
+    def shifter_burst(self, k: int, *, end: int, on_eop: bool = False,
+                      abort: int = ZERO) -> None:
         """Burst mode: words follow each other with no pre/parity/post bits
         until the word in which level line `end` has been high (or, with
         `on_eop`, a word pulled tagged eop)."""
-        self.cfg(0x32 + k, _level(end) | (1 << 5) | (int(on_eop) << 6))
+        self.cfg(0x32 + k, _level(end) | (1 << 5) | (int(on_eop) << 6) | (abort << 7))
+
+    def shifter_abort(self, k: int, line: int) -> None:
+        """No burst mode; while `line` is high the shifter drops the frame in
+        progress and stays idle."""
+        self.cfg(0x32 + k, line << 7)
 
     # ------------------------------------------------------------ byte layer
     def _tile(self, t: int, mode: int, a: int = 0, b: int = 0, c: int = 0) -> None:
@@ -329,10 +333,23 @@ class Px8:
                  ((_level(line[3]) if order[3] is not None else 0) << 5))
         self.cfg(base + 3, _pulse(enable) | (int(registered) << 5))
 
-    def pin_cell(self, p: int, *, mode: int, src: int | None = None, cpu: bool = False) -> None:
-        """Drive pin p from a level line, or from the controller pin bit."""
-        level = 0 if src is None else _level(src)
-        self.cfg(0x18 + p, level | (int(cpu) << 5) | (mode << 6))
+    def pin_cell(self, p: int, *, mode: int, src: int | None = None,
+                 const: int | None = None) -> None:
+        """Drive pin p from a level line, or with a constant level."""
+        if const is not None:
+            self.cfg(0x18 + p, (const << 4) | (1 << 5) | (mode << 6))
+        else:
+            level = 0 if src is None else _level(src)
+            self.cfg(0x18 + p, level | (mode << 6))
+
+    # ------------------------------------------------------------ contexts
+    def write_contexts(self, mask: int) -> None:
+        """Following config writes go to context 0 (mask 1), 1 (2) or both (3)."""
+        self.cfg(0x35, mask)
+
+    def context_select(self, line: int) -> None:
+        """The active context follows `line` (two cycles later)."""
+        self.cfg(0x34, line | (1 << 6))
 
     def flags(self, value: int) -> None:
         self.cfg(0x30, value)

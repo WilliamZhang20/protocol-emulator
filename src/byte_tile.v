@@ -30,7 +30,8 @@
 //               err. Valid configurations have {c0, c1} = {F, E}.
 //   3 TAG       packets from fabric events: a packet ends when the end
 //               line fires (or after `length` bytes, or on an input eop),
-//               and is flagged err if the error line was high during it.
+//               and is flagged err if the error line was high while it
+//               was being collected (from its first byte to its end).
 //               The core feeds byte tiles the signal space one cycle late.
 //   4 CHECK     8-bit add or xor checksum over each packet. Generate
 //               appends the byte that makes the total zero (two's
@@ -242,7 +243,7 @@ module byte_tile (
             end
             if ((end_line && (h_valid || take)) || (take && (in_eop || len_hit)))
               end_pend <= 1'b1;
-            if (err_line)
+            if (err_line && (h_valid || take))   // only during a packet
               err_seen <= 1'b1;
           end
         end

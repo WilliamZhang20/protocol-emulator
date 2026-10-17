@@ -26,6 +26,7 @@
 //   9          pop RX (if not empty)
 //   A          status {enable, halted, tx_full, rx_empty, 2'b0, eop, err};
 //              eop/err are the tags of the RX byte that 9 would pop next
+//              (0 when the RX FIFO is empty)
 //   B          SRAM[address], two cycles later (stopped only)
 //   C          levels {tx_full, rx_empty, tx_level, rx_level}
 //   D          peek RX without popping (if not empty)
@@ -186,9 +187,11 @@ module host_interface (
               rx_pop_register <= 1'b1;
             end
           end
+          // The head byte's tags only exist when there is a head byte
+          // (FIFO memory is not reset).
           CMD_STATUS: output_register <= {
               engine_enable_register, engine_halted, tx_full, rx_empty, 2'b0,
-              rx_pop_data[8], rx_pop_data[9]
+              !rx_empty && rx_pop_data[8], !rx_empty && rx_pop_data[9]
           };
           // SRAM readback (stopped only): the strobe goes out now, and the
           // byte reaches host_out through read_capture above.

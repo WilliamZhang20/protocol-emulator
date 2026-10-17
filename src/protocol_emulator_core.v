@@ -30,14 +30,16 @@
 //   0x00-0x0F timer addr[3:2], reg addr[1:0]
 //   0x10-0x17 shifter addr[2], reg addr[1:0]
 //   0x18-0x1F pin p: [4:0] source level (signal space 32-63),
-//             [5] controller pin, [7:6] mode: 0 input, 1 push-pull,
-//             2 open-drain, 3 push-pull
+//             [5] constant: drive [4] instead, [7:6] mode: 0 input,
+//             1 push-pull, 2 open-drain, 3 push-pull
 //   0x20-0x27 counter addr[2], reg addr[1:0]
 //   0x28-0x2E CRC reg addr[2:0]
 //   0x30      controller flags [1:0]
 //   0x31      [0] arm: tiles and pin outputs stay idle until armed, so a
 //             partially written configuration can never act
 //   0x32-0x33 shifter k burst register (shifter reg 4)
+//   0x34      context select [5:0] line, [6] enable
+//   0x35      contexts written [1:0] (reset 01: context 0)
 //   0x60-0x7F byte tile t = {channel, rx, stage} addr[4:2], reg addr[1:0];
 //             TX: TX FIFO -> stage 0 -> stage 1 -> shifter;
 //             RX: shifter -> stage 0 -> stage 1 -> RX FIFO
@@ -107,9 +109,6 @@ module protocol_emulator_core (
   wire [6:0]  event_index;
   wire        clear_events;
   wire [1:0]  cpu_fire;
-  wire        cpu_pin_we;
-  wire [2:0]  cpu_pin_index;
-  wire        cpu_pin_value;
   wire        cpu_channel;
   wire        cpu_tx_request;
   wire        cpu_rx_request;
@@ -184,6 +183,41 @@ module protocol_emulator_core (
         flags <= cfg_data[1:0];
       if (cfg_we && cfg_addr == 8'h31)
         armed <= cfg_data[0];
+    end
+  end
+
+  // ------------------------------------------------------------- contexts
+  // Every timer, shifter, counter, glue cell and pin cell holds two
+  // configurations (contexts). The active context follows a fabric line
+  // (config 0x34: [5:0] line, [6] enable) two cycles later, so a protocol
+  // phase change is one fabric event, with no controller and no rewrite.
+  // Controller writes go to the contexts selected by 0x35 [1:0] ([0]
+  // context 0, [1] context 1; reset: context 0 only). CRC and byte tiles
+  // keep one configuration.
+  reg [6:0]  context_cfg;
+  reg [1:0]  write_bank;
+  reg        context_pre;
+  // One copy per tile group keeps the select's fanout small: [3:0] timers,
+  // [5:4] counters, [13:6] glue cells, [15:14] shifters, [16] pin cells.
+  (* keep = "true" *) reg [16:0] context_copy;
+  always @(posedge clk) begin
+    if (!rst_n) begin
+      context_cfg <= 7'd0;
+      write_bank  <= 2'b01;
+    end else if (cfg_we) begin
+      if (cfg_addr == 8'h34)
+        context_cfg <= cfg_data[6:0];
+      if (cfg_addr == 8'h35)
+        write_bank <= cfg_data[1:0];
+    end
+  end
+  always @(posedge clk) begin
+    if (!rst_n || !enable) begin
+      context_pre  <= 1'b0;
+      context_copy <= 17'd0;
+    end else begin
+      context_pre  <= context_cfg[6] && lines[context_cfg[5:0]];
+      context_copy <= {17{context_pre}};
     end
   end
 
@@ -280,9 +314,6 @@ module protocol_emulator_core (
       .event_index(event_index),
       .clear_events(clear_events),
       .fire(cpu_fire),
-      .pin_we(cpu_pin_we),
-      .pin_index(cpu_pin_index),
-      .pin_value(cpu_pin_value),
       .channel(cpu_channel),
       .tx_request(cpu_tx_request),
       .tx_grant(cpu_tx_grant),
@@ -305,6 +336,7 @@ module protocol_emulator_core (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:4] == 4'h0 && cfg_addr[3:2] == k),
           .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+          .cfg_bank(write_bank), .ctx(context_copy[k]),
           .lines(lines),
           .out(t_out[k]), .rise(t_rise[k]), .fall(t_fall[k])
       );
@@ -316,6 +348,7 @@ module protocol_emulator_core (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:3] == 5'b00100 && cfg_addr[2] == k),
           .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data[12:0]),
+          .cfg_bank(write_bank), .ctx(context_copy[4 + k]),
           .lines(lines),
           .ge(c_ge[k]), .hit(c_hit[k]), .count(count)
       );
@@ -328,6 +361,7 @@ module protocol_emulator_core (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:5] == 3'b010 && cfg_addr[4:2] == k),
           .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
+          .cfg_bank(write_bank), .ctx(context_copy[6 + k]),
           .lines({lut_q, lines[55:0]}),
           .out(lut_out[k]), .q(lut_q[k])
       );
@@ -340,6 +374,8 @@ module protocol_emulator_core (
       .clk(clk), .rst_n(rst_n), .enable(live),
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || cfg_addr == 8'h32)),
       .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
+      .cfg_bank(write_bank), .ctx(context_copy[14]),
+      .ctx_next(context_pre),
       .lines(shifter_lines),
       .pulls(sh_pulls[0]),
       .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
@@ -355,6 +391,8 @@ module protocol_emulator_core (
       .clk(clk), .rst_n(rst_n), .enable(live),
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || cfg_addr == 8'h33)),
       .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
+      .cfg_bank(write_bank), .ctx(context_copy[15]),
+      .ctx_next(context_pre),
       .lines(shifter_lines),
       .pulls(sh_pulls[1]),
       .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
@@ -376,36 +414,29 @@ module protocol_emulator_core (
   );
 
   // ------------------------------------------------------------- pin cells
-  reg [7:0] pin_cfg [0:7];
-  reg [7:0] cpu_pins;
-  reg [7:0] out_q;
-  reg [7:0] oe_q;
-  integer r;
-  always @(posedge clk) begin
-    if (!rst_n) begin
-      for (r = 0; r < 8; r = r + 1)
-        pin_cfg[r] <= 8'd0;
-    end else if (cfg_we && cfg_addr[7:3] == 5'b00011) begin
-      pin_cfg[cfg_addr[2:0]] <= cfg_data[7:0];
+  wire [63:0] pin_cfg;          // pin p: [8p +: 8]
+  reg  [7:0]  out_q;
+  reg  [7:0]  oe_q;
+  genvar q;
+  generate
+    for (q = 0; q < 8; q = q + 1) begin : pin
+      config_bank #(.WIDTH(8)) cfg (.clk(clk), .rst_n(rst_n),
+          .we(cfg_we && cfg_addr == 8'h18 + q), .write_bank(write_bank),
+          .data(cfg_data[7:0]), .ctx(context_copy[16]),
+          .ctx_next(context_copy[16]), .value(pin_cfg[8*q +: 8]), .next());
     end
-  end
+  endgenerate
 
   reg [7:0] pin_value;
   integer m;
   always @(*) begin
     for (m = 0; m < 8; m = m + 1)
-      pin_value[m] = pin_cfg[m][5] ? cpu_pins[m] : lines[{1'b1, pin_cfg[m][4:0]}];
+      pin_value[m] = pin_cfg[8*m + 5] ? pin_cfg[8*m + 4] : lines[{1'b1, pin_cfg[8*m +: 5]}];
   end
 
   // Every pin output is registered: one uniform cycle of output latency and
   // no glitches from the combinational source muxes.
   integer p;
-  always @(posedge clk) begin
-    if (!rst_n || !enable)
-      cpu_pins <= 8'd0;
-    else if (cpu_pin_we)
-      cpu_pins[cpu_pin_index] <= cpu_pin_value;
-  end
 
   always @(posedge clk) begin
     if (!rst_n || !live) begin
@@ -413,7 +444,7 @@ module protocol_emulator_core (
       oe_q  <= 8'd0;
     end else begin
       for (p = 0; p < 8; p = p + 1) begin
-        case (pin_cfg[p][7:6])
+        case (pin_cfg[8*p + 6 +: 2])
           2'd0: begin out_q[p] <= 1'b0; oe_q[p] <= 1'b0; end
           2'd2: begin out_q[p] <= 1'b0; oe_q[p] <= !pin_value[p]; end
           default: begin out_q[p] <= pin_value[p]; oe_q[p] <= 1'b1; end
