@@ -49,8 +49,7 @@ module fabric_shifter (
     input  wire [2:0]  cfg_addr,
     input  wire [15:0] cfg_data,
     input  wire [1:0]  cfg_bank,      // contexts a write goes to
-    input  wire        ctx,       // active context
-    input  wire        ctx_next,  // active context next cycle
+    input  wire        ctx_next,  // context active from the next cycle
     input  wire [63:0] lines,
     output wire        pulls,       // auto pull: owns its TX FIFO channel
     output wire        tx_request,
@@ -213,16 +212,16 @@ module fabric_shifter (
 
   config_bank #(.WIDTH(16)) frame_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd1), .write_bank(cfg_bank), .data(cfg_data),
-      .ctx(ctx), .ctx_next(ctx_next), .value(frame), .next(frame_next));
+      .ctx_next(ctx_next), .value(frame), .next(frame_next));
   config_bank #(.WIDTH(12)) step_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd2), .write_bank(cfg_bank), .data(cfg_data[11:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(step), .next());
+      .ctx_next(ctx_next), .value(step), .next());
   config_bank #(.WIDTH(13)) io_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(io), .next());
+      .ctx_next(ctx_next), .value(io), .next());
   config_bank #(.WIDTH(13)) burst_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(burst), .next());
+      .ctx_next(ctx_next), .value(burst), .next());
 
   // The output is a register so downstream glue and tiles start their
   // paths at a flop. Each candidate (new frame, advance, hold) is

@@ -87,8 +87,8 @@ MUTATIONS = (
     ),
     Mutation(
         "context_select_inverted", "fabric_lut", "config_bank.v",
-        "assign value = ctx ? bank1 : bank0;",
-        "assign value = ctx ? bank0 : bank1;",
+        "assign next = ctx_next ? bank1_next : bank0_next;",
+        "assign next = ctx_next ? bank0_next : bank1_next;",
         ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
     ),
     Mutation(

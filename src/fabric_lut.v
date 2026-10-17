@@ -22,7 +22,7 @@ module fabric_lut (
     input  wire [1:0]  cfg_addr,
     input  wire [15:0] cfg_data,
     input  wire [1:0]  cfg_bank,      // contexts a write goes to
-    input  wire        ctx,       // active context
+    input  wire        ctx_next,  // context active from the next cycle
     input  wire [63:0] lines,
     output wire        out,
     output wire        q
@@ -43,16 +43,16 @@ module fabric_lut (
 
   config_bank #(.WIDTH(16)) truth_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd0), .write_bank(cfg_bank), .data(cfg_data),
-      .ctx(ctx), .ctx_next(ctx), .value(truth), .next());
+      .ctx_next(ctx_next), .value(truth), .next());
   config_bank #(.WIDTH(12)) sel_lo_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd1), .write_bank(cfg_bank), .data(cfg_data[11:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(sel_lo), .next());
+      .ctx_next(ctx_next), .value(sel_lo), .next());
   config_bank #(.WIDTH(10)) sel_hi_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd2), .write_bank(cfg_bank), .data(cfg_data[9:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(sel_hi), .next());
+      .ctx_next(ctx_next), .value(sel_hi), .next());
   config_bank #(.WIDTH(6)) mode_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd3), .write_bank(cfg_bank), .data(cfg_data[5:0]),
-      .ctx(ctx), .ctx_next(ctx), .value(mode), .next());
+      .ctx_next(ctx_next), .value(mode), .next());
 
   always @(posedge clk) begin
     if (!rst_n || !enable)

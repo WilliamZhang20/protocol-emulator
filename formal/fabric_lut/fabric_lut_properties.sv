@@ -4,7 +4,7 @@
 // truth-table entry the four selected inputs index, and the registered
 // output loads that entry exactly on enable-line cycles, holds otherwise,
 // and clears while the fabric is disabled. Both contexts are modelled:
-// writes go to any set of contexts, the active one changes arbitrarily
+// writes go to any set of contexts, the next context is chosen arbitrarily
 // every cycle, and the cell always behaves as the active context says.
 module fabric_lut_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
@@ -15,7 +15,8 @@ module fabric_lut_properties (input wire clk);   // one solver step = one clock 
   (* anyseq *) reg [1:0]  cfg_addr;
   (* anyseq *) reg [15:0] cfg_data;
   (* anyseq *) reg [1:0]  cfg_bank;
-  (* anyseq *) reg        ctx;
+  (* anyseq *) reg        ctx_next;
+  reg        ctx = 1'b0;           // the active context
   (* anyseq *) reg [63:0] lines_any;
   wire [63:0] lines = {lines_any[63:2], 1'b1, 1'b0};
   wire out, q;
@@ -23,7 +24,7 @@ module fabric_lut_properties (input wire clk);   // one solver step = one clock 
   fabric_lut dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data),
-      .cfg_bank(cfg_bank), .ctx(ctx),
+      .cfg_bank(cfg_bank), .ctx_next(ctx_next),
       .lines(lines), .out(out), .q(q)
   );
 
@@ -58,8 +59,10 @@ module fabric_lut_properties (input wire clk);   // one solver step = one clock 
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
       ctx_s[0] <= 44'd0; ctx_s[1] <= 44'd0;
+      ctx <= 1'b0;
       q_model <= 1'b0;
     end else begin
+      ctx <= ctx_next;
       if (cfg_we && cfg_bank[0]) ctx_s[0] <= written(ctx_s[0]);
       if (cfg_we && cfg_bank[1]) ctx_s[1] <= written(ctx_s[1]);
       if (!enable)
