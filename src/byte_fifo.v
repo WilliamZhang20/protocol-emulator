@@ -5,19 +5,20 @@
 // Reports occupancy and flow-control status at both ends.
 module byte_fifo #(
     parameter DEPTH = 4,
-    parameter ADDRESS_WIDTH = 2
+    parameter ADDRESS_WIDTH = 2,
+    parameter WIDTH = 8
 ) (
     input  wire                   clk,
     input  wire                   rst_n,
     input  wire                   push,
-    input  wire [7:0]             push_data,
+    input  wire [WIDTH-1:0]       push_data,
     input  wire                   pop,
-    output wire [7:0]             pop_data,
+    output wire [WIDTH-1:0]       pop_data,
     output wire                   empty,
     output wire                   full,
     output wire [ADDRESS_WIDTH:0] level
 );
-  reg [7:0] memory [0:DEPTH-1];
+  reg [WIDTH-1:0] memory [0:DEPTH-1];
   reg [ADDRESS_WIDTH-1:0] read_pointer;
   reg [ADDRESS_WIDTH-1:0] write_pointer;
   reg [ADDRESS_WIDTH:0] count;
@@ -25,7 +26,7 @@ module byte_fifo #(
       DEPTH[ADDRESS_WIDTH-1:0] - 1'b1;
   localparam [ADDRESS_WIDTH:0] FIFO_DEPTH = DEPTH;
   wire pop_accepted = pop && !empty;
-  wire push_accepted = push && (!full || pop_accepted);
+  wire push_accepted = push && !full;
 
   assign pop_data = memory[read_pointer];
   assign empty = count == 0;

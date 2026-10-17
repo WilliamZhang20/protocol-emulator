@@ -1,9 +1,6 @@
 `default_nettype none
 
-module byte_fifo_properties;
-  (* gclk *) reg formal_timestep;
-  reg clk = 1'b0;
-  always @(posedge formal_timestep) clk <= !clk;
+module byte_fifo_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
   wire rst_n = reset_cycles >= 2;
   (* anyseq *) reg push;
@@ -25,7 +22,7 @@ module byte_fifo_properties;
   reg [7:0] expected [0:3];
   reg [2:0] expected_count = 3'd0;
   wire pop_accept = pop && expected_count != 3'd0;
-  wire push_accept = push && (expected_count != 3'd4 || pop_accept);
+  wire push_accept = push && expected_count != 3'd4;
   integer i;
 
   always @(posedge clk) begin
@@ -56,7 +53,7 @@ module byte_fifo_properties;
         default: expected_count <= expected_count;
       endcase
 
-      cover(full && push && pop);
+      cover(full && push && pop);   // the pop is accepted, the push is not
       cover(empty && push);
     end
   end

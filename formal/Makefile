@@ -4,17 +4,19 @@ export PATH := $(EDA_BIN):$(PROJECT_ROOT)/.venv/bin:$(PATH)
 PYTHON ?= $(PROJECT_ROOT)/.venv/bin/python
 SBY ?= $(if $(wildcard $(EDA_BIN)/sby),$(EDA_BIN)/sby,sby)
 BUILD_DIR ?= $(PROJECT_ROOT)/build/formal
-TARGETS := program_memory uart_tx uart_rx byte_fifo event_engine gpio_ownership action_dispatcher action_engine action_stream shared_resources
+TARGETS := program_memory byte_fifo host_interface fabric_timer fabric_shifter \
+	fabric_counter fabric_crc fabric_lut byte_tile px8_controller fabric_core
 program_memory_TASKS := bmc prove cover
-uart_tx_TASKS := bmc cover
-uart_rx_TASKS := bmc cover
 byte_fifo_TASKS := bmc prove cover
-event_engine_TASKS := bmc prove cover
-gpio_ownership_TASKS := bmc prove cover
-action_dispatcher_TASKS := bmc prove cover
-action_engine_TASKS := bmc prove cover
-action_stream_TASKS := bmc cover
-shared_resources_TASKS := bmc prove cover
+host_interface_TASKS := bmc prove cover
+fabric_timer_TASKS := bmc cover
+fabric_shifter_TASKS := bmc cover
+fabric_counter_TASKS := bmc prove cover
+fabric_crc_TASKS := bmc prove cover
+fabric_lut_TASKS := bmc prove cover
+byte_tile_TASKS := roundtrip checksum cover_roundtrip cover_checksum
+px8_controller_TASKS := bmc cover
+fabric_core_TASKS := bmc cover
 
 .PHONY: all $(TARGETS) mutation-check clean list
 

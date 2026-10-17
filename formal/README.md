@@ -1,78 +1,84 @@
 # Formal verification
 
 Formal checks complement the cocotb regression; they do not replace it. Each
-implemented RTL block gets an independent directory containing its harness,
-properties, and `.sby` task definition.
+RTL block has its own directory with a property harness and an `.sby` task
+file. Every harness checks the block against an independently written
+reference (a model, a scoreboard, or a pin-level contract), never against a
+copy of its own logic.
 
 ## Running the suite
 
 Install the YosysHQ OSS CAD Suite, then run from the repository root:
 
 ```sh
-make formal
-```
-
-Run an individual target with:
-
-```sh
-make -C formal program_memory
-make -C formal uart_tx
-make -C formal uart_rx
-make -C formal byte_fifo
-make -C formal event_engine
-make -C formal gpio_ownership
-make -C formal action_dispatcher
-make -C formal action_engine
-make -C formal action_stream
-make -C formal shared_resources
+make formal                 # every target, then the mutation check
+make -C formal list         # target names
+make -C formal px8_controller
 ```
 
 Results and counterexample traces are written beneath `build/formal/`.
+Harnesses are single-clock: one solver step is one clock cycle, so a depth
+of N checks every input sequence of N cycles from reset.
 
-The SRAM target runs bounded checks, an unbounded induction proof, and a cover
-trace. Its formal macro is a tracked arbitrary-address abstraction, which proves
-masked write and synchronous read behavior without expanding all 8192 storage
-bits into the solver.
+## Targets
 
-Each UART target exhaustively checks 300 formal steps for every possible
-8-bit payload and produces a reachable complete-frame cover trace. The cover
-tasks use BTORMC, which finds the RX witness at step 265 and TX at step 274
-without the long SMTBMC search; each also has a 120-second timeout. TX assertions
-check FIFO consumption, output enable, start/data/stop levels, and idle recovery;
-RX assertions check one correctly reconstructed FIFO byte.
+| Target | Tasks | Checked behavior |
+| --- | --- | --- |
+| `program_memory` | BMC, proof, cover | Masked writes and synchronous reads of the SRAM wrapper against a tracked-address abstraction of the macro. |
+| `byte_fifo` | BMC, proof, cover | Count, full/empty, ordering, simultaneous push/pop, and refusal of a push into a full FIFO, against an age-ordered reference queue. |
+| `host_interface` | BMC, proof, cover | The host-link pin contract under an unconstrained, glitching host: every strobe and state change traces back to one byte that was on the pins at two consecutive clock edges; a second strobe needs a stable 8'h00 in between; a stable 8'h00 followed by a stable command always acts; payload nibbles, address post-increment, SRAM readback capture, FIFO channel select, eop tagging by command F, the RX byte's tags in status, and stop on halt. |
+| `fabric_timer` | BMC (24 cycles), cover | Every tick against an independent cycle-count model (first tick `phase + 1` cycles after a start or resync, then every `reload + 1`); hold freezes time; stop wins; the output moves only on a toggle tick or to idle. |
+| `fabric_shifter` | BMC (24 cycles), cover | `out` equals an independently built frame (pre/data in both bit orders/parity/post, lead mode), including gapless restarts and burst mode (words chained with no inner framing, end latch, FIFO underrun, eop-tagged end) and injected parity errors, and the abort line (the frame in progress is dropped with no word pulse or push); with the input looped back, a fully sampled frame reproduces the word in `rx_data` and in every RX push; FIFO requests hold until granted; overrun is flagged; RX pushes are tagged eop exactly at the end of a burst frame and, with the frame fully sampled in loopback, err exactly when its parity was injected. |
+| `fabric_counter` | BMC, proof, cover | Count, threshold level and hit pulse against a per-mode reference (event count, run of ones/zeros/equal bits) with clear priority, including saturation at 255. |
+| `fabric_crc` | BMC, proof, cover | The 32-bit configuration against the mirror-image reflected LFSR used by software on every absorb, emit, init, output bit and (registered) residue match. |
+| `byte_tile` | round trip (BMC, 32 cycles), checksum (BMC, 20 cycles), covers | Byte tiles end to end. ESCAPE → UNESCAPE: for any valid escape map (symbolic codes) and any packet stream, every byte and eop tag arrives exactly as sent, never tagged err, nothing invented. CHECK generate → verify (add or xor, any initial value): a packet arrives tagged err exactly when one of its bytes was corrupted on the link (any nonzero flip, symbolic place) or, in the other mode, when its sender asked for an injected error. Every tile output: a byte waiting to be taken never changes. |
+| `fabric_lut` | BMC, proof, cover | The glue cell's combinational output is the addressed truth-table entry; the registered output loads it exactly on enable-line cycles and clears while disabled. Both configuration contexts are modelled: writes reach any set of contexts and the active one changes arbitrarily every cycle, and the cell always follows the active context. |
+| `px8_controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch and data-read addresses, every side-effect output (config writes, including each word of a block config load, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes, including level waits that never retire in their first cycle. |
+| `fabric_core` | BMC (24 cycles), cover | The whole spatial core running any program from a symbolic SRAM against arbitrary pins and FIFO states: no pin is ever driven before the SRAM has returned a byte every arm write needs (`WCF` n=1, 8'h81, or a block entry's address byte 8'h31); a stopped engine releases the pins; no pop from an empty FIFO channel, no push into a full one; the controller feeds one channel at a time. |
 
-The additional targets check the architecture's shared resources directly:
+The proofs are unbounded (`abc pdr`). PDR did not converge on the timer or
+the shifter within 30 minutes, nor did k-induction (their reference models
+count differently from the RTL, and without hierarchical references a
+harness cannot state the linking invariant), so those two are bounded, as are
+the controller and the core, whose state is too large for PDR.
 
-| Target | Proved behavior |
+Each target also has cover statements so over-constrained harnesses are
+visible: a pulled three-word burst framed by start and stop bits, a
+prefixed constant reaching `A` and a prefixed config write, an LDM data
+load at `P`, a two-word block config load, a level wait, a DJNZ loop, a
+pin driven after arming, SRAM readback, and so on.
+
+## Mutation check
+
+`make formal` runs `mutation_check.py` last. It builds temporary RTL
+variants with one representative defect each and requires the focused BMC
+target to reject every one (the repository RTL is never modified):
+
+| Target | Mutations |
 | --- | --- |
-| `byte_fifo` | Unbounded FIFO count, full/empty, ordering, and simultaneous push/pop against an age-ordered reference queue. |
-| `event_engine` | Unbounded timer/region token counts, sticky edge/compare behavior, consume precedence, and source/pin detail against a reference scoreboard. |
-| `gpio_ownership` | Unbounded one-to-one logical/physical map and action-claim isolation from CPU and side-set writes. |
-| `action_dispatcher` | Atomic pin-conflict admission, selected-lane readiness, exclusive FIFO grants, backpressure, and priority selection. |
-| `action_engine` | Bounded and unbounded lane repeat count, claim lifetime, completion, and immunity to an attempted live table rewrite. |
-| `action_stream` | Bounded checks for exactly one automatic TX pull and RX push per byte, receive ordering, and stable requests across FIFO stalls. |
-| `shared_resources` | CPU stalls during shared FIFO/table/map ownership, pin-conflict hold, NOP forward progress, and JZ/JNZ branch polarity. |
-
-Each target also has a cover task so its important scenario is demonstrably
-reachable. `make formal` runs `mutation-check` last. That script makes five
-temporary RTL variants and requires the focused BMC targets to reject a FIFO
-count reversal, event-token decrement reversal, GPIO map alias, dropped
-action pin claim, and JZ branch-polarity flip. The repository RTL is never
-modified by the mutation run.
+| `host_interface` | accept without the two-cycle stability check; no address post-increment |
+| `px8_controller` | prefix bits dropped; DJNZ testing `C` before the decrement; level wait retiring in its first cycle; block data bytes swapped; block pointer stuck |
+| `fabric_lut` | registered cell ignoring its enable line; a context write ignoring its context mask; the context select inverted |
+| `fabric_core` | arm bit bypassed (pins live as soon as the engine runs) |
+| `byte_fifo` | count direction reversed |
+| `fabric_timer` | reload off by one; clock-stretch hold ignored |
+| `fabric_shifter` | RX and TX bit order; parity polarity; overrun lost; burst end latch forgotten; pre bits repeated between burst words; injected parity error ignored; RX eop tag lost; abort line ignored |
+| `byte_tile` | escape map swapped; unescape restoring the wrong byte; checksum not negated; error injection ignored; output dropped before it is taken |
+| `fabric_counter` | wrong run-of-equal restart value |
+| `fabric_crc` | feedback ignoring data |
 
 ## Adding a block
 
-1. Create `formal/<block>/<block>.sby` and a property harness.
-2. Keep environmental constraints separate from design assertions.
+1. Create `formal/<block>/<block>.sby` and a property harness with a
+   `clk` input.
+2. Write the reference independently of the RTL, and keep environment
+   assumptions separate from design assertions.
 3. Add cover statements so over-constrained proofs are visible.
-4. Add the directory name to `TARGETS` in `formal/Makefile`.
+4. Add the directory name and its tasks to `formal/Makefile`, and at least
+   one mutation to `mutation_check.py`.
 5. Run bounded checks before adding an unbounded proof task.
 
-Use simple clocked `assume`, `assert`, `$past`, and `cover` constructs supported
-by the open-source Yosys frontend. Prefer properties at module interfaces over
-assertions coupled to private implementation state.
-
-The foundry SRAM is replaced only during formal runs by the sound tracked-address
-abstraction. Physical views and timing are validated by the ASIC flow, while
-cocotb and the standalone Verilator test compile and exercise the delivered
-behavioral model.
+The foundry SRAM is replaced only during formal runs by the sound
+tracked-address abstraction. Physical views and timing are validated by
+the ASIC flow, while cocotb and the standalone Verilator test compile and
+exercise the delivered behavioral model.

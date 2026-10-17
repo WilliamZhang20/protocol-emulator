@@ -11,19 +11,15 @@ SIM ?= verilator
 RTL_SOURCES := \
 	src/project.v \
 	src/protocol_emulator_core.v \
-	src/instruction_decoder.v \
+	src/px8_controller.v \
+	src/fabric_timer.v \
+	src/fabric_shifter.v \
+	src/fabric_counter.v \
+	src/fabric_crc.v \
+	src/fabric_lut.v \
+	src/byte_tile.v \
+	src/config_bank.v \
 	src/program_memory.v \
-	src/register_file.v \
-	src/timer_counter.v \
-	src/serial_shifter.v \
-	src/action_dispatcher.v \
-	src/action_lane.v \
-	src/action_engine.v \
-	src/event_engine.v \
-	src/vm_sequencer.v \
-	src/gpio_arbiter.v \
-	src/gpio_datapath.v \
-	src/crc_engine.v \
 	src/byte_fifo.v \
 	src/host_interface.v
 
@@ -33,7 +29,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify lint synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
+.PHONY: help verify lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -41,16 +37,21 @@ help:
 	@echo "make pdn-def-check DEF=...  Check SRAM power nets in a final DEF"
 	@echo "make pdn-extract-check SPICE=...  Check Magics SRAM power binding"
 	@echo "make lint         Lint the complete RTL hierarchy"
+	@echo "make dead-check   Fail on unused signals or constant/never-active flops"
 	@echo "make sim          Run the cocotb regression"
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
 
-verify: lint synth-check gds-config-check memory-test sim formal
+verify: lint dead-check synth-check gds-config-check memory-test sim formal
 
 lint:
 	$(VERILATOR) --lint-only --timing -Wno-fatal -DFUNCTIONAL \
 		--top-module tb test/tb.v $(RTL_SOURCES) $(SRAM_MODELS)
+
+dead-check:
+	$(PYTHON) tools/dead_rtl_check.py $(VERILATOR) $(EDA_BIN)/yosys tt_um_protocol_emulator \
+		$(RTL_SOURCES) $(SRAM_BLACKBOX)
 
 synth-check:
 	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 1 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/program_memory.sram'

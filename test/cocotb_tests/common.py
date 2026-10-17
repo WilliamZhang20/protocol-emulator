@@ -26,10 +26,12 @@ async def reset_top(dut, cycles: int = 5) -> None:
 
 
 async def host_command(dut, command: int, payload: int = 0) -> None:
+    """Hold the command, then 8'h00, long enough for the input synchronizer
+    and two-cycle stability check; any response is on uo_out on return."""
     dut.ui_in.value = ((command & 0xF) << 4) | (payload & 0xF)
-    await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, 2)
     dut.ui_in.value = 0
-    await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, 3)
 
 
 async def read_status(dut) -> int:
