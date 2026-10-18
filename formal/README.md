@@ -61,7 +61,13 @@ input pins.
 | --- | --- | --- | --- |
 | `uart_tx` | `uart_transmit(4)` | 110 after arm | The pin carries the popped bytes' 8N1 frames in order, every bit exactly 4 cycles; no frame without a byte; a waiting byte starts within 8 cycles; idle high; once armed, always driven. |
 | `ws2812` | `ws2812_transmit(6, 1, 2)` | 120 after arm | Every high pulse is exactly 1 cycle for a 0 and 2 for a 1, MSB first, in byte order; the bits of a byte start exactly 6 cycles apart, a later byte never sooner; no pulse without a byte. |
-| `spi_master` | `spi_master(0, 3, 2)` | 130 after arm | A two-byte transaction whose bytes arrive at any times: SCK rests low and still while CS is high; CS leads SCK's first edge by at least a half period; exact 3-cycle half periods within a byte, pauses only between bytes; CS rises only between bytes; MOSI stable while SCK is high; MOSI at each rising edge is the next bit of the popped bytes. |
+| `spi_master` | `spi_master(0, 2, 2)` | 45 after arm (CI), 90 with `DEEP=1` | A two-byte transaction whose bytes arrive at any times: SCK rests low and still while CS is high; CS leads SCK's first edge by at least a half period; exact 2-cycle half periods within a byte, pauses only between bytes; CS rises only between bytes; MOSI stable while SCK is high; MOSI at each rising edge is the next bit of the popped bytes. |
+
+The SPI BMC slows sharply with depth (about 5 minutes a step by step 60,
+on yices): depth 45 covers CS setup and the first byte and runs in CI; the
+full 90 (both bytes and the end of the transaction) takes hours.
+`formal/slurm/deep.sh` submits it, with the wrong-program check, to a Slurm
+cluster, running yices, bitwuzla and boolector at once.
 
 The configuration phase before the program arms the fabric is one
 deterministic run: the harness supplies no FIFO bytes and holds the input

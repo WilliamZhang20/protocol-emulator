@@ -10,7 +10,7 @@
 // at every rising edge MOSI is the next bit (MSB first) of the popped
 // bytes, in order; SCK never runs without a byte.
 module spi_master_properties (input wire clk);
-  localparam HALF = 3, NBYTES = 2, CS = 0, MOSI = 1, SCK = 3;
+  localparam HALF = 2, NBYTES = 2, CS = 0, MOSI = 1, SCK = 3;
   `include "rom.vh"
 
   reg [1:0] reset_cycles = 2'b0;

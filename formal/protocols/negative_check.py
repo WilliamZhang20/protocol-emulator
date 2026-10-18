@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 WRONG = {
     "uart_tx": "uart_transmit(5)",            # 5 cycles a bit, proof expects 4
     "ws2812": "ws2812_transmit(7, 1, 2)",     # 7-cycle bits, proof expects 6
-    "spi_master": "spi_master(0, 4, 2)",      # half period 4, proof expects 3
+    "spi_master": "spi_master(0, 3, 2)",      # half period 3, proof expects 2
 }
 
 sby, python, yosys, build = sys.argv[1], sys.argv[2], sys.argv[3], Path(sys.argv[4])
