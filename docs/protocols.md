@@ -14,7 +14,7 @@ symbolic stream of FIFO bytes (see [Verification](verification.md)).
 | **UART** 8N1, full duplex | every edge exactly one bit period; send and receive at the same time |
 | **UART** two transmitters | each shifter sends its own byte stream at its own speed |
 | **UART** 8E1 errors | a wrong parity bit or stop bit arrives tagged *err* |
-| **SPI** master, modes 0–3 | bytes both ways against a reference device; chip-select timing |
+| **SPI** master, modes 0–3 | bytes both ways against a reference device; chip-select timing; a starved FIFO pauses SCK between bytes with CS held low, swept cycle by cycle |
 | **I2C** master | write, repeated start, read, ACK/NACK, clock stretching (including during start and stop) |
 
 ## Stretch goals

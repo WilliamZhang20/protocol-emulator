@@ -4,9 +4,9 @@ cover
 
 [options]
 bmc: mode bmc
-bmc: depth 200
+bmc: depth 120
 cover: mode cover
-cover: depth 200
+cover: depth 120
 
 [engines]
 smtbmc boolector
@@ -15,6 +15,7 @@ smtbmc boolector
 read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v
 read -formal -sv ws2812_properties.sv
 prep -top ws2812_properties
+script prearm.ys
 
 [files]
 ../../src/protocol_emulator_core.v
@@ -28,3 +29,4 @@ prep -top ws2812_properties
 ../../src/config_bank.v
 ws2812_properties.sv
 rom.vh ws2812_rom.vh
+prearm.ys ws2812_prearm.ys

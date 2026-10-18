@@ -1,13 +1,16 @@
 `default_nettype none
 
 // Protocol proof: the whole core runs the real SPI mode-0 master program
-// (rom.vh) against a symbolic TX FIFO and a symbolic MISO. While CS is
-// high SCK rests low; CS falls at least HALF cycles before SCK's first
-// edge; every SCK half period is exactly HALF cycles; MOSI never moves
-// while SCK is high; at every rising edge MOSI is the next bit (MSB first)
-// of the popped bytes, in order; SCK never runs without a byte.
+// (rom.vh): one transaction of NBYTES bytes, which the host supplies at any
+// times (the FIFO may run dry between them), against a symbolic MISO.
+// While CS is high SCK rests low and never moves; CS falls at least HALF
+// cycles before SCK's first edge; within a byte every SCK half period is
+// exactly HALF cycles, and between bytes SCK may only pause (at its idle
+// level); CS rises only between bytes; MOSI never moves while SCK is high;
+// at every rising edge MOSI is the next bit (MSB first) of the popped
+// bytes, in order; SCK never runs without a byte.
 module spi_master_properties (input wire clk);
-  localparam HALF = 3, CS = 0, MOSI = 1, SCK = 3;
+  localparam HALF = 3, NBYTES = 2, CS = 0, MOSI = 1, SCK = 3;
   `include "rom.vh"
 
   reg [1:0] reset_cycles = 2'b0;
@@ -19,6 +22,11 @@ module spi_master_properties (input wire clk);
   (* anyseq *) reg [7:0] miso_in;
   (* anyseq *) reg [7:0] arriving;
   reg       has = 1'b0;
+  // The program armed the fabric (it drives a pin). Until then the host
+  // supplies nothing and inputs are constant, so everything before is one
+  // deterministic run: prearm.py simulates it and the proof starts there.
+  reg       configured = 1'b0;
+  reg [2:0] provided = 3'd0;     // bytes the host has supplied
   reg [7:0] head = 8'd0;
 
   wire [9:0]  instruction_address;
@@ -41,18 +49,22 @@ module spi_master_properties (input wire clk);
       .tx_data({10'd0, 2'b00, head}), .tx_empty({1'b1, !has}), .tx_pop(tx_pop),
       .tx_full(2'b00), .tx_push(tx_push), .tx_push_data(tx_push_data),
       .rx_data(rx_data), .rx_push(rx_push), .rx_full(2'b00),
-      .gpio_in(miso_in), .gpio_out(gpio_out), .gpio_oe(gpio_oe),
+      .gpio_in(configured ? miso_in : 8'hff), .gpio_out(gpio_out), .gpio_oe(gpio_oe),
       .halted(halted)
   );
 
   always @(posedge clk) begin
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
+    if (rst_n && gpio_oe != 8'd0)
+      configured <= 1'b1;
     if (!rst_n) begin
       has <= 1'b0;
+      provided <= 3'd0;
     end else if (!has || tx_pop[0]) begin
-      has  <= arrive;
-      head <= arriving;
+      has  <= configured && arrive && provided < NBYTES;
+      head <= configured ? arriving : 8'd0;
+      if (configured && arrive && provided < NBYTES) provided <= provided + 3'd1;
     end
   end
 
@@ -98,9 +110,16 @@ module spi_master_properties (input wire clk);
       assert(count <= 3'd4);
       if (cs) assert(!sck);                                        // idle low
       if (edge && first_edge) assert(!cs && cs_low_for >= HALF);   // CS setup
-      if (edge && !first_edge) assert(run == HALF);                // exact half periods
+      if (edge && !first_edge && !(rise && bit_index == 3'd0))
+        assert(run == HALF);                                       // exact within a byte
+      if (rise && !first_edge && bit_index == 3'd0)
+        assert(run >= HALF);                                       // a pause between bytes
+      if (cs && !cs_q) assert(bit_index == 3'd0 && !sck);          // CS rises between bytes
       if (sck && sck_q) assert(mosi == mosi_q);                    // MOSI stable while high
       if (rise) assert(count != 3'd0 && mosi == q[0][3'd7 - bit_index]);
+      cover(rise);
+      cover(rise && bit_index == 3'd4);
+      cover(byte_done);
       cover(byte_done && q[0] == 8'h5a);
     end
   end

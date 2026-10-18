@@ -28,13 +28,19 @@ async def record_pulses(dut, bus: Bus, pulses: list[tuple[int, int]]) -> None:
         previous = level
 
 
-def decode(pulses: list[tuple[int, int]]) -> list[int]:
-    """Bytes from pulses, checking every timing against the design."""
+def decode(pulses: list[tuple[int, int]], gaps: bool = False) -> list[int]:
+    """Bytes from pulses, checking every timing against the design: bits
+    of a byte exactly BIT apart; with `gaps` (a starved FIFO) a byte may
+    start later, but never sooner, than one bit period after the last."""
     bits = []
     for index, (rise, high) in enumerate(pulses):
         assert high in (T0H, T1H), (index, high)
         if index:
-            assert rise - pulses[index - 1][0] == BIT, ("bit period", index, rise)
+            period = rise - pulses[index - 1][0]
+            if gaps and index % 8 == 0:
+                assert period >= BIT, ("bit period across a gap", index, period)
+            else:
+                assert period == BIT, ("bit period", index, period)
         bits.append(int(high == T1H))
     assert len(bits) % 8 == 0, len(bits)
     return [sum(b << (7 - i) for i, b in enumerate(bits[k:k + 8]))
@@ -73,3 +79,31 @@ async def test_ws2812_random_strip(dut):
     data = [random.Random(2812).randrange(256) for _ in range(12)]
     pulses = await transmit(dut, data)
     assert decode(pulses) == data
+
+
+@cocotb.test()
+async def test_ws2812_starved_fifo(dut):
+    """The host falls behind: each byte is pushed a different number of
+    cycles (0 to 3 bit periods) after the previous byte's last bit
+    started, sweeping the moment the shifter stops and restarts. Every
+    bit must still get its full period (the ws2812 protocol proof found a
+    shortened low time in this window)."""
+    await start_clock(dut, CLOCK_NS)
+    await reset_top(dut)
+    bus = Bus(dut)
+    pulses: list[tuple[int, int]] = []
+    cocotb.start_soon(record_pulses(dut, bus, pulses))
+    await load_program(dut, ws2812_transmit(BIT, T0H, T1H))
+    await start_engine(dut)
+    data = []
+    for offset in range(0, 3 * BIT, 3):
+        byte = (0xA5 + 37 * offset) & 0xFF
+        data.append(byte)
+        await push_packet(dut, [byte])
+        while len(pulses) < 8 * len(data) - 1:      # this byte's last bit has started
+            await RisingEdge(dut.clk)
+        for _ in range(offset):
+            await RisingEdge(dut.clk)
+    for _ in range(BIT * 20):
+        await RisingEdge(dut.clk)
+    assert decode(pulses, gaps=True) == data

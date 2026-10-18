@@ -194,26 +194,33 @@ def uart_receiver(bit_cycles: int, *, parity: int) -> list[int]:
 
 
 # ---------------------------------------------------------------------- SPI
-def spi_master(mode: int, half_cycles: int) -> list[int]:
+def spi_master(mode: int, half_cycles: int, nbytes: int) -> list[int]:
     """Full-duplex SPI master, MSB first, any CPOL/CPHA, every edge timed by
-    the fabric. Timer 0 is SCK and runs continuously across back-to-back
+    the fabric: one transaction of `nbytes` bytes from the TX FIFO, each
+    byte's reply pushed to RX. Timer 0 is SCK and runs across back-to-back
     bytes. CS is logic cell 0: FIRE 0 pulls it low, and timer 2, a one-shot
-    started when the shifter stops, raises it a half period after the last
-    edge. The shifter runs while CS is low, so SCK's first edge comes a
-    half period after CS falls (timer 0 starts with the shifter)."""
+    started by FIRE 1 once the controller has counted the last byte, raises
+    it a half period after the last edge. The shifter may start frames
+    while the transaction is open (cell 2, FIRE 0 to FIRE 1), so SCK's
+    first edge comes a half period after CS falls, and if the FIFO runs
+    dry mid-transaction SCK simply pauses at a byte boundary with CS low.
+    (Ending the transaction when the FIFO ran dry instead let a byte that
+    arrived as CS was rising restart SCK under it: found by the
+    spi_master protocol proof.)"""
     cpol, cpha = mode >> 1, mode & 1
     leading = timer_fall(0) if cpol else timer_rise(0)
     trailing = timer_rise(0) if cpol else timer_fall(0)
-    cs_low = logic(0)
+    cs_low, cs_pin, open_ = logic(0), logic(1), logic(2)
     p = Px8()
     p.logic(0, truth(lambda go, done, low: go or (low and not done), 3),
            [fire(0), timer_rise(2), cs_low])
     p.logic(1, truth(lambda low: not low, 1), [cs_low], start=1)
-    p.pin_cell(SPI_CS, src=logic(1), mode=MODE_PUSH_PULL)
+    p.logic(2, truth(lambda go, end, q: go or (q and not end), 3), [fire(0), fire(1), open_])
+    p.pin_cell(SPI_CS, src=cs_pin, mode=MODE_PUSH_PULL)
     p.timer(0, reload=half_cycles - 1, phase=half_cycles - 1, idle=cpol,
             start=shifter_active(0), stop=shifter_stop(0))
     p.timer(2, reload=half_cycles - 1, phase=half_cycles - 1, pulse=True,
-            start=shifter_stop(0), stop=timer_rise(2))
+            start=fire(1), stop=timer_rise(2))
     # Timer 1: CS stays high a few cycles before the program halts.
     p.timer(1, reload=3, phase=3, pulse=True, start=timer_rise(2), stop=timer_rise(1))
     p.pin_cell(SPI_SCK, src=timer_out(0), mode=MODE_PUSH_PULL)
@@ -223,9 +230,13 @@ def spi_master(mode: int, half_cycles: int) -> list[int]:
         p.shifter(0, msb=True, lead=True, end_on_sample=True,
                   shift=leading, sample=trailing)
     p.pin_cell(SPI_MOSI, src=shifter_out(0), mode=MODE_PUSH_PULL)
-    p.shifter_io(0, start=cs_low, data_in=pin_level(SPI_MISO), pull=True, push=True)
+    p.shifter_io(0, start=open_, data_in=pin_level(SPI_MISO), pull=True, push=True)
     p.arm()
+    p.clrev()
     p.fire(0)
+    for _ in range(nbytes):
+        p.wev(shifter_word(0))
+    p.fire(1)                        # the TX FIFO holds this transaction's bytes only
     p.wev(timer_rise(2))
     p.wev(timer_rise(1))
     p.halt()
@@ -651,7 +662,10 @@ def ws2812_transmit(bit_cycles: int, t0h: int, t1h: int) -> list[int]:
     assert 1 <= t0h < t1h < bit_cycles - 3
     p = Px8()
     tick = timer_rise(0)
-    p.timer(0, reload=bit_cycles - 1, phase=0, pulse=True,
+    # A (re)start waits a full bit period before its first bit: when the
+    # FIFO runs dry and refills just as a byte ends, the previous bit
+    # still gets its whole low time (found by the ws2812 protocol proof).
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 1, pulse=True,
             start=shifter_active(0), stop=shifter_stop(0))
     p.timer(1, reload=t0h - 1, phase=0, start=tick, stop=timer_fall(1))
     p.timer(2, reload=t1h - 1, phase=0, start=tick, stop=timer_fall(2))

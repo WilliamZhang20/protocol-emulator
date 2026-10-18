@@ -46,17 +46,39 @@ protocol:
 | --- | --- |
 | `uart_tx` | the pin carries the bytes' 8N1 frames in order, every bit exactly 4 cycles; no frame without a byte; a waiting byte starts within 8 cycles; idle high; once armed, always driven |
 | `ws2812` | every high pulse is exactly T0H for a 0 and T1H for a 1, MSB first, in byte order; bits of a byte exactly one bit period apart; no pulse without a byte |
-| `spi_master` | (any MISO too) SCK rests low while CS is high; CS falls at least a half period before SCK's first edge; every SCK half period exact; MOSI never moves while SCK is high; at every rising edge MOSI is the next bit of the popped bytes, MSB first |
+| `spi_master` | (two-byte transactions with the bytes arriving at any times, any MISO) SCK rests low and never moves while CS is high; CS falls at least a half period before SCK's first edge; half periods exact within a byte, SCK only pausing between bytes; CS rises only between bytes; MOSI never moves while SCK is high; at every rising edge MOSI is the next bit of the popped bytes, MSB first |
 
-These are bounded proofs: 110 to 200 cycles from reset, depending on the
-protocol. That covers the program loading its configuration and then at
+These are bounded proofs: 110 to 130 cycles after the program arms the
+fabric. Until arming, the harness supplies no bytes and holds the inputs
+constant, so the configuration phase is a single deterministic run.
+`prearm.py` simulates it and the solver starts from the armed state, which
+spends the whole bound on the protocol. Each bound covers at least two
+complete frames, and each proof's cover statements show such traces. The
+proofs use small timing parameters, such as 6-cycle WS2812 bits, to fit
+more frames into the bound. That covers the program loading its configuration and then at
 least one complete frame with more bytes queued (each proof's cover
 statement shows such a trace).
 
+The `ws2812` proof found a real bug the simulation tests had missed. If
+the FIFO ran dry and the next byte arrived just as a byte ended, the
+transmitter restarted its bit timer at once, so the last bit's low time
+was cut from 4 cycles to 2. The tests always kept the FIFO full, so they
+never hit that window. The fix: a restart waits a full bit period. Now
+`test_ws2812_starved_fifo` sweeps the arrival time cycle by cycle. It
+fails on the old program and passes on the fixed one.
+
+The `spi_master` proof found a second one. The program ended a
+transaction when the FIFO ran dry at a byte boundary. A byte arriving
+just as chip select was about to rise restarted SCK under it, so CS rose
+in the middle of a byte. Real SPI masters pause SCK on an underrun, so
+the program now does the same. A transaction has a byte count, and CS
+stays low through pauses. `test_spi_starved_fifo_pauses_sck` sweeps the
+late byte's arrival cycle by cycle.
+
 A proof that passes because it checks too little would be worthless, so
 `make -C formal protocol-negative` reruns each proof on a program that
-differs only in its timing (one cycle more per UART bit, a longer WS2812
-0-pulse, a longer SPI half period). Each must fail.
+differs only in its timing (one cycle more per UART bit or WS2812 bit, a
+longer SPI half period). Each must fail.
 
 ## 3. Mutation testing
 

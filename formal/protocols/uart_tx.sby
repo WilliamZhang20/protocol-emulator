@@ -15,6 +15,7 @@ smtbmc boolector
 read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v
 read -formal -sv uart_tx_properties.sv
 prep -top uart_tx_properties
+script prearm.ys
 
 [files]
 ../../src/protocol_emulator_core.v
@@ -28,3 +29,4 @@ prep -top uart_tx_properties
 ../../src/config_bank.v
 uart_tx_properties.sv
 rom.vh uart_tx_rom.vh
+prearm.ys uart_tx_prearm.ys

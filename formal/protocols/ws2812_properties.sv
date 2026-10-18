@@ -7,7 +7,7 @@
 // (a later byte may wait for the FIFO); no pulse without a byte; once
 // armed, the pin stays driven.
 module ws2812_properties (input wire clk);
-  localparam BIT = 8, T0H = 2, T1H = 4, PIN = 0;
+  localparam BIT = 6, T0H = 1, T1H = 2, PIN = 0;
   `include "rom.vh"
 
   reg [1:0] reset_cycles = 2'b0;
@@ -18,6 +18,10 @@ module ws2812_properties (input wire clk);
   (* anyseq *) reg       arrive;
   (* anyseq *) reg [7:0] arriving;
   reg       has = 1'b0;
+  // The program armed the fabric (it drives a pin). Until then the host
+  // supplies nothing and inputs are constant, so everything before is one
+  // deterministic run: prearm.py simulates it and the proof starts there.
+  reg       configured = 1'b0;
   reg [7:0] head = 8'd0;
 
   wire [9:0]  instruction_address;
@@ -47,11 +51,13 @@ module ws2812_properties (input wire clk);
   always @(posedge clk) begin
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
+    if (rst_n && gpio_oe != 8'd0)
+      configured <= 1'b1;
     if (!rst_n) begin
       has <= 1'b0;
     end else if (!has || tx_pop[0]) begin
-      has  <= arrive;
-      head <= arriving;
+      has  <= configured && arrive;
+      head <= configured ? arriving : 8'd0;
     end
   end
 
