@@ -17,3 +17,4 @@ core.*
 build/
 .venv/
 .tools/
+formal/protocols/*_rom.vh

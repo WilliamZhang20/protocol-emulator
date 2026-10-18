@@ -70,9 +70,16 @@ module fabric_timer (
       .ctx_next(ctx_next), .value(sync), .next());
 
   always @(posedge clk) begin
-    if (!rst_n || !enable) begin
+    if (!rst_n) begin
       count <= 16'd0;
       out_r <= 1'b0;
+      run   <= 1'b0;
+    end else if (!enable) begin
+      // A stopped fabric's timer rests at its idle level, so a pin driven
+      // from it (an open-drain clock resting released) does not glitch
+      // when the fabric is armed.
+      count <= 16'd0;
+      out_r <= idle;
       run   <= 1'b0;
     end else if (stop_now) begin
       run   <= 1'b0;

@@ -11,7 +11,13 @@
 //   4   [5:0] absorb line  [10:6] data level (signal space 32-63)
 //   5   [5:0] emit line    [10:6] init pulse line (signal space 0-31)
 //   6   [4:0] width-1      [5] init to all ones
+//   7   [4:0] absorb gate level  [5] absorb gated
+//       [10:6] emit gate level   [11] emit gated
 //
+// A gated absorb or emit acts only while its gate level (signal space
+// 32-63) is high, so a raw timer edge can step the register in the same
+// cycle as the shifter it serves; gating the edge in a logic cell instead
+// would cost that cell's register cycle.
 // `ok` is registered (it reflects the register one cycle earlier) so the
 // 32-bit compare never sits in front of a signal-space select.
 //
@@ -34,6 +40,7 @@ module fabric_crc (
   reg [10:0] absorb_cfg;
   reg [10:0] emit_cfg;
   reg [5:0]  shape;
+  reg [11:0] gate_cfg;
   reg [31:0] crc;
   reg        ok_r;
 
@@ -55,6 +62,10 @@ module fabric_crc (
   wire msb = |(crc & top);
   wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];
   wire [31:0] shifted = crc << 1;
+  wire absorb_now = lines[absorb_cfg[5:0]] &&
+                    (!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);
+  wire emit_now   = lines[emit_cfg[5:0]] &&
+                    (!gate_cfg[11] || lines[{1'b1, gate_cfg[10:6]}]);
 
   assign out   = !msb;
   assign ok    = ok_r;
@@ -67,6 +78,7 @@ module fabric_crc (
       absorb_cfg <= 11'd0;
       emit_cfg   <= 11'd0;
       shape      <= 6'd0;
+      gate_cfg   <= 12'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
         3'd0: poly[15:0]  <= cfg_data;
@@ -76,7 +88,7 @@ module fabric_crc (
         3'd4: absorb_cfg <= cfg_data[10:0];
         3'd5: emit_cfg   <= cfg_data[10:0];
         3'd6: shape      <= cfg_data[5:0];
-        default: begin end
+        default: gate_cfg   <= cfg_data[11:0];   // 3'd7
       endcase
     end
   end
@@ -93,9 +105,9 @@ module fabric_crc (
       crc <= 32'd0;
     else if (!enable || lines[{1'b0, emit_cfg[10:6]}])
       crc <= shape[5] ? mask : 32'd0;
-    else if (lines[absorb_cfg[5:0]])
+    else if (absorb_now)
       crc <= (shifted ^ (feedback ? poly : 32'd0)) & mask;
-    else if (lines[emit_cfg[5:0]])
+    else if (emit_now)
       crc <= shifted & mask;
   end
 endmodule

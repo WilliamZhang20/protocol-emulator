@@ -7,9 +7,9 @@ are gate-level safe.
 from __future__ import annotations
 
 import cocotb
-from cocotb.triggers import FallingEdge
+from cocotb.triggers import ClockCycles, FallingEdge
 
-from cocotb_tests.common import host_command
+from cocotb_tests.common import host_command, read_status, status_running
 
 # -------------------------------------------------------------- signal space
 ZERO = 0
@@ -36,7 +36,7 @@ CRC_OK = 53
 
 
 def flag(n: int) -> int: return 54 + n
-def glue(k: int) -> int: return 56 + k
+def logic(k: int) -> int: return 56 + k
 
 
 # ---------------------------------------------------------- byte layer
@@ -87,7 +87,7 @@ def _pulse(line: int) -> int:
 
 
 def truth(fn, inputs: int = 4) -> int:
-    """Truth table for a glue cell from a Python predicate over (in0..in3)."""
+    """Truth table for a logic cell from a Python predicate over (in0..in3)."""
     table = 0
     for index in range(16):
         bits = [(index >> b) & 1 for b in range(4)]
@@ -297,9 +297,11 @@ class Px8:
         self.cfg(base + 1, step | (level << 6) | (mode << 11))
 
     def crc(self, *, width: int, poly: int, check: int, absorb: int, data: int,
-            emit: int = ZERO, init: int = ZERO, init_ones: bool = True) -> None:
+            emit: int = ZERO, init: int = ZERO, init_ones: bool = True,
+            absorb_gate: int | None = None, emit_gate: int | None = None) -> None:
         """The register holds its init value until the fabric is armed;
-        `init` re-initializes it at runtime (e.g. between packets)."""
+        `init` re-initializes it at runtime (e.g. between packets). A gate
+        level qualifies absorb or emit inside the tile, at no extra cycle."""
         self.cfg(0x28, poly & 0xFFFF)
         self.cfg(0x29, poly >> 16)
         self.cfg(0x2A, check & 0xFFFF)
@@ -307,15 +309,21 @@ class Px8:
         self.cfg(0x2E, (width - 1) | (int(init_ones) << 5))
         self.cfg(0x2D, emit | (_pulse(init) << 6))
         self.cfg(0x2C, absorb | (_level(data) << 6))
+        gates = 0
+        if absorb_gate is not None:
+            gates |= _level(absorb_gate) | (1 << 5)
+        if emit_gate is not None:
+            gates |= (_level(emit_gate) << 6) | (1 << 11)
+        self.cfg(0x2F, gates)
 
-    def glue(self, k: int, table: int, inputs: list[int], *,
-             registered: bool = False, enable: int = ONE) -> None:
+    def logic(self, k: int, table: int, inputs: list[int], *,
+             start: int = 0, enable: int = ONE) -> None:
         """Inputs 0-1 take any line, inputs 2-3 only level lines, so pulse
         inputs are listed first (landing in slots 0-1) and the truth table is
         permuted to match. Unused slots are don't-cares in the table."""
         pulses = [i for i, line in enumerate(inputs) if line < 32]
         levels = [i for i, line in enumerate(inputs) if line >= 32]
-        assert len(pulses) <= 2, "a glue cell takes at most two pulse inputs"
+        assert len(pulses) <= 2, "a logic cell takes at most two pulse inputs"
         order = pulses + levels + [None] * (4 - len(inputs))   # slot -> input
         permuted = 0
         for index in range(16):
@@ -331,7 +339,7 @@ class Px8:
         self.cfg(base + 1, line[0] | (line[1] << 6))
         self.cfg(base + 2, (_level(line[2]) if order[2] is not None else 0) |
                  ((_level(line[3]) if order[3] is not None else 0) << 5))
-        self.cfg(base + 3, _pulse(enable) | (int(registered) << 5))
+        self.cfg(base + 3, _pulse(enable) | (start << 5))
 
     def pin_cell(self, p: int, *, mode: int, src: int | None = None,
                  const: int | None = None) -> None:
@@ -472,3 +480,16 @@ class Bus:
         while True:
             await FallingEdge(self.dut.clk)
             self.dut.uio_in.value = self.levels()
+
+
+async def drain_until_halted(dut, timeout_cycles: int = 60000) -> list[int]:
+    """The RX FIFO is 4 deep, so drain it while the program runs."""
+    received = []
+    for _ in range(timeout_cycles // 8):
+        await ClockCycles(dut.clk, 4)
+        if not await rx_empty(dut):
+            received.append(await pop_rx(dut))
+            continue
+        if not status_running(await read_status(dut)):
+            return received
+    raise AssertionError("program did not finish")

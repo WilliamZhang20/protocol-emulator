@@ -2,7 +2,7 @@
 
 // Spatial protocol engine in two layers. Bit-level behavior comes from a
 // fabric of statically configured tiles that run every cycle without
-// instruction fetch: 4 timers, 2 shifters, 2 counters, 1 CRC, 8 glue cells
+// instruction fetch: 4 timers, 2 shifters, 2 counters, 1 CRC, 8 logic cells
 // (LUT4+FF), and 8 pin cells. Every tile input is a 6-bit select into one
 // 64-line signal space. Between each shifter and its FIFO channel, a byte
 // layer of stream tiles (two per direction) works on tagged bytes
@@ -20,11 +20,11 @@
 //   40+k timer k out    44+k shifter k out    46+k shifter k active
 //   48+k counter k >= threshold    50+k counter k hit (registered pulse)
 //   52 CRC out bit   53 CRC matches check   54-55 controller flags 0/1
-//   56+k glue cell k output
+//   56+k logic cell k output
 //
-// Glue cells see each other only as registered values, so no configuration
-// can form a loop and no combinational path crosses more than one glue
-// cell.
+// Every signal-space line is a register output (logic cells included), so
+// no configuration can form a loop and every path is one hop: register,
+// line, selector, tile logic, register.
 //
 // Config map (controller WCF address):
 //   0x00-0x0F timer addr[3:2], reg addr[1:0]
@@ -33,7 +33,7 @@
 //             [5] constant: drive [4] instead, [7:6] mode: 0 input,
 //             1 push-pull, 2 open-drain, 3 push-pull
 //   0x20-0x27 counter addr[2], reg addr[1:0]
-//   0x28-0x2E CRC reg addr[2:0]
+//   0x28-0x2F CRC reg addr[2:0]
 //   0x30      controller flags [1:0]
 //   0x31      [0] arm: tiles and pin outputs stay idle until armed, so a
 //             partially written configuration can never act
@@ -44,7 +44,7 @@
 //             TX: TX FIFO -> stage 0 -> stage 1 -> shifter;
 //             RX: shifter -> stage 0 -> stage 1 -> RX FIFO
 
-//   0x40-0x5F glue cell addr[4:2], reg addr[1:0]
+//   0x40-0x5F logic cell addr[4:2], reg addr[1:0]
 //
 // Readback map (controller RD address):
 //   0 pins   1/3 shifter 0/1 rx data   2/4 shifter 0/1 status
@@ -139,7 +139,7 @@ module protocol_emulator_core (
   wire [1:0]  s_out, s_active, s_word, s_stop;
   wire [1:0]  c_ge, c_hit;
   wire        crc_out, crc_ok;
-  wire [7:0]  lut_out, lut_q;
+  wire [7:0]  logic_q;
   reg  [31:2] pulse_reg;
   reg  [1:0]  hit_reg;
   reg  [1:0]  flags;
@@ -150,7 +150,7 @@ module protocol_emulator_core (
   wire        live = enable && armed;
 
   wire [63:0] lines = {
-      lut_out,                   // 63:56
+      logic_q,                     // 63:56
       flags, crc_ok, crc_out,    // 55:52
       hit_reg, c_ge,             // 51:48
       s_active, s_out,           // 47:44
@@ -204,7 +204,7 @@ module protocol_emulator_core (
   end
 
   // ------------------------------------------------------------- contexts
-  // Every timer, shifter, counter, glue cell and pin cell holds two
+  // Every timer, shifter, counter, logic cell and pin cell holds two
   // configurations (contexts). The active context follows a fabric line
   // (config 0x34: [5:0] line, [6] enable) two cycles later, so a protocol
   // phase change is one fabric event, with no controller and no rewrite.
@@ -369,16 +369,14 @@ module protocol_emulator_core (
       );
     end
 
-    // Glue cells see each other's registered values only, which bounds the
-    // combinational depth to one cell for any configuration.
-    for (k = 0; k < 8; k = k + 1) begin : glue
-      fabric_lut tile (
+    // Logic cells drive the lines from their registers, like every tile.
+    for (k = 0; k < 8; k = k + 1) begin : logic_cell
+      fabric_logic tile (
           .clk(clk), .rst_n(rst_n), .enable(live),
           .cfg_we(cfg_we && cfg_addr[7:5] == 3'b010 && cfg_addr[4:2] == k),
           .cfg_addr(cfg_addr[1:0]), .cfg_data(cfg_data),
           .cfg_bank(write_bank), .ctx_next(context_next),
-          .lines({lut_q, lines[55:0]}),
-          .out(lut_out[k]), .q(lut_q[k])
+          .lines(lines), .q(logic_q[k])
       );
     end
   endgenerate

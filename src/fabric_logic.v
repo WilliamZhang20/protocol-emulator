@@ -1,20 +1,22 @@
 `default_nettype none
 
-// Spatial fabric glue cell: a 4-input lookup table with an optional
-// flip-flop. It supplies the per-bit logic the coarse tiles do not
-// (NRZI, Manchester, stuffing gates, inversions, line-state decoding).
+// Spatial fabric logic cell: a 4-input lookup table and a flip-flop. It
+// supplies the per-bit logic the coarse tiles do not (NRZI, Manchester,
+// stuffing gates, inversions, line-state decoding).
 //
 // Registers (16-bit, written by the controller):
 //   0 truth table, indexed by {in3, in2, in1, in0}
 //   1 [5:0] in0 line   [11:6] in1 line   (any of the 64 lines)
 //   2 [4:0] in2 level  [9:5] in3 level   (signal space 32-63)
-//   3 [4:0] enable pulse line (signal space 0-31)  [5] registered
+//   3 [4:0] enable pulse line (signal space 0-31)  [5] start value
 //
-// Combinational cells output f directly; registered cells output q, which
-// loads f on cycles where the enable line is high. Loop freedom and a
-// one-cell depth bound are structural: the core shows every glue cell the
-// other cells' q, never their live output.
-module fabric_lut (
+// The output is the register q, which loads f on cycles where the enable
+// line is high (the constant 1 line: every cycle, so q is f one cycle
+// late). While the fabric is stopped q holds its start value, so an
+// inverted output (a chip select) is already high when the fabric starts. Every signal-space line is a
+// register output, so any path is one hop: register, line, selector, tile
+// logic, register, whatever the configuration.
+module fabric_logic (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        enable,
@@ -24,7 +26,6 @@ module fabric_lut (
     input  wire [1:0]  cfg_bank,      // contexts a write goes to
     input  wire        ctx_next,  // context active from the next cycle
     input  wire [63:0] lines,
-    output wire        out,
     output wire        q
 );
   wire [15:0] truth;
@@ -38,8 +39,7 @@ module fabric_lut (
                       lines[sel_lo[11:6]], lines[sel_lo[5:0]]};
   wire f = truth[index];
 
-  assign q   = q_r;
-  assign out = mode[5] ? q_r : f;
+  assign q = q_r;
 
   config_bank #(.WIDTH(16)) truth_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd0), .write_bank(cfg_bank), .data(cfg_data),
@@ -55,8 +55,10 @@ module fabric_lut (
       .ctx_next(ctx_next), .value(mode), .next());
 
   always @(posedge clk) begin
-    if (!rst_n || !enable)
+    if (!rst_n)
       q_r <= 1'b0;
+    else if (!enable)
+      q_r <= mode[5];
     else if (lines[{1'b0, mode[4:0]}])
       q_r <= f;
   end

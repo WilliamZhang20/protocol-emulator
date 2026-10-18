@@ -1,4 +1,4 @@
-"""Context switching: every timer, shifter, counter, glue cell and pin cell
+"""Context switching: every timer, shifter, counter, logic cell and pin cell
 holds two configurations, and a fabric line picks the active one. Phase
 changes happen in the fabric with the controller idle; the tests check
 them through the pins only."""
@@ -8,7 +8,7 @@ from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock
 from cocotb_tests.fabric import (
-    MODE_PUSH_PULL, Bus, Px8, glue, load_program, pin_level, push_tx, shifter_active,
+    MODE_PUSH_PULL, Bus, Px8, logic, load_program, pin_level, push_tx, shifter_active,
     shifter_out, shifter_stop, shifter_word, start_engine, timer_out, timer_rise, truth,
 )
 
@@ -82,7 +82,7 @@ async def uart_frame(dut, bus: Bus, parity: bool) -> tuple[int, int | None]:
 
 def uart_contexts(select_line: int, toggle: bool) -> list[int]:
     """8N1 in context 0, 8E1 in context 1, on one shifter and timer. With
-    `toggle`, glue cell 0 flips the context at the end of every word; a
+    `toggle`, logic cell 0 flips the context at the end of every word; a
     gapless next frame has just begun then and takes the new framing."""
     p = Px8()
     p.write_contexts(3)
@@ -91,8 +91,7 @@ def uart_contexts(select_line: int, toggle: bool) -> list[int]:
     p.pin_cell(UART_PIN, src=shifter_out(0), mode=MODE_PUSH_PULL)
     p.shifter_io(0, pull=True)
     if toggle:
-        p.glue(0, truth(lambda word, q: q != word, 2), [shifter_word(0), glue(0)],
-               registered=True)
+        p.logic(0, truth(lambda word, q: q != word, 2), [shifter_word(0), logic(0)])
     p.write_contexts(1)
     p.shifter(0, pre=1, post=1, post_val=1, idle=1, shift=timer_rise(0))
     p.write_contexts(2)
@@ -127,13 +126,13 @@ async def test_pin_selects_uart_framing(dut):
 
 @cocotb.test()
 async def test_fabric_alternates_framing(dut):
-    """A glue-cell flip-flop toggles the context after every frame, so the
+    """A logic-cell flip-flop toggles the context after every frame, so the
     framing alternates 8N1, 8E1, 8N1, ... with no controller involvement,
     even for back-to-back bytes."""
     await start_clock(dut)
     await reset_top(dut)
     bus = Bus(dut)
-    await load_program(dut, uart_contexts(glue(0), toggle=True))
+    await load_program(dut, uart_contexts(logic(0), toggle=True))
     for byte in [0x11, 0x22, 0x33, 0x44]:
         await push_tx(dut, byte)
     await start_engine(dut)

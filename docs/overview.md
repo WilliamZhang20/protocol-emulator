@@ -30,7 +30,7 @@ arranged and connected, not from a sequence of instructions over time.
        └────────┬────────┘   ┌──────────────────────────────┐
                 └───────────▶│          bit fabric          │
                              │ timers, shifters, counters,  │
-                             │ CRC, glue cells, pin cells   │
+                             │ CRC, logic cells, pin cells   │
                              └──────────────┬───────────────┘
                                             ▼
                                  uio[7:0] protocol pins
@@ -43,7 +43,7 @@ From the pins inwards:
    - turn bytes into bits and back (shifters);
    - count things (counters);
    - compute checksums (CRC);
-   - do small bits of logic (glue cells);
+   - do small bits of logic (logic cells);
    - drive the pins (pin cells).
 
    All of them share 64 wires, the [signal space](signal-space.md).
@@ -86,7 +86,7 @@ The controller did nothing after step 3. That is the whole idea.
 | Shifters | 2 |
 | Counters | 2 |
 | CRC engine | 1 |
-| Glue cells (4-input lookup table + flip-flop) | 8 |
+| Logic cells (4-input lookup table + flip-flop) | 8 |
 | Pin cells | 8 |
 | Byte tiles | 8 |
 | FIFO channels (TX + RX, 4 bytes each) | 2 |

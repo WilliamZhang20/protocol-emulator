@@ -14,7 +14,7 @@ phases. That takes time, and the controller has to be involved.
 
 ## The solution
 
-Every timer, shifter, counter, glue cell and pin cell holds **two complete
+Every timer, shifter, counter, logic cell and pin cell holds **two complete
 configurations**, called *context 0* and *context 1*. One line from the
 [signal space](signal-space.md) chooses which context is active. When that
 line changes, every tile switches to its other configuration **two cycles
@@ -23,7 +23,7 @@ later**, all at once.
 The line can be:
 
 - **a pin:** something outside the chip picks the phase;
-- **a glue cell's flip-flop:** the fabric decides its own phases, with no
+- **a logic cell's flip-flop:** the fabric decides its own phases, with no
   controller at all;
 - **a controller flag:** the program picks the phase with one write
   instead of many.
@@ -70,7 +70,7 @@ p.context_select(pin_level(7))   # pin 7 picks the framing
 - A pin switches a timer's period; the new period shows up within one
   period, with the controller doing nothing.
 - A pin switches a UART between 8N1 and 8E1 from one byte to the next.
-- A glue-cell flip-flop flips the context after every byte, so the framing
+- A logic-cell flip-flop flips the context after every byte, so the framing
   alternates with no controller involvement.
 - 10BASE-T uses context 0 for link pulses and context 1 for the frame.
 

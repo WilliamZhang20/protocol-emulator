@@ -16,11 +16,11 @@ cover: btor btormc
 
 [script]
 read -formal -sv config_bank.v
-read -formal -sv fabric_lut.v
-read -formal -sv fabric_lut_properties.sv
-prep -top fabric_lut_properties
+read -formal -sv fabric_logic.v
+read -formal -sv fabric_logic_properties.sv
+prep -top fabric_logic_properties
 
 [files]
 ../../src/config_bank.v
-../../src/fabric_lut.v
-fabric_lut_properties.sv
+../../src/fabric_logic.v
+fabric_logic_properties.sv

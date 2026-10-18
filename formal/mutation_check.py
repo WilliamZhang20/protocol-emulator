@@ -31,7 +31,7 @@ class Mutation:
 
 
 CORE_SOURCES = (
-    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_lut.v", "byte_tile.v", "config_bank.v",
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
 )
 
 MUTATIONS = (
@@ -80,22 +80,22 @@ MUTATIONS = (
         ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
     ),
     Mutation(
-        "context_write_ignores_mask", "fabric_lut", "config_bank.v",
+        "context_write_ignores_mask", "fabric_logic", "config_bank.v",
         "wire we_shadow = we && write_bank[!cur];",
         "wire we_shadow = we;",
-        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
     ),
     Mutation(
-        "context_select_inverted", "fabric_lut", "config_bank.v",
+        "context_select_inverted", "fabric_logic", "config_bank.v",
         "assign next = swap ? shadow_w : active_w;",
         "assign next = swap ? active_w : shadow_w;",
-        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
     ),
     Mutation(
-        "lut_enable_ignored", "fabric_lut", "fabric_lut.v",
+        "logic_enable_ignored", "fabric_logic", "fabric_logic.v",
         "else if (lines[{1'b0, mode[4:0]}])",
         "else",
-        ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
     ),
     Mutation(
         "core_arm_bypassed", "fabric_core", "protocol_emulator_core.v",
@@ -217,6 +217,24 @@ MUTATIONS = (
         "default: next = data == last ? inc : 8'd1;",
         "default: next = data == last ? inc : 8'd0;",
         ("config_bank.v", "fabric_counter.v"), "fabric_counter_properties.sv", "fabric_counter_properties",
+    ),
+    Mutation(
+        "logic_start_value_ignored", "fabric_logic", "fabric_logic.v",
+        "q_r <= mode[5];",
+        "q_r <= 1'b0;",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
+    ),
+    Mutation(
+        "counter_ge_one_cycle_late", "fabric_counter", "fabric_counter.v",
+        "ge_r <= value_next >= match_next;",
+        "ge_r <= value >= match;",
+        ("config_bank.v", "fabric_counter.v"), "fabric_counter_properties.sv", "fabric_counter_properties",
+    ),
+    Mutation(
+        "crc_absorb_gate_ignored", "fabric_crc", "fabric_crc.v",
+        "(!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);",
+        "1'b1;",
+        ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),
     Mutation(
         "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",

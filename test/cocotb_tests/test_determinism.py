@@ -13,7 +13,7 @@ import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests import protocols
-from cocotb_tests.fabric import HDLC_CODES, glue
+from cocotb_tests.fabric import HDLC_CODES, logic
 from cocotb_tests.common import reset_top, start_clock
 from cocotb_tests.fabric import (
     Bus, Px8, drain_rx_tagged, load_program, push_tx, select_channel, start_engine,
@@ -141,7 +141,7 @@ async def test_context_switching_independent_of_controller(dut):
         for byte in [0x11, 0x22, 0x33, 0x44]:
             await push_tx(dut, byte)
         await ClockCycles(dut.clk, 30 * BIT)
-    await compare(dut, lambda: uart_contexts(glue(0), toggle=True), stimulus,
+    await compare(dut, lambda: uart_contexts(logic(0), toggle=True), stimulus,
                   cycles=1400)
 
 

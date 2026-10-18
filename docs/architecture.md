@@ -7,7 +7,7 @@ The architecture description is split into short pages. Start with
 | --- | --- |
 | The big picture and one worked example | [overview.md](overview.md) |
 | How tiles are wired together (the 64 lines) | [signal-space.md](signal-space.md) |
-| Timers, shifters, counters, CRC, glue cells, pin cells | [tiles.md](tiles.md) |
+| Timers, shifters, counters, CRC, logic cells, pin cells | [tiles.md](tiles.md) |
 | Two configurations per tile, switched in one step | [contexts.md](contexts.md) |
 | Byte tiles: escaping, checksums, packet ends, filtering | [byte-layer.md](byte-layer.md) |
 | The PX8 controller and its instructions | [controller.md](controller.md) |

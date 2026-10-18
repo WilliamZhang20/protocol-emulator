@@ -4,8 +4,8 @@ including clock stretching and a NACK from an absent address."""
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
-from cocotb_tests.common import read_status, reset_top, start_clock, status_running
-from cocotb_tests.fabric import Bus, load_program, pop_rx, rx_empty, start_engine
+from cocotb_tests.common import reset_top, start_clock
+from cocotb_tests.fabric import Bus, drain_until_halted, load_program, start_engine
 from cocotb_tests.protocols import I2C_SCL, I2C_SDA, i2c_write_then_read
 
 HALF = 10
@@ -95,19 +95,6 @@ class I2cSlave:
             prev_scl, prev_sda = scl, sda
 
 
-async def drain_until_halted(dut, timeout_cycles: int = 60000) -> list[int]:
-    """The RX FIFO is 4 deep, so drain it while the program runs."""
-    received = []
-    for _ in range(timeout_cycles // 8):
-        await ClockCycles(dut.clk, 4)
-        if not await rx_empty(dut):
-            received.append(await pop_rx(dut))
-            continue
-        if not status_running(await read_status(dut)):
-            return received
-    raise AssertionError("I2C program did not finish")
-
-
 async def scl_phases(dut, bus: Bus, phases: list[tuple[int, int]]) -> None:
     """Record (level, cycles) for every completed SCL phase."""
     level, length = bus.level(I2C_SCL), 0
@@ -180,7 +167,7 @@ async def run_transaction(dut, stretch_cycles: int,
     # Every SCL phase after the first START honours the half period, even
     # when the slave stretches (the timer tile must not truncate high time).
     short = [p for p in phases[1:] if p[1] < HALF]
-    assert not short, short
+    assert not short, (short, phases[:60])
     # Exactly START, repeated START, STOP, each with SCL high at least a
     # half period before it and, for a START, after it.
     assert [kind for kind, _, _ in conditions] == ["START", "START", "STOP"], conditions

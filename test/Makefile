@@ -12,7 +12,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal
 endif
-PROJECT_SOURCES = project.v protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_lut.v byte_tile.v config_bank.v program_memory.v byte_fifo.v host_interface.v
+PROJECT_SOURCES = project.v protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v program_memory.v byte_fifo.v host_interface.v
 
 ifneq ($(GATES),yes)
 SIM_BUILD = sim_build/rtl
@@ -31,6 +31,6 @@ VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPS
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_host,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet,cocotb_tests.test_packets,cocotb_tests.test_contexts,cocotb_tests.test_determinism
+COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_host,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet,cocotb_tests.test_packets,cocotb_tests.test_contexts,cocotb_tests.test_determinism,cocotb_tests.test_ws2812,cocotb_tests.test_jtag,cocotb_tests.test_onewire,cocotb_tests.test_can,cocotb_tests.test_i2s,cocotb_tests.test_spi_slave,cocotb_tests.test_dmx,cocotb_tests.test_swd,cocotb_tests.test_ps2_host,cocotb_tests.test_can_rx,cocotb_tests.test_i2c_slave
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

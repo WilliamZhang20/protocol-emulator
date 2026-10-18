@@ -223,7 +223,7 @@ module fabric_shifter (
       .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
       .ctx_next(ctx_next), .value(burst), .next());
 
-  // The output is a register so downstream glue and tiles start their
+  // The output is a register so downstream logic cells and tiles start their
   // paths at a flop. Each candidate (new frame, advance, hold) is
   // precomputed from registers; the shift line only selects among them.
   wire [15:0] start_word = auto_pull ? {8'd0, tx_data} :

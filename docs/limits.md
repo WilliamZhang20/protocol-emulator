@@ -39,4 +39,4 @@ What the chip cannot do yet, and what is not yet measured.
 | Building blocks | Big blocks (a whole timer or shifter) | Tiny lookup tables |
 | Timing | Every configuration meets the clock checked once at tapeout | Needs its own place-and-route and timing check per design |
 | Changing behaviour | A register write, even mid-transaction | Reload the whole bitstream |
-| Flexibility | Less; glue cells cover small gaps | More |
+| Flexibility | Less; logic cells cover small gaps | More |

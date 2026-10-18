@@ -2,7 +2,8 @@
 
 // CRC tile (32-bit configuration) against the mirror-image formulation used
 // by software: a right-shifting register with the bit-reversed polynomial.
-// The two agree on every absorb, emit, init, output bit and residue match
+// The two agree on every absorb, emit (each optionally gated by a level),
+// init, output bit and residue match
 // (the match one cycle late, since `ok` is registered).
 module fabric_crc_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
@@ -31,6 +32,7 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
   reg [31:0] poly_s = 32'd0, check_s = 32'd0;
   reg [10:0] absorb_s = 11'd0, emit_s = 11'd0;
   reg        ones_s = 1'b0;
+  reg [11:0] gate_s = 12'd0;
   reg [31:0] r = 32'd0;      // reflected register
   reg        configured = 1'b0;
 
@@ -43,7 +45,7 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
       poly_s <= 32'd0; check_s <= 32'd0; absorb_s <= 11'd0; emit_s <= 11'd0;
-      ones_s <= 1'b0; r <= 32'd0; configured <= 1'b0;
+      ones_s <= 1'b0; gate_s <= 12'd0; r <= 32'd0; configured <= 1'b0;
     end else begin
       if (cfg_we) begin
         case (cfg_addr)
@@ -54,14 +56,14 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
           3'd4: absorb_s <= cfg_data[10:0];
           3'd5: emit_s <= cfg_data[10:0];
           3'd6: begin ones_s <= cfg_data[5]; configured <= 1'b1; end
-          default: begin end
+          3'd7: gate_s <= cfg_data[11:0];
         endcase
       end
       if (!enable || lines[{1'b0, emit_s[10:6]}])
         r <= ones_s ? 32'hffffffff : 32'd0;
-      else if (lines[absorb_s[5:0]])
+      else if (lines[absorb_s[5:0]] && (!gate_s[5] || lines[{1'b1, gate_s[4:0]}]))
         r <= (r >> 1) ^ ((r[0] ^ lines[{1'b1, absorb_s[10:6]}]) ? reverse(poly_s) : 32'd0);
-      else if (lines[emit_s[5:0]])
+      else if (lines[emit_s[5:0]] && (!gate_s[11] || lines[{1'b1, gate_s[10:6]}]))
         r <= r >> 1;
     end
   end

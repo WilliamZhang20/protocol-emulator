@@ -1,0 +1,30 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+bmc: depth 160
+cover: mode cover
+cover: depth 160
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v
+read -formal -sv spi_master_properties.sv
+prep -top spi_master_properties
+
+[files]
+../../src/protocol_emulator_core.v
+../../src/px8_controller.v
+../../src/fabric_timer.v
+../../src/fabric_shifter.v
+../../src/fabric_counter.v
+../../src/fabric_crc.v
+../../src/fabric_logic.v
+../../src/byte_tile.v
+../../src/config_bank.v
+spi_master_properties.sv
+rom.vh spi_master_rom.vh

@@ -89,6 +89,11 @@
     ["Metal3", 174.0, 80.4, 189.4, 81.0]
   ],
 
+  "// FP_OBSTRUCTIONS": "No cells in the strip left of the SRAM (x < 42, y 81-416): the only horizontal routing layer is Metal3, which the SRAM blocks, so their nets crossed it as shorts (d48031f: 275 cells, 33 shorts)",
+  "FP_OBSTRUCTIONS": [
+    [6.0, 78.5, 42.0, 417.5]
+  ],
+
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",
   "PDN_CFG": "dir::pdn_cfg.tcl",
   "PDN_VERTICAL_LAYER": "Metal4",

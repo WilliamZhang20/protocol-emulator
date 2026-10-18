@@ -24,7 +24,7 @@ shifter 0's "shift line" register to 4 (timer 0's rise line).
 | 48 + k, 50 + k | counter k at or above threshold, counter k just reached it |
 | 52, 53 | CRC output bit, CRC matches its check value |
 | 54, 55 | controller flags 0, 1 (levels the program sets) |
-| 56 + k | glue cell k output |
+| 56 + k | logic cell k output |
 
 (k is the tile number, p the pin number.)
 
@@ -43,6 +43,7 @@ Some inputs only ever need one kind, so they can only select that kind
 These are fixed, so programs can rely on them:
 
 - A **pulse** costs one cycle to reach its user.
+- A **logic cell** costs one cycle: its output is its flip-flop.
 - **Pin outputs** are registered: one cycle of delay, no glitches.
 - **Pin inputs** pass a two-stage synchronizer (two cycles of delay), so
   outside signals can change at any time safely.
@@ -53,10 +54,11 @@ cycles.
 
 ## Safety by construction
 
-- **No loops.** Glue cells only see each other's *registered* outputs. No
-  configuration can create a combinational loop, and no path passes
-  through more than one glue cell. This also keeps the worst timing path
-  short.
+- **One hop per cycle.** Every line is a register output: tiles, pins,
+  pulses and logic cells alike. No configuration can create a
+  combinational loop, and every path is register, line, selector, tile
+  logic, register. Timing closes for any configuration, not just the
+  ones we tested.
 - **Arm before acting.** Tiles and pins stay idle until the program writes
   the *arm* bit (configuration address `0x31`). A half-written
   configuration can never drive a pin.

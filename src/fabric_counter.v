@@ -12,8 +12,9 @@
 //                          3 run of equal bits (a change restarts at 1)
 //   2 clear  [4:0] clear pulse line (signal space 0-31; priority over step)
 //
-// `ge` is the level count >= threshold; `hit` pulses on the step that
-// first reaches it.
+// `ge` is the level count >= threshold, kept in a register computed from
+// the next count and threshold, so it changes on the same cycle as the
+// count; `hit` pulses on the step that first reaches it.
 module fabric_counter (
     input  wire        clk,
     input  wire        rst_n,
@@ -33,6 +34,8 @@ module fabric_counter (
   wire [4:0]  clear;
   reg  [7:0]  value;
   reg        last;
+  reg        ge_r;
+  wire [7:0] match_next;
 
   wire step_now  = lines[step[5:0]];
   wire data      = lines[{1'b1, step[10:6]}];
@@ -49,19 +52,27 @@ module fabric_counter (
     endcase
   end
 
-  assign ge    = value >= match;
+  wire [7:0] value_next = !enable ? 8'd0 : clear_now ? 8'd0 :
+                          step_now ? next : value;
+  assign ge    = ge_r;
   assign hit   = enable && !clear_now && step_now && !ge && next >= match;
   assign count = value;
 
   config_bank #(.WIDTH(8)) match_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd0), .write_bank(cfg_bank), .data(cfg_data[7:0]),
-      .ctx_next(ctx_next), .value(match), .next());
+      .ctx_next(ctx_next), .value(match), .next(match_next));
   config_bank #(.WIDTH(13)) step_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd1), .write_bank(cfg_bank), .data(cfg_data),
       .ctx_next(ctx_next), .value(step), .next());
   config_bank #(.WIDTH(5)) clear_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd2), .write_bank(cfg_bank), .data(cfg_data[4:0]),
       .ctx_next(ctx_next), .value(clear), .next());
+
+  always @(posedge clk)
+    if (!rst_n)
+      ge_r <= 1'b1;   // count 0 >= threshold 0
+    else
+      ge_r <= value_next >= match_next;
 
   always @(posedge clk) begin
     if (!rst_n || !enable) begin

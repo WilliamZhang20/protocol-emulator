@@ -16,7 +16,7 @@ RTL_SOURCES := \
 	src/fabric_shifter.v \
 	src/fabric_counter.v \
 	src/fabric_crc.v \
-	src/fabric_lut.v \
+	src/fabric_logic.v \
 	src/byte_tile.v \
 	src/config_bank.v \
 	src/program_memory.v \
@@ -38,12 +38,13 @@ help:
 	@echo "make pdn-extract-check SPICE=...  Check Magics SRAM power binding"
 	@echo "make lint         Lint the complete RTL hierarchy"
 	@echo "make dead-check   Fail on unused signals or constant/never-active flops"
+	@echo "make one-hop-check Fail if any signal-space line depends combinationally on a line"
 	@echo "make sim          Run the cocotb regression"
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
 
-verify: lint dead-check synth-check gds-config-check memory-test sim formal
+verify: lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
 
 lint:
 	$(VERILATOR) --lint-only --timing -Wno-fatal -DFUNCTIONAL \
@@ -52,6 +53,9 @@ lint:
 dead-check:
 	$(PYTHON) tools/dead_rtl_check.py $(VERILATOR) $(EDA_BIN)/yosys tt_um_protocol_emulator \
 		$(RTL_SOURCES) $(SRAM_BLACKBOX)
+
+one-hop-check:
+	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
 	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 1 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/program_memory.sram'

@@ -24,7 +24,7 @@ project:
     - "fabric_shifter.v"
     - "fabric_counter.v"
     - "fabric_crc.v"
-    - "fabric_lut.v"
+    - "fabric_logic.v"
     - "byte_tile.v"
     - "config_bank.v"
     - "program_memory.v"

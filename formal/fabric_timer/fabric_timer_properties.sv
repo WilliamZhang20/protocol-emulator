@@ -19,7 +19,7 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
   fabric_timer dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data),
-      .cfg_bank(2'b01), .ctx_next(1'b0),       // contexts: checked in fabric_lut
+      .cfg_bank(2'b01), .ctx_next(1'b0),       // contexts: checked in fabric_logic
       .lines(lines), .out(out), .rise(rise), .fall(fall)
   );
 
@@ -93,10 +93,10 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
   end
 
   // The output only moves on a toggle-mode tick, or returns to idle while
-  // stopped (including the start cycle), or to 0 while disabled.
+  // stopped (including the start cycle) or disabled.
   always @(posedge clk) begin
     if (rst_n && past_valid) begin
-      if (!past_enable) assert(out == 1'b0);
+      if (!past_enable) assert(out == past_idle);
       else if (past_halt) assert(out == past_idle);
       else if (past_tick && !past_pulse) assert(out == !past_out);
       else assert(out == past_out);

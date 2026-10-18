@@ -53,7 +53,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   fabric_shifter dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data),
-      .cfg_bank(2'b01), .ctx_next(1'b0),  // contexts: checked in fabric_lut
+      .cfg_bank(2'b01), .ctx_next(1'b0),  // contexts: checked in fabric_logic
       .lines(lines),
       .pulls(pulls),
       .tx_request(tx_request), .tx_grant(tx_grant), .tx_data(tx_data),
