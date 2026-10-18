@@ -1,11 +1,15 @@
 `default_nettype none
 
 // One configuration register with two contexts. A controller write goes to
-// the banks selected by `write_bank` ([0] context 0, [1] context 1). The
-// tile sees `value`, the active context's setting, from a register of its
-// own: `ctx_next` names the context active from the next cycle, so the
-// context select stays off the tile's timing paths. Tiles that precompute
-// from their configuration also get `next`, the value of the next cycle.
+// the contexts selected by `write_bank` ([0] context 0, [1] context 1).
+// `ctx_next` names the context active from the next cycle.
+//
+// The two contexts are held as `active` (the one in use, read by the tile
+// straight from a register, so the context select stays off its timing
+// paths) and `shadow` (the other one). A switch swaps them. `cur` records
+// which context `active` holds, so writes reach the right copy. Tiles that
+// precompute from their configuration also get `next`, the value of the
+// next cycle.
 module config_bank #(
     parameter WIDTH = 16
 ) (
@@ -18,20 +22,24 @@ module config_bank #(
     output wire [WIDTH-1:0] value,
     output wire [WIDTH-1:0] next
 );
-  reg [WIDTH-1:0] bank0, bank1, active;
-  wire [WIDTH-1:0] bank0_next = (we && write_bank[0]) ? data : bank0;
-  wire [WIDTH-1:0] bank1_next = (we && write_bank[1]) ? data : bank1;
-  assign next = ctx_next ? bank1_next : bank0_next;
+  reg [WIDTH-1:0] active, shadow;
+  reg             cur;
+  wire swap = ctx_next != cur;
+  wire we_active = we && write_bank[cur];
+  wire we_shadow = we && write_bank[!cur];
+  wire [WIDTH-1:0] active_w = we_active ? data : active;
+  wire [WIDTH-1:0] shadow_w = we_shadow ? data : shadow;
+  assign next = swap ? shadow_w : active_w;
 
   always @(posedge clk) begin
     if (!rst_n) begin
-      bank0  <= {WIDTH{1'b0}};
-      bank1  <= {WIDTH{1'b0}};
       active <= {WIDTH{1'b0}};
+      shadow <= {WIDTH{1'b0}};
+      cur    <= 1'b0;
     end else begin
-      bank0  <= bank0_next;
-      bank1  <= bank1_next;
       active <= next;
+      shadow <= swap ? active_w : shadow_w;
+      cur    <= ctx_next;
     end
   end
 

@@ -81,14 +81,14 @@ MUTATIONS = (
     ),
     Mutation(
         "context_write_ignores_mask", "fabric_lut", "config_bank.v",
-        "wire [WIDTH-1:0] bank1_next = (we && write_bank[1]) ? data : bank1;",
-        "wire [WIDTH-1:0] bank1_next = we ? data : bank1;",
+        "wire we_shadow = we && write_bank[!cur];",
+        "wire we_shadow = we;",
         ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
     ),
     Mutation(
         "context_select_inverted", "fabric_lut", "config_bank.v",
-        "assign next = ctx_next ? bank1_next : bank0_next;",
-        "assign next = ctx_next ? bank0_next : bank1_next;",
+        "assign next = swap ? shadow_w : active_w;",
+        "assign next = swap ? active_w : shadow_w;",
         ("config_bank.v", "fabric_lut.v"), "fabric_lut_properties.sv", "fabric_lut_properties",
     ),
     Mutation(
