@@ -1,18 +1,15 @@
 [tasks]
 bmc
-bmc_quick
 cover
 
 [options]
 bmc: mode bmc
 bmc: depth 90
-bmc_quick: mode bmc
-bmc_quick: depth 45
 cover: mode cover
 cover: depth 90
 
 [engines]
-smtbmc yices
+smtbmc boolector
 
 [script]
 read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v

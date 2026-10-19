@@ -49,8 +49,7 @@ protocol:
 | `spi_master` | (two-byte transactions, 2-cycle half periods, with the bytes arriving at any times, any MISO) SCK rests low and never moves while CS is high; CS falls at least a half period before SCK's first edge; half periods exact within a byte, SCK only pausing between bytes; CS rises only between bytes; MOSI never moves while SCK is high; at every rising edge MOSI is the next bit of the popped bytes, MSB first |
 
 These are bounded proofs: 90 to 120 cycles after the program arms the
-fabric. (CI checks SPI to 45 cycles, its first byte; the full 90 takes
-hours and runs on a Slurm cluster, `formal/slurm/deep.sh`.) Until arming, the harness supplies no bytes and holds the inputs
+fabric. Until arming, the harness supplies no bytes and holds the inputs
 constant, so the configuration phase is a single deterministic run.
 `prearm.py` simulates it and the solver starts from the armed state, which
 spends the whole bound on the protocol. Each bound covers at least two

@@ -13,11 +13,6 @@ PROTOCOLS := uart_tx ws2812 spi_master
 uart_tx_PROGRAM := uart_transmit(4)
 ws2812_PROGRAM := ws2812_transmit(6, 1, 2)
 spi_master_PROGRAM := spi_master(0, 2, 2)
-# The SPI BMC to the full depth (both bytes and the end of the transaction)
-# takes hours, too long for CI: by default it runs to depth 45 (CS setup and
-# the first byte). DEEP=1 runs the full depth (formal/slurm/deep.sh).
-DEEP ?= 0
-spi_master_BMC := $(if $(filter 1,$(DEEP)),bmc,bmc_quick)
 program_memory_TASKS := bmc prove cover
 byte_fifo_TASKS := bmc prove cover
 host_interface_TASKS := bmc prove cover
@@ -47,7 +42,7 @@ $(PROTOCOLS):
 	mkdir -p $(BUILD_DIR)/protocols/$@
 	cd protocols && $(PYTHON) gen_rom.py $@_rom.vh "$($@_PROGRAM)" && \
 	$(PYTHON) prearm.py $(YOSYS) $@ && \
-	for task in $(or $($@_BMC),bmc) cover; do \
+	for task in bmc cover; do \
 		$(SBY) -f -d $(BUILD_DIR)/protocols/$@/$$task $@.sby $$task || exit $$?; \
 	done
 
