@@ -10,8 +10,17 @@ permissions:
 
 jobs:
   formal:
+    # The tile proofs and mutation check in one job, and each protocol
+    # proof in its own, so the suite takes as long as its slowest proof.
+    name: formal (${{ matrix.target }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        # hdlc_transmit takes hours: formal/slurm/deep.sh runs it.
+        target: [modules, uart_tx, ws2812, spi_master, gpio_expander, quadrature_decoder,
+                 vga, hdlc_receive, protocol-negative]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -21,12 +30,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run formal suite
-        run: make formal
+      - name: Run ${{ matrix.target }}
+        run: make -C formal ${{ matrix.target }} BUILD_DIR=$PWD/build/formal
 
       - name: Upload formal results
         if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: formal-results
+          name: formal-results-${{ matrix.target }}
           path: build/formal/

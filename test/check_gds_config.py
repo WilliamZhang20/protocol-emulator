@@ -170,16 +170,21 @@ def main() -> None:
 
     placement = macro["instances"][INSTANCE_NAME]
     require(
-        placement.get("orientation") == "R0",
-        "SRAM must use R0 so Metal4 power columns keep die-frame X",
+        placement.get("orientation") == "FS",
+        "SRAM must use FS (pins facing the core; Metal4 power columns keep die-frame X)",
     )
     require(
-        placement.get("location") == [42, 81],
-        "SRAM location must stay at [42, 81]",
+        placement.get("location") == [2.88, 3.78],
+        "SRAM location must stay at [2.88, 3.78], flush with the core corner",
+    )
+
+    require(
+        not config.get("FP_OBSTRUCTIONS"),
+        "no placement cut-outs: the SRAM sits flush in the core corner",
     )
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
-    hotspot = (174.0, 80.4, 189.4, 81.0)
+    hotspot = (134.88, 340.24, 150.28, 340.84)
     covered = any(
         ob[0] == "Metal3"
         and ob[1] <= hotspot[0]

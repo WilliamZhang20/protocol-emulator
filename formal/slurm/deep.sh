@@ -6,6 +6,7 @@
 # usage (from the repository root, on a login node):
 #   formal/slurm/deep.sh            # snapshot the tree and submit
 #   ACCOUNT=def-foo TIME=12:00:00 formal/slurm/deep.sh
+#   PROOFS="gpio_expander spi_master" formal/slurm/deep.sh   # a subset
 #
 # The job runs on a copy of the working tree in $SCRATCH (home may be
 # read-only on compute nodes, and the copy lets the tree change meanwhile).
@@ -19,7 +20,8 @@ ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 STAMP=$(date +%Y%m%d-%H%M%S)-$(git -C "$ROOT" rev-parse --short HEAD)
 RUN=${SCRATCH:?SCRATCH not set}/protocol-emulator-formal/$STAMP
 ACCOUNT=${ACCOUNT:-def-yashpant}
-TIME=${TIME:-12:00:00}
+TIME=${TIME:-24:00:00}
+PROOFS=${PROOFS:-$(make -s -C "$ROOT/formal" list-protocols | tr '\n' ' ')}
 
 mkdir -p "$RUN"
 for copy in deep negative; do
@@ -38,10 +40,10 @@ sbatch --account="$ACCOUNT" --time="$TIME" --nodes=1 --ntasks=1 --job-name=pe-fo
 set -uo pipefail
 ulimit -t unlimited 2>/dev/null || true
 export PATH=$TOOLS:$VENV:\$PATH
-make -C deep/formal uart_tx ws2812 spi_master EDA_BIN=$TOOLS PYTHON=$VENV/python \
+make -C deep/formal -j -k $PROOFS EDA_BIN=$TOOLS PYTHON=$VENV/python \
   BUILD_DIR=$RUN/build/deep > deep.log 2>&1 &
 deep=\$!
-make -C negative/formal protocol-negative EDA_BIN=$TOOLS PYTHON=$VENV/python \
+make -C negative/formal protocol-negative protocol-negative-slow EDA_BIN=$TOOLS PYTHON=$VENV/python \
   BUILD_DIR=$RUN/build/negative > negative.log 2>&1 &
 negative=\$!
 wait \$deep;     echo "protocol proofs: exit \$?"

@@ -99,8 +99,8 @@ def truth(fn, inputs: int = 4) -> int:
 # ------------------------------------------------------------------ assembler
 OP_PFIX, OP_LDC, OP_SETP, OP_XRC, OP_J, OP_JZ, OP_DJNZ, OP_SETC = range(8)
 OP_WCF, OP_RD, OP_WEV, OP_FIRE, OP_RESERVED_C, OP_RESERVED_D, OP_OPR, OP_ANDC = range(8, 16)
-OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C = 1, 2, 3, 4, 5
-OPR_TXP, OPR_LDM, OPR_CFG = 7, 8, 9
+OPR_HALT, OPR_PULL, OPR_PUSH, OPR_CLREV, OPR_A_FROM_C, OPR_C_FROM_A = 1, 2, 3, 4, 5, 6
+OPR_TXP, OPR_LDM, OPR_CFG, OPR_P_FROM_A, OPR_A_FROM_P = 7, 8, 9, 10, 11
 
 
 class Px8:
@@ -117,8 +117,9 @@ class Px8:
         self.data: list[int] = []
         self.labels: dict[str, int] = {}
         self.fixups: list[tuple[int, int, str]] = []
-        self.data_fixups: list[tuple[int, int]] = []    # (code at, data offset)
+        self.data_fixups: list[tuple[int, int, int]] = []   # (code at, op, data offset)
         self.pending: list[tuple[int, int]] = []
+        self.tables: list[tuple[int, int]] = []         # (data offset, length)
 
     def _flush(self) -> None:
         writes, self.pending = self.pending, []
@@ -127,8 +128,7 @@ class Px8:
             self._emit(OP_LDC, value)
             self._emit(OP_WCF, addr)
         elif writes:
-            self.data_fixups.append((len(self.code), len(self.data)))
-            self.code += [0, 0, 0]
+            self._data_ref(OP_SETP, len(self.data))
             for addr, value in writes:
                 self.data += [addr, value & 0xFF, (value >> 8) & 0xFF]
             self._emit(OP_SETC, len(writes))
@@ -146,6 +146,22 @@ class Px8:
         for digit in digits[:-1]:
             self.code.append((OP_PFIX << 4) | digit)
         self.code.append((op << 4) | digits[-1])
+
+    def _data_ref(self, op: int, offset: int) -> None:
+        self.data_fixups.append((len(self.code), op, offset))
+        self.code += [0, 0, 0]
+
+    def table(self, values: list[int]) -> int:
+        """Place bytes in the data after the code; returns their offset
+        there, for the *_data instructions."""
+        offset = len(self.data)
+        self.data += [v & 0xFF for v in values]
+        self.tables.append((offset, len(values)))
+        return offset
+
+    def setp_data(self, offset: int) -> None: self._flush(); self._data_ref(OP_SETP, offset)
+    def setc_data(self, offset: int) -> None: self._flush(); self._data_ref(OP_SETC, offset)
+    def xrc_data(self, offset: int) -> None: self._flush(); self._data_ref(OP_XRC, offset)
 
     def _branch(self, op: int, label: str) -> None:
         self._flush()
@@ -174,9 +190,12 @@ class Px8:
         self._emit(OP_OPR, (int(err) << 6) | (int(eop) << 5) | (channel << 4) | OPR_PUSH)
     def clrev(self) -> None: self._emit(OP_OPR, OPR_CLREV)
     def a_from_c(self) -> None: self._emit(OP_OPR, OPR_A_FROM_C)
+    def c_from_a(self) -> None: self._emit(OP_OPR, OPR_C_FROM_A)
     def txp(self, channel: int = 0, eop: bool = False, err: bool = False) -> None:
         self._emit(OP_OPR, (int(err) << 6) | (int(eop) << 5) | (channel << 4) | OPR_TXP)
     def ldm(self) -> None: self._emit(OP_OPR, OPR_LDM)
+    def p_from_a(self) -> None: self._emit(OP_OPR, OPR_P_FROM_A)
+    def a_from_p(self) -> None: self._emit(OP_OPR, OPR_A_FROM_P)
 
     def stream_sram_to_tx(self, start: int, end: int, channel: int = 0) -> None:
         """Copy SRAM[start:end] into a TX FIFO (11 cycles a byte)."""
@@ -201,8 +220,8 @@ class Px8:
         self._flush()
         code = list(self.code)
         targets = [(at, op, self.labels[label]) for at, op, label in self.fixups]
-        targets += [(at, OP_SETP, len(code) + offset)
-                    for at, offset in self.data_fixups]
+        targets += [(at, op, len(code) + offset)
+                    for at, op, offset in self.data_fixups]
         for at, op, target in targets:
             code[at] = (OP_PFIX << 4) | ((target >> 8) & 0xF)
             code[at + 1] = (OP_PFIX << 4) | ((target >> 4) & 0xF)

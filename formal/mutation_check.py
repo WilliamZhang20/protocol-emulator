@@ -66,6 +66,18 @@ MUTATIONS = (
         ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
     ),
     Mutation(
+        "px8_p_from_a_ignored", "px8_controller", "px8_controller.v",
+        "4'd10: ptr <= acc[9:0];",
+        "4'd10: ptr <= ptr;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_a_from_p_reads_pc", "px8_controller", "px8_controller.v",
+        "4'd11: acc <= {6'd0, ptr};",
+        "4'd11: acc <= {6'd0, pc};",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
         "px8_block_bytes_swapped", "px8_controller", "px8_controller.v",
         "assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;",
         "assign cfg_data      = block ? {acc[7:0], instruction_data} : acc;",

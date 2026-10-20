@@ -3,18 +3,18 @@
 Every protocol below is a program in
 `test/cocotb_tests/protocols.py`. None of them is special hardware. Each is
 tested through the chip's pins only, against a separate reference model of
-the device on the other end. Some are also proven: `make -C formal
-uart_tx ws2812` runs the whole core on the same program bytes against a
-symbolic stream of FIFO bytes (see [Verification](verification.md)).
+the device on the other end. Eight are also proven (marked *proven*): the
+protocol proofs run the whole core on the same program bytes against
+symbolic FIFO bytes and pins (see [Verification](verification.md)).
 
 ## Required by the competition
 
 | Protocol | What is tested |
 | --- | --- |
-| **UART** 8N1, full duplex | every edge exactly one bit period; send and receive at the same time |
+| **UART** 8N1, full duplex | every edge exactly one bit period; send and receive at the same time; send *proven* |
 | **UART** two transmitters | each shifter sends its own byte stream at its own speed |
 | **UART** 8E1 errors | a wrong parity bit or stop bit arrives tagged *err* |
-| **SPI** master, modes 0–3 | bytes both ways against a reference device; chip-select timing; a starved FIFO pauses SCK between bytes with CS held low, swept cycle by cycle |
+| **SPI** master, modes 0–3 | bytes both ways against a reference device; chip-select timing; a starved FIFO pauses SCK between bytes with CS held low, swept cycle by cycle; *proven* (mode 0), including bytes for a later transaction already waiting |
 | **I2C** master | write, repeated start, read, ACK/NACK, clock stretching (including during start and stop) |
 
 ## Stretch goals
@@ -40,9 +40,14 @@ symbolic stream of FIFO bytes (see [Verification](verification.md)).
 | **I2C** slave | against a reference master: writes acknowledged byte by byte; a foreign address never acknowledged or driven; a register write, repeated START and read ending in NACK and STOP; SDA never moves while SCL is high |
 | **SPI** slave, mode 0 | 1- to 3-byte transactions both ways from a reference master; MISO driven only while chip select is low |
 | **I2S** send | 16- and 24-bit stereo against a reference receiver; exact BCLK half periods; SD and WS move only while BCLK is low |
-| **WS2812 (NeoPixel)** | every bit period 1.25 us and every high time 0.4 / 0.8 us exactly, across a gapless strip |
+| **WS2812 (NeoPixel)** | every bit period 1.25 us and every high time 0.4 / 0.8 us exactly, across a gapless strip; *proven* |
 | **DMX512** send | break >= 88 us, mark after break >= 8 us, every 8N2 slot on the bit grid; two packets |
 | **Async HDLC / PPP** over UART | escape bytes and delimiters on the wire; checksum added and checked |
+| **Synchronous HDLC** send | flags between frames (one flag closes a frame and opens the next), a 0 after every five 1s, the CRC-16/X.25 FCS against an independent implementation, TXD stable around every TXC rise; frames arriving at any time; *proven* to the bound in [Verification](verification.md), which reaches a frame's bytes but not its FCS |
+| **Synchronous HDLC** receive | every frame byte and FCS to the host, the last tagged *eop*, a bad FCS or an abort tagged *err*; shared and doubled flags, idle 1s; loopback from the sender; *proven* |
+| **GPIO expander** (74HC595 + 74HC165 chains) | 24 outputs and 24 inputs: each update latches exactly its bytes after exactly 24 SRCLK edges, all outputs at once; inputs captured when the update starts, even if they then move; a slow or early host; *proven* (one chip of each) |
+| **Quadrature decoder** | every step of A/B, with its direction, as one byte to the host (which keeps the count, with no range limit); reversals, glitches, missed steps reported; *proven* |
+| **VGA** 640 x 480 | 31.25 kHz lines and 59.5 Hz frames at 50 MHz: every HSYNC and VSYNC edge and every 8-pixel cell checked on every cycle of a whole frame, black porches and blank lines; *proven* (small timing). From a frame buffer in SRAM too (`vga_framebuffer`, 80 x 60 cells in 600 bytes): every pixel checked against the stored image over a whole frame; *proven* for any image (small timing) |
 | **SLIP** over UART | the same tiles, set up differently |
 | **Modbus-RTU style** | packets separated only by quiet time; only packets for our address kept |
 | **Packet bursts** | each host packet becomes exactly one frame on the wire |

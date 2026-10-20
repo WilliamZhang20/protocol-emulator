@@ -50,8 +50,8 @@
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
         "program_memory.sram": {
-          "location": [42, 81],
-          "orientation": "R0"
+          "location": [2.88, 3.78],
+          "orientation": "FS"
         }
       },
       "gds": [
@@ -84,14 +84,10 @@
     "program_memory.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
-  "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only",
+  "// SRAM placement": "In the core's bottom-left corner (as in ihp-um-janestreet-prism), flipped (FS) so its pins, on its LEF bottom edge, face up into the core at y 340.24. Flush with the core's left and bottom edges, it leaves no cells beside it: cells left of it could only cross it on Metal3, which it blocks (d48031f: 33 shorts), and a sliver of rows there got partial power stripes that broke M4.a (02d0933).",
+  "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only. Above its pin edge, LEF x 132.0-147.4",
   "ROUTING_OBSTRUCTIONS": [
-    ["Metal3", 174.0, 80.4, 189.4, 81.0]
-  ],
-
-  "// FP_OBSTRUCTIONS": "No cells in the strip left of the SRAM (x < 42, y 81-416): the only horizontal routing layer is Metal3, which the SRAM blocks, so their nets crossed it as shorts (d48031f: 275 cells, 33 shorts). From the die edge: a sliver of rows left at the core edge got its own partial power stripes, whose ends broke M4.a (02d0933: 4 errors)",
-  "FP_OBSTRUCTIONS": [
-    [0.0, 78.5, 42.0, 417.5]
+    ["Metal3", 134.88, 340.24, 150.28, 340.84]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",
@@ -145,10 +141,10 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "//": "Pitch near the 1024x8 SRAM's ~48 um power-column spacing; ExtendPowerStripes still rewrites any residual misalignment onto LEF pin columns",
+  "//": "Pitch near the 1024x8 SRAM's ~48 um power-column spacing; ExtendPowerStripes still rewrites any residual misalignment onto LEF pin columns. The offset (from the core edge, x 2.88) puts the stripes 25.405 um past the SRAM's left edge, where they were in the signed-off 585cfe5 layout",
   "PDN_VPITCH": 48.34,
   "PDN_VWIDTH": 2.1,
-  "PDN_VOFFSET": 16.185,
+  "PDN_VOFFSET": 25.405,
   "PDN_VSPACING": 2.0,
 
   "//": "Clock",

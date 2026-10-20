@@ -3,8 +3,9 @@
 # Spatial Protocol Emulator
 
 A Tiny Tapeout chip that speaks serial protocols on its pins (UART, SPI,
-I²C, PS/2, low-speed USB, 10BASE-T Ethernet, HDLC, SLIP and more) without
-any of them being built into the hardware.
+I²C, PS/2, low-speed USB, 10BASE-T Ethernet, CAN, JTAG, SWD, 1-Wire, I²S,
+WS2812, DMX512, HDLC, VGA and more) without any of them being built into
+the hardware.
 
 Instead, the chip has general-purpose hardware blocks: timers, shifters,
 counters, a CRC engine, small logic cells and pin drivers. A program in
@@ -36,10 +37,11 @@ make verify
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   required Metal4 PDN, and the SRAM Metal3 M3.f keepout;
 - a standalone compile/test of the delivered foundry SRAM model;
-- cocotb UART, SPI, I²C, PS/2, USB and 10BASE-T tests through the top-level
-  pins; and
+- cocotb tests of every protocol through the top-level pins, against
+  models of the devices on the other end; and
 - formal checks of every block and of the whole core, with unbounded proofs
-  where they converge, cover traces, and mutation testing.
+  where they converge, cover traces, and mutation testing, and protocol
+  proofs that run whole protocol programs on the whole core.
 
 Individual commands include `make lint`, `make dead-check`, `make synth-check`,
 `make gds-config-check`, `make memory-test`, `make sim`, and `make formal`.

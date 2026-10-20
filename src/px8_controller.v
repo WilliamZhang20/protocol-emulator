@@ -22,7 +22,7 @@
 //        8 LDM (A = SRAM[P], P += 1: data stored after the program),
 //        9 CFG (block config load: C words, each the three SRAM bytes
 //          {addr, data[7:0], data[15:8]} at P; then P += 3C, C = 0 and
-//          A = the last word)
+//          A = the last word), 10 P = A[9:0], 11 A = P
 //        PULL, PUSH and TXP use FIFO channel opnd[4] (PFIX 1 for channel 1).
 //        FIFO bytes carry tags {err, eop}: PULL loads A = {err, eop, byte},
 //        and PUSH and TXP tag their byte eop when opnd[5] is set and err
@@ -198,6 +198,8 @@ module px8_controller (
                   4'd2: acc <= {6'd0, tx_data};
                   4'd5: acc <= cnt;
                   4'd6: cnt <= acc;
+                  4'd10: ptr <= acc[9:0];
+                  4'd11: acc <= {6'd0, ptr};
                   4'd9: if (cnt != 16'd0) begin
                     state    <= ST_CFG;
                     blk_byte <= 2'd0;

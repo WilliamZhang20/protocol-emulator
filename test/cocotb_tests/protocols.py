@@ -9,7 +9,7 @@ values absorb a fixed, documented latency.
 from cocotb_tests.fabric import (
     CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RD_PINS, RUN_EQUAL, RUN_ONES, RUN_ZEROS,
     CRC_OK, Px8, counter_ge, counter_hit, fire, flag, logic, pin_fall, pin_level,
-    pin_rise, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
+    pin_rise, rd_counter, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
     shifter_stop, shifter_word, tile_event, timer_fall, timer_out, timer_rise, truth,
     tx_tile,
 )
@@ -194,6 +194,59 @@ def uart_receiver(bit_cycles: int, *, parity: int) -> list[int]:
 
 
 # ---------------------------------------------------------------------- SPI
+def _spi_transactions(p: Px8, mode: int, half_cycles: int, nbytes: int, *, cs: int,
+                      mosi: int, miso: int, sck: int) -> None:
+    """The SPI master fabric shared by `spi_master` and `gpio_expander`.
+    Logic cell 0 is "in a transaction" (FIRE 0 to timer 2's rise) and cell
+    1 its inverse, the CS pin; timer 2 is the end one-shot started by
+    FIRE 1, timer 1 a short gap after it.
+
+    Cell 2 lets the shifter start words: from FIFO 0 until the
+    transaction's last word has started (counter 0 counts the words since
+    FIRE 0), so the fabric itself ends the transaction after `nbytes`
+    bytes. Closing it from the controller instead (FIRE 1, a few cycles
+    after the last word) let a byte the host had already pushed for the
+    next transaction start gaplessly inside this one."""
+    cpol, cpha = mode >> 1, mode & 1
+    leading = timer_fall(0) if cpol else timer_rise(0)
+    trailing = timer_rise(0) if cpol else timer_fall(0)
+    cs_low, cs_pin, open_ = logic(0), logic(1), logic(2)
+    p.logic(0, truth(lambda go, done, low: go or (low and not done), 3),
+           [fire(0), timer_rise(2), cs_low])
+    p.logic(1, truth(lambda low: not low, 1), [cs_low], start=1)
+    p.logic(2, truth(lambda go, last, active, q: go or (q and not (last and active))),
+           [fire(0), counter_ge(0), shifter_active(0), open_])
+    p.counter(0, match=nbytes - 1, step=shifter_word(0), clear=fire(0))
+    p.pin_cell(cs, src=cs_pin, mode=MODE_PUSH_PULL)
+    p.timer(0, reload=half_cycles - 1, phase=half_cycles - 1, idle=cpol,
+            start=shifter_active(0), stop=shifter_stop(0))
+    p.timer(2, reload=half_cycles - 1, phase=half_cycles - 1, pulse=True,
+            start=fire(1), stop=timer_rise(2))
+    # Timer 1: CS stays high a few cycles before the program halts.
+    p.timer(1, reload=3, phase=3, pulse=True, start=timer_rise(2), stop=timer_rise(1))
+    p.pin_cell(sck, src=timer_out(0), mode=MODE_PUSH_PULL)
+    if cpha == 0:
+        p.shifter(0, msb=True, shift=trailing, sample=leading)
+    else:
+        p.shifter(0, msb=True, lead=True, end_on_sample=True,
+                  shift=leading, sample=trailing)
+    p.pin_cell(mosi, src=shifter_out(0), mode=MODE_PUSH_PULL)
+    p.shifter_io(0, start=open_, data_in=pin_level(miso), pull=True, push=True)
+
+
+def _spi_transaction(p: Px8, nbytes: int) -> None:
+    """One transaction of `nbytes` bytes from the TX FIFO: CS falls, the
+    bytes go out (SCK pausing if the FIFO runs dry), CS rises a half period
+    after the last edge, then a short gap."""
+    p.clrev()
+    p.fire(0)
+    for _ in range(nbytes):
+        p.wev(shifter_word(0))
+    p.fire(1)
+    p.wev(timer_rise(2))
+    p.wev(timer_rise(1))
+
+
 def spi_master(mode: int, half_cycles: int, nbytes: int) -> list[int]:
     """Full-duplex SPI master, MSB first, any CPOL/CPHA, every edge timed by
     the fabric: one transaction of `nbytes` bytes from the TX FIFO, each
@@ -201,45 +254,375 @@ def spi_master(mode: int, half_cycles: int, nbytes: int) -> list[int]:
     bytes. CS is logic cell 0: FIRE 0 pulls it low, and timer 2, a one-shot
     started by FIRE 1 once the controller has counted the last byte, raises
     it a half period after the last edge. The shifter may start frames
-    while the transaction is open (cell 2, FIRE 0 to FIRE 1), so SCK's
-    first edge comes a half period after CS falls, and if the FIFO runs
-    dry mid-transaction SCK simply pauses at a byte boundary with CS low.
+    while the transaction is open (cell 2, FIRE 0 until the last byte
+    started), so SCK's first edge comes a half period after CS falls, if
+    the FIFO runs dry mid-transaction SCK simply pauses at a byte boundary
+    with CS low, and bytes pushed early for a later transaction wait.
     (Ending the transaction when the FIFO ran dry instead let a byte that
     arrived as CS was rising restart SCK under it: found by the
-    spi_master protocol proof.)"""
-    cpol, cpha = mode >> 1, mode & 1
-    leading = timer_fall(0) if cpol else timer_rise(0)
-    trailing = timer_rise(0) if cpol else timer_fall(0)
-    cs_low, cs_pin, open_ = logic(0), logic(1), logic(2)
+    spi_master protocol proof.) MISO passes the input synchronizer and is
+    sampled about 3 cycles before the SCK edge reaches the pin, so reading
+    a slave that answers on the previous edge needs `half_cycles` >= 4."""
     p = Px8()
-    p.logic(0, truth(lambda go, done, low: go or (low and not done), 3),
-           [fire(0), timer_rise(2), cs_low])
-    p.logic(1, truth(lambda low: not low, 1), [cs_low], start=1)
-    p.logic(2, truth(lambda go, end, q: go or (q and not end), 3), [fire(0), fire(1), open_])
-    p.pin_cell(SPI_CS, src=cs_pin, mode=MODE_PUSH_PULL)
-    p.timer(0, reload=half_cycles - 1, phase=half_cycles - 1, idle=cpol,
-            start=shifter_active(0), stop=shifter_stop(0))
-    p.timer(2, reload=half_cycles - 1, phase=half_cycles - 1, pulse=True,
-            start=fire(1), stop=timer_rise(2))
-    # Timer 1: CS stays high a few cycles before the program halts.
-    p.timer(1, reload=3, phase=3, pulse=True, start=timer_rise(2), stop=timer_rise(1))
-    p.pin_cell(SPI_SCK, src=timer_out(0), mode=MODE_PUSH_PULL)
-    if cpha == 0:
-        p.shifter(0, msb=True, shift=trailing, sample=leading)
-    else:
-        p.shifter(0, msb=True, lead=True, end_on_sample=True,
-                  shift=leading, sample=trailing)
-    p.pin_cell(SPI_MOSI, src=shifter_out(0), mode=MODE_PUSH_PULL)
-    p.shifter_io(0, start=open_, data_in=pin_level(SPI_MISO), pull=True, push=True)
+    _spi_transactions(p, mode, half_cycles, nbytes, cs=SPI_CS, mosi=SPI_MOSI,
+                      miso=SPI_MISO, sck=SPI_SCK)
     p.arm()
-    p.clrev()
-    p.fire(0)
-    for _ in range(nbytes):
-        p.wev(shifter_word(0))
-    p.fire(1)                        # the TX FIFO holds this transaction's bytes only
-    p.wev(timer_rise(2))
-    p.wev(timer_rise(1))
+    _spi_transaction(p, nbytes)
     p.halt()
+    return p.assemble()
+
+
+# ------------------------------------------------------------ GPIO expander
+# A chain of 74HC595 output and 74HC165 input shift registers sharing one
+# clock: SER and QH on the SPI data pins, SRCLK on SCK, the 595s' RCLK on
+# CS and the 165s' SH/LD# on pin 4.
+GPIO_RCLK, GPIO_SER, GPIO_QH, GPIO_SRCLK, GPIO_LOAD = 0, 1, 2, 3, 4
+
+
+def gpio_expander(half_cycles: int, nbytes: int) -> list[int]:
+    """GPIO expander with 8 * nbytes outputs and 8 * nbytes inputs: every
+    `nbytes` bytes from the TX FIFO are one update. The bytes are clocked
+    MSB first into the 595 chain (the first byte ends in the farthest
+    chip) and RCLK rises after the last edge, so all outputs change at
+    once. SH/LD# is low (the 165s follow their inputs) between updates and
+    rises as an update starts, capturing every input at that moment; the
+    165 chain's bits, sampled before each rising edge shifts them, are
+    pushed to RX, nearest chip first.
+
+    SPI mode 0 on the same fabric as `spi_master`: RCLK is the CS cell
+    (high between updates), and RCLK rises a half period after the last
+    edge. SH/LD# is logic cell 3: it rises when the update's first byte
+    starts shifting (not when the transaction opens, which is right after
+    the previous update, so the inputs are captured when the host's bytes
+    arrive), a half period before SRCLK's first rising edge, and falls
+    with RCLK's rise.
+
+    QH passes the input synchronizer, so each sample sees the pin about 3
+    cycles before SRCLK's edge reaches it; `half_cycles` >= 4 keeps the
+    first sample after SH/LD# has risen, so every input bit is from the
+    same instant (found by the gpio_expander protocol proof at 2)."""
+    assert half_cycles >= 4, "QH would be sampled before the 165s stop loading"
+    p = Px8()
+    _spi_transactions(p, 0, half_cycles, nbytes, cs=GPIO_RCLK, mosi=GPIO_SER,
+                      miso=GPIO_QH, sck=GPIO_SRCLK)
+    shifting = logic(3)
+    p.logic(3, truth(lambda end, active, q: (not end) and (active or q), 3),
+           [timer_rise(2), shifter_active(0), shifting])
+    p.pin_cell(GPIO_LOAD, src=shifting, mode=MODE_PUSH_PULL)
+    p.arm()
+    p.label("update")
+    _spi_transaction(p, nbytes)
+    p.j("update")
+    return p.assemble()
+
+
+# ------------------------------------------------------- quadrature decoder
+QUAD_A, QUAD_B = 0, 1
+
+
+def quadrature_decoder(a_pin: int = QUAD_A, b_pin: int = QUAD_B) -> list[int]:
+    """Quadrature (rotary encoder) decoder at 4 counts per cycle of A/B.
+    Every valid step, a change of exactly one of A and B, pushes one byte
+    to RX channel 0: 1 for a step forward (A leads B), 0 for a step back.
+    A change of both at once (a step missed between two samples) pushes a
+    byte to channel 1 instead. The host keeps the position: +1 or -1 per
+    byte, with no range limit and nothing lost while it drains the FIFO.
+    (The count is on the host because the fabric's counters only count
+    up.)
+
+    Logic cells 0 and 1 hold the previous A and B; cell 2 is the step,
+    cell 3 its direction, the new A xor the old B (forward 00 10 11 01),
+    cell 4 a double change. Each shifter takes 1-bit words, one per event,
+    ending on the sample and restarting at once, and pushes each word.
+    Cell 5 rises a cycle after arming and starts the shifters, so the
+    cycle in which cells 0 and 1 still hold their start values, not the
+    pins, is never decoded (pins already away from 00 at arming would
+    read as a step)."""
+    p = Px8()
+    a, b = pin_level(a_pin), pin_level(b_pin)
+    pa, pb, step, forward, double, ready = (logic(i) for i in range(6))
+    p.logic(0, truth(lambda x: x, 1), [a])
+    p.logic(1, truth(lambda x: x, 1), [b])
+    p.logic(2, truth(lambda x, px, y, py: (x != px) != (y != py)), [a, pa, b, pb])
+    p.logic(3, truth(lambda x, py: x != py, 2), [a, pb])
+    p.logic(4, truth(lambda x, px, y, py: x != px and y != py), [a, pa, b, pb])
+    p.logic(5, truth(lambda one: one, 1), [ONE])
+    for k, event, bit in ((0, step, forward), (1, double, a)):
+        p.shifter(k, length=1, end_on_sample=True, sample=event)
+        p.shifter_io(k, start=ready, data_in=bit, push=True)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
+# ---------------------------------------------------------------------- VGA
+# Tiny VGA PMOD order on the uio pins: R1 G1 B1 VSYNC R0 G0 B0 HSYNC.
+VGA_COLOR = (0, 1, 2, 4, 5, 6)
+VGA_VSYNC, VGA_HSYNC = 3, 7
+
+
+def vga(cell_cycles: int, cells: int, h_front: int, h_sync: int, h_back: int,
+        v_visible: int, v_front: int, v_sync: int, v_back: int) -> list[int]:
+    """VGA output, one bit per cell of `cell_cycles` clocks (white or
+    black on all six colour pins), `cells` per visible line; the
+    horizontal porches and sync are in clocks, the vertical ones in lines.
+    Pixels come from TX FIFO 0, one bit per cell MSB first, cells / 8
+    bytes a visible line with its last byte tagged eop; the host keeps the
+    FIFO ahead. Both syncs are active low. At 50 MHz, vga(16, 80, 32, 192,
+    96, 480, 10, 2, 33) is 640 x 480 at 59.5 Hz with 8-pixel cells.
+
+    Every edge comes from the fabric: timer 0 ticks once a line; timers 1
+    and 3, free-running with it at the same period, start and end HSYNC
+    (logic cell 0). A visible line's tick starts shifter 0 (cell 2: the
+    tick while the controller's flag 1 is up), and timer 2, started with
+    the shifter, steps it every cell, so the pixels end exactly `h_front`
+    clocks before HSYNC falls and start exactly `h_back` clocks after it
+    rises. VSYNC (cell 1) loads flag 0's inverse on each line tick. The
+    controller only counts lines: it sets the two flags during a line for
+    the next one, so it decides which lines are visible or in vertical
+    sync and the fabric applies that on the line boundary."""
+    p = Px8()
+    tick = _vga_fabric(p, cell_cycles, cells, h_front, h_sync, h_back)
+    p.flags(0b10)                    # line 0 is visible
+    p.arm()
+    p.label("frame")
+    for n, (lines, flags) in enumerate(((v_visible, 0b00), (v_front, 0b01),
+                                        (v_sync, 0b00), (v_back, 0b10))):
+        p.setc(lines)
+        p.label(f"lines{n}")
+        p.wev(tick)
+        p.djnz(f"lines{n}")
+        p.flags(flags)               # for the line after this section
+    p.j("frame")
+    return p.assemble()
+
+
+def vga_framebuffer(cell_cycles: int, cells: int, h_front: int, h_sync: int,
+                    h_back: int, image: list[int], row_lines: int, v_front: int,
+                    v_sync: int, v_back: int) -> list[int]:
+    """VGA from a frame buffer in SRAM: `image` holds rows of cells / 8
+    bytes (one bit a cell, MSB first, as in `vga`) and each row is shown
+    on `row_lines` lines, so the visible lines are rows * row_lines. At
+    50 MHz, vga_framebuffer(16, 80, 32, 192, 96, image, 8, 10, 2, 33)
+    with a 600-byte image is 640 x 480 in 8 x 8-pixel cells. The host
+    loads the image with the program and then does nothing.
+
+    The fabric is `vga`'s. The controller copies each visible line's
+    bytes from SRAM into TX FIFO 0 ahead of the shifter: C holds the row's
+    address (P = A = C at each line, so a row is read again for each of
+    its lines), and counter 0 counts the visible lines of the row. After a
+    row's last line, C takes P, the next row; after the last row the
+    controller counts the blank lines like `vga`. Each line's loop takes
+    up to about 60 cycles, so a line must be at least that long."""
+    bytes_per_row = cells // 8
+    assert image and len(image) % bytes_per_row == 0 and row_lines >= 1
+    assert cells * cell_cycles + h_front + h_sync + h_back >= 64
+    p = Px8()
+    tick = _vga_fabric(p, cell_cycles, cells, h_front, h_sync, h_back)
+    p.counter(0, match=row_lines, step=logic(2), clear=fire(0))
+    start = p.table(image)
+    end = start + len(image)
+    p.flags(0b10)                    # line 0 is visible
+    p.arm()
+    p.label("frame")
+    p.setc_data(start)
+    p.label("line")                  # copy a line, then wait for its start
+    p.a_from_c()
+    p.p_from_a()
+    for i in range(bytes_per_row):
+        p.ldm()
+        p.txp(0, eop=i == bytes_per_row - 1)
+    p.wev(tick)
+    p.rd(rd_counter(0))
+    p.xrc(row_lines)
+    p.jz("row")
+    p.j("line")
+    p.label("row")                   # that was the row's last line
+    p.fire(0)
+    p.a_from_p()
+    p.c_from_a()
+    p.xrc_data(end)
+    p.jz("blank")
+    p.j("line")
+    p.label("blank")
+    p.flags(0b00)
+    for n, (lines, flags) in enumerate(((v_front, 0b01), (v_sync, 0b00),
+                                        (v_back, 0b10))):
+        p.setc(lines)
+        p.label(f"lines{n}")
+        p.wev(tick)
+        p.djnz(f"lines{n}")
+        p.flags(flags)
+    p.j("frame")
+    return p.assemble()
+
+
+def _vga_fabric(p: Px8, cell_cycles: int, cells: int, h_front: int, h_sync: int,
+                h_back: int) -> int:
+    """`vga`'s fabric: the line timers, the syncs and the pixel shifter fed
+    from TX FIFO 0. Returns the line tick."""
+    assert cells % 8 == 0 and cell_cycles >= 3
+    visible = cells * cell_cycles
+    line = visible + h_front + h_sync + h_back
+    tick = timer_rise(0)
+    hsync_n, vsync_n, show = logic(0), logic(1), logic(2)
+    # Pixels start 3 cycles after a line tick (tick line, cell 2, shifter);
+    # HSYNC is a cell 2 cycles after its timer's tick: timers 1 and 3 are
+    # phased so HSYNC falls h_front after the last pixel.
+    p.timer(0, reload=line - 1, phase=line - 1, pulse=True, start=ONE)
+    p.timer(1, reload=line - 1, phase=line + visible + h_front, pulse=True, start=ONE)
+    p.timer(3, reload=line - 1, phase=line + visible + h_front + h_sync, pulse=True,
+            start=ONE)
+    # Timer 2 starts the cycle after the shifter and its tick reaches the
+    # shifter a cycle late, so its first tick comes 3 cycles early.
+    p.timer(2, reload=cell_cycles - 1, phase=cell_cycles - 3, pulse=True,
+            start=shifter_active(0), stop=shifter_stop(0))
+    p.logic(0, truth(lambda fall, rise, q: (not fall) and (q or rise), 3),
+           [timer_rise(1), timer_rise(3), hsync_n], start=1)
+    p.logic(1, truth(lambda in_sync: not in_sync, 1), [flag(0)], enable=tick, start=1)
+    p.logic(2, truth(lambda t, visible_line: t and visible_line, 2), [tick, flag(1)])
+    p.shifter(0, msb=True, shift=timer_rise(2))
+    p.shifter_burst(0, end=flag(0), on_eop=True)
+    p.shifter_io(0, start=show, pull=True)
+    for pin in VGA_COLOR:
+        p.pin_cell(pin, src=shifter_out(0), mode=MODE_PUSH_PULL)
+    p.pin_cell(VGA_HSYNC, src=hsync_n, mode=MODE_PUSH_PULL)
+    p.pin_cell(VGA_VSYNC, src=vsync_n, mode=MODE_PUSH_PULL)
+    return tick
+
+
+# ----------------------------------------------------------- synchronous HDLC
+HDLC_TXC, HDLC_TXD, HDLC_RXD, HDLC_RXC = 0, 1, 2, 3
+HDLC_FLAG = 0x7E
+HDLC_FCS_POLY = 0x1021        # CRC-16/X.25, fed in wire order
+HDLC_FCS_RESIDUE = 0x1D0F     # the register after a good frame's FCS
+HDLC_FLAG_CHECK = 0xA1F2      # ... and after the closing flag's first 7 bits
+
+
+def hdlc_transmit(bit_cycles: int, poly: int = HDLC_FCS_POLY) -> list[int]:
+    """Synchronous HDLC transmitter: TXC and TXD, LSB first. Each frame
+    is taken from TX FIFO channel 1 (its last byte tagged eop) and sent
+    as the bytes and the 16-bit FCS (CRC-16/X.25, low byte first)
+    between flags 0x7E, with a 0 inserted after every five 1s between the
+    flags. Between frames the line sends flags; one flag closes a frame
+    and opens the next when the next is already waiting.
+
+    Every bit comes from the fabric. Timer 0 ticks once a bit; TXC is
+    timer 1, its rising edge in the middle of each bit's stable window.
+    Logic cell 6 is "in a frame", from the controller's FIRE 0 to the
+    16th FCS bit. Outside a frame shifter 1 sends flags back to back
+    (cell 5; a flag restarts in the cycle it ends); when one ends inside
+    a frame, shifter 0 starts the bytes (cell 7, which also
+    re-initializes the CRC), then the CRC tile shifts its FCS out (cell
+    4), and the 16th FCS bit starts the closing flag. Line cell 1 (TXD)
+    picks a stuffed 0, a flag bit, a data bit or an FCS bit. Counter 0
+    counts the 1s of the frame body (cell 2 is 0 outside it) and its
+    threshold is the stuffing: a tick then sends the 0 and consumes no
+    source bit (cell 3 is a tick that does). Counter 1 counts the FCS
+    bits. The controller only copies each frame's bytes from channel 1 to
+    channel 0, firing after each, once the previous frame's closing flag
+    has started; the host keeps each
+    frame's bytes coming. (The flags start, once, when the fabric is
+    armed, at any point of a bit: that first flag may lose its first bit,
+    so the controller lets it go before the first frame; every later one
+    starts on a tick.)"""
+    assert bit_cycles >= 10 and bit_cycles % 2 == 0
+    p = Px8()
+    tick, stuff, fcs_done = timer_rise(0), counter_ge(0), counter_hit(1)
+    a0, a1 = shifter_active(0), shifter_active(1)
+    d0, x, body, g, fcs, flags, frame, go = (logic(i) for i in range(8))
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 1, pulse=True, start=ONE)
+    # TXD changes 4 to 8 cycles after a tick (a stuffed 0 soonest, the
+    # first data bit after a flag last): TXC rises mid-way between.
+    half = bit_cycles // 2
+    p.timer(1, reload=half - 1, phase=bit_cycles + (bit_cycles + 12) // 2 - 3, start=ONE)
+    p.logic(0, truth(lambda act0, so0, f, co: so0 if act0 else (co if f else 1)),
+           [a0, shifter_out(0), fcs, CRC_OUT])
+    p.logic(1, truth(lambda st, act1, so1, d: (not st) and (so1 if act1 else d)),
+           [stuff, a1, shifter_out(1), d0])
+    p.logic(2, truth(lambda xb, act0, f, act1: xb and (act0 or f) and not act1),
+           [x, a0, fcs, a1])
+    p.logic(3, truth(lambda t, st: t and not st, 2), [tick, stuff])
+    p.logic(4, truth(lambda s0, done, q: s0 or (q and not done), 3),
+           [shifter_stop(0), fcs_done, fcs])
+    p.logic(5, truth(lambda done, in_frame: done or not in_frame, 2), [fcs_done, frame])
+    p.logic(6, truth(lambda f0, done, q: f0 or (q and not done), 3),
+           [fire(0), fcs_done, frame])
+    p.logic(7, truth(lambda s1, in_frame: s1 and in_frame, 2), [shifter_stop(1), frame])
+    p.counter(0, match=5, step=tick, data=body, mode=RUN_ONES)
+    p.counter(1, match=16, step=g, data=fcs, mode=RUN_ONES)
+    p.crc(width=16, poly=poly, check=HDLC_FCS_RESIDUE, absorb=g,
+          data=shifter_out(0), emit=g, init=shifter_stop(1), absorb_gate=a0, emit_gate=fcs)
+    p.shifter(1, shift=g)
+    p.shifter_data(1, HDLC_FLAG)
+    p.shifter_io(1, start=flags)
+    p.shifter(0, shift=g)
+    p.shifter_burst(0, end=flag(1), on_eop=True)
+    p.shifter_io(0, start=go, pull=True)
+    p.pin_cell(HDLC_TXD, src=x, mode=MODE_PUSH_PULL)
+    p.pin_cell(HDLC_TXC, src=timer_out(1), mode=MODE_PUSH_PULL)
+    p.arm()
+    p.wev(shifter_word(1))          # the first flag (maybe partial) has gone
+    # FIRE 0 (in a frame: the current flag opens it) follows each copied
+    # byte, so the first byte is already on its way to shifter 0, which it
+    # reaches sooner than FIRE reaches cell 7. (Firing before the copy let
+    # a slow controller miss the flag's end: found by the hdlc_transmit
+    # proof.) A FIRE inside the frame changes nothing.
+    p.label("frame")
+    p.pull(1)                       # the frame's first byte is here
+    p.clrev()
+    p.label("copy")
+    p.c_from_a()
+    p.andc(0x100)                   # eop tag
+    p.jz("more")
+    p.a_from_c()
+    p.txp(0, eop=True)
+    p.fire(0)
+    p.wev(shifter_stop(0))          # the bytes have gone ...
+    p.wev(shifter_active(1))        # ... and the closing flag has started
+    p.j("frame")
+    p.label("more")
+    p.a_from_c()
+    p.txp(0)
+    p.fire(0)
+    p.pull(1)
+    p.j("copy")
+    return p.assemble()
+
+
+def hdlc_receive(check: int = HDLC_FLAG_CHECK) -> list[int]:
+    """Synchronous HDLC receiver on RXC and RXD: the bytes of each frame,
+    FCS included, reach RX channel 1, the last tagged eop and err if the
+    FCS failed (or the frame was aborted or not a whole number of bytes).
+
+    RXD is sampled on RXC's rising edge. Counter 0's threshold means five
+    1s in a row, so a 0 next is a stuffed bit and is dropped (cell 0
+    takes every other sample); counter 1's means six, a flag (or an
+    abort): it aborts shifter 1's partial byte, which held the flag's
+    first bits, and holds it idle through the flag and any idle 1s.
+    The CRC takes the same bits, so after a good frame and 7 bits of its
+    closing flag it holds HDLC_FLAG_CHECK. At each flag a one-shot (timer
+    0) latches the check into cell 1 and then ends the packet in the byte
+    layer (TAG) and re-initializes the CRC, 6 cycles after the sixth 1:
+    RXC may run at up to clk / 6."""
+    p = Px8()
+    rise, d = pin_rise(HDLC_RXC), pin_level(HDLC_RXD)
+    take, bad = logic(0), logic(1)
+    p.logic(0, truth(lambda r, five, b: r and not (five and not b), 3),
+           [rise, counter_ge(0), d])
+    p.counter(0, match=5, step=rise, data=d, mode=RUN_ONES)
+    p.counter(1, match=6, step=rise, data=d, mode=RUN_ONES)
+    p.timer(0, reload=1, phase=1, start=counter_hit(1), stop=timer_fall(0))
+    p.logic(1, truth(lambda r, f, ok, q: (not ok) if r else (q and not f)),
+           [timer_rise(0), timer_fall(0), CRC_OK, bad])
+    p.crc(width=16, poly=HDLC_FCS_POLY, check=check, absorb=take, data=d,
+          init=timer_fall(0))
+    p.shifter(1, shift=take, sample=take)
+    p.shifter_io(1, start=ONE, data_in=d, push=True)
+    p.shifter_abort(1, counter_ge(1))
+    p.tile_tag(rx_tile(1, 0), end=timer_fall(0), err=bad)
+    p.arm()
+    p.idle_forever()
     return p.assemble()
 
 

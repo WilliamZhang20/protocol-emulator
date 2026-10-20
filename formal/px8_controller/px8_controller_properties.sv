@@ -136,6 +136,8 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
               4'd2: m_a <= {6'd0, tx_data};
               4'd5: m_a <= m_c;
               4'd6: m_c <= m_a;
+              4'd10: m_p <= m_a[9:0];
+              4'd11: m_a <= {6'd0, m_p};
               4'd8: m_state <= M_LOAD;
               4'd9: if (m_c != 16'd0) begin
                 m_state <= M_CFG; m_q <= m_p; m_b <= 2'd0; m_words <= 4'd0;
@@ -211,6 +213,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
       cover(block_last && m_words == 4'd1);       // a 2-word block
       cover(exec && op == 4'ha && opnd[5] && m_retire);       // level wait
       cover(exec && op == 4'h6 && m_c == 16'd2 && m_pc == 10'd3);  // a DJNZ loop
+      cover(m_state == M_LOAD && m_p == 10'h123);  // LDM at a P set from A
     end
   end
 endmodule

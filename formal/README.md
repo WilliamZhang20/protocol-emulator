@@ -54,32 +54,47 @@ pin driven after arming, SRAM readback, and so on.
 `protocols/` proves whole protocols as the chip runs them: the complete core
 with its program memory holding exactly the bytes a cocotb test loads
 (`gen_rom.py` assembles them from `test/cocotb_tests/protocols.py` on every
-run), a symbolic TX FIFO (any bytes, arriving at any time) and symbolic
-input pins.
+run), symbolic FIFOs (any bytes, arriving at any time) and symbolic input
+pins, against an independent model of the device or line on the other end.
 
 | Target | Program | Depth | Checked behavior |
 | --- | --- | --- | --- |
 | `uart_tx` | `uart_transmit(4)` | 110 after arm | The pin carries the popped bytes' 8N1 frames in order, every bit exactly 4 cycles; no frame without a byte; a waiting byte starts within 8 cycles; idle high; once armed, always driven. |
 | `ws2812` | `ws2812_transmit(6, 1, 2)` | 120 after arm | Every high pulse is exactly 1 cycle for a 0 and 2 for a 1, MSB first, in byte order; the bits of a byte start exactly 6 cycles apart, a later byte never sooner; no pulse without a byte. |
-| `spi_master` | `spi_master(0, 2, 2)` | 90 after arm | A two-byte transaction whose bytes arrive at any times: SCK rests low and still while CS is high; CS leads SCK's first edge by at least a half period; exact 2-cycle half periods within a byte, pauses only between bytes; CS rises only between bytes; MOSI stable while SCK is high; MOSI at each rising edge is the next bit of the popped bytes. |
+| `spi_master` | `spi_master(0, 2, 2)` | 90 after arm | A two-byte transaction whose bytes arrive at any times, with bytes for later transactions possibly waiting: SCK rests low and still while CS is high; CS leads SCK's first edge by at least a half period; exact 2-cycle half periods within a byte, pauses only between bytes; CS rises only between bytes, after exactly two; MOSI stable while SCK is high; MOSI at each rising edge is the next bit of the popped bytes. |
+| `gpio_expander` | `gpio_expander(4, 1)` | 100 after arm | A 74HC595 and a 74HC165 modelled at the pins, the 165's inputs changing at will, the host pushing at any times (also ahead): every RCLK rise latches exactly the next popped byte after exactly 8 SRCLK rises in that update; every byte pushed to RX is the 165's inputs when SH/LD# rose; SRCLK never rises while the 165 loads; SER never changes as SRCLK rises; SRCLK rests low between updates. |
+| `quadrature_decoder` | `quadrature_decoder()` | 60 after arm | A and B changing at any times at least 2 cycles apart, alone or together: every step (one input changed) pushes one channel-0 byte, 1 forward (the new A differs from the old B), in order; every double change one channel-1 byte; nothing else; every event within 8 cycles. |
+| `vga` | `vga(3, 8, 1, 1, 1, 1, 1, 1, 1)` | 190 after arm | The FIFO always has the next line's byte: HSYNC low exactly SYNC cycles every LINE; the colour pins agree; every pixel cell of every visible row is the next popped byte's bit, MSB first, for exactly CELL cycles, black elsewhere (seen through a delay line, so line 0 is checked too); VSYNC low exactly in its rows; covers a whole frame and the next frame's first line. |
+| `vga_framebuffer` | `vga_framebuffer(3, 8, 16, 12, 12, [0, 0], 2, 1, 1, 1)` | 640 after arm (Slurm only: the BMC takes 3 minutes, the whole-frame cover over an hour) | A symbolic image (each byte is any value the first time the controller reads it from SRAM, and keeps it), copied by the program itself through the real 4-entry TX FIFO: HSYNC low exactly SYNC cycles every LINE; the colour pins agree; every pixel cell of every visible line is bit 7 - cell of image row line / 2 (two lines a row), a byte the controller has read, black elsewhere; VSYNC low exactly in its line; a whole frame and the next frame's first line. |
+| `hdlc_receive` | `hdlc_receive()` | 170 after arm | RXC a regular clock (6 cycles a bit), RXD any bit: every byte pushed to RX channel 1 is the next byte of an independent reference receiver (destuffing, flags, aborts, bytes LSB first, the byte layer's holding of a packet's last byte), with eop exactly at a frame's end and err exactly when its CRC-16/X.25 check fails. |
+| `hdlc_transmit` | `hdlc_transmit(10)` | 300 after arm (Slurm only) | Frames of any bytes and lengths from channel 1, arriving at any times (the host keeps a started frame coming), copied through the real 4-entry channel-0 FIFO: TXC rises every 10 cycles; TXD stable 2 cycles either side of every TXC rise; after the first flag only flags and frames; never six 1s outside a flag, never seven; a frame's destuffed bits are the next popped frame's bytes, LSB first. The FCS check (16 bits leaving the CRC-16/X.25 residue 16'h1D0F at the closing flag) is in the harness but beyond the bound: a one-byte frame closes about 470 cycles after arm, and the solver needs about 12 hours for 300. The FCS is covered by the cocotb tests, including a loopback into the proven receiver. |
 
 The protocol proofs use boolector: on the SPI proof yices slowed to about
 5 minutes a step by step 60 and missed the 1-hour CPU limit of a login
-node, where boolector finishes all 90 steps in 17 minutes. For runs longer
-than CI or a login node allow, `formal/slurm/deep.sh` submits the protocol
-proofs and the wrong-program check to a Slurm cluster, racing yices,
-bitwuzla and boolector (sby takes the first answer).
+node, where boolector finishes all 90 steps in 17 minutes. CI runs each
+protocol proof as its own job, except `SLOW_PROTOCOLS`: `vga_framebuffer`,
+whose whole-frame cover needs over an hour, and `hdlc_transmit`:
+its 300 steps take about 12 hours (each step past 200 costs about 10
+minutes and growing; ABC's `bmc3` was about 70 times slower). For runs longer than CI or a login node
+allow, `formal/slurm/deep.sh` submits the protocol proofs (all, or
+`PROOFS="..."`) and the wrong-program check to a Slurm cluster, racing
+yices, bitwuzla and boolector (sby takes the first answer).
 
 The configuration phase before the program arms the fabric is one
 deterministic run: the harness supplies no FIFO bytes and holds the input
-pins constant until a pin is driven. `prearm.py` simulates that prefix in
-yosys and writes it as the initial state (`sim -w`), so the bound is spent
-on the protocol. Flip-flops the prefix leaves undefined stay
-unconstrained.
+pins constant until the program has armed (it drives a pin, or, for a
+program that drives none, fetches its final idle loop: `gen_rom.py`
+records `CODE_LENGTH`). `prearm.py` simulates that prefix in yosys and
+writes it as the initial state (`sim -w`), so the bound is spent on the
+protocol. Flip-flops the prefix leaves undefined stay unconstrained, so
+harness state that must start known has a reset. (yosys `sim` can stall
+on a harness that reads an unpacked array in an assertion, or on
+assertions over the x it gives `anyseq` inputs: the harnesses keep queues
+in packed vectors, and `prearm.py` zeroes `anyseq` cells while it looks
+for the arming time.)
 
-`protocol-negative` reruns each proof with a program that is wrong only in
-its timing and requires a counterexample, so a proof cannot pass by
-checking too little.
+`protocol-negative` reruns each proof with a wrong program and requires a
+counterexample, so a proof cannot pass by checking too little.
 
 ## Mutation check
 

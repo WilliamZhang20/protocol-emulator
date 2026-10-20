@@ -14,7 +14,8 @@ import tempfile
 from pathlib import Path
 
 SOURCES = ["protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v",
-           "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v"]
+           "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
+           "byte_fifo.v"]
 HERE = Path(__file__).resolve().parent
 yosys, name = sys.argv[1], sys.argv[2]
 if "/" in yosys:
@@ -25,6 +26,10 @@ with tempfile.TemporaryDirectory() as tmp:
     (Path(tmp) / "rom.vh").write_text((HERE / f"{name}_rom.vh").read_text())
     script = (f"read -formal -sv -I{tmp} {src} {HERE / (name + '_properties.sv')}; "
               f"prep -top {name}_properties; flatten; chformal -lower; "
+              # Only the arming time is needed here, and the harness keeps
+              # its symbolic inputs off until then: zero them, since sim
+              # can stall on assertions over the x it would give them.
+              f"delete t:$anyseq; setundef -undriven -zero; "
               f"sim -clock clk -n 400 -vcd {vcd}")
     subprocess.run([yosys, "-q", "-p", script], check=True, cwd=tmp,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

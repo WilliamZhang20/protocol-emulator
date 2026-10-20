@@ -59,6 +59,7 @@ Registers:
 | 7 | `TXP` | put `A`'s byte into a TX FIFO |
 | 8 | `LDM` | `A = SRAM[P]`, then `P = P + 1` |
 | 9 | `CFG` | load `C` configuration words from SRAM at `P` |
+| 10, 11 | | `P = A`, `A = P`: save and restore the data pointer, or point it at a computed address |
 
 For `PULL`, `PUSH` and `TXP`, operand bit 4 picks the FIFO channel; for
 `PUSH` and `TXP`, bit 5 tags the byte *eop* and bit 6 tags it *err*.

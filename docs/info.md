@@ -24,9 +24,12 @@ loads the setup and makes the step-by-step decisions, but it never drives
 a pin or times a bit. Every block holds two setups, and can switch
 between them in one step.
 
-UART, SPI, I2C, PS/2, low-speed USB (send and receive), 10BASE-T Ethernet
-(send and receive), HDLC and SLIP are all programs. See
-[the documentation](README.md).
+UART, SPI (master and slave), I2C (master and slave), PS/2 (device and
+host), low-speed USB, 10BASE-T Ethernet, CAN 2.0A, JTAG, SWD, 1-Wire,
+I2S, WS2812, DMX512, synchronous HDLC, async HDLC/PPP, SLIP, a 74HC595/165
+GPIO expander, a quadrature decoder and VGA are all programs, each tested
+against a model of the other end; eight are also formally proven on the
+whole core. See [the documentation](README.md).
 
 ## How to test
 

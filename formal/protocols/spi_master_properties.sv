@@ -2,13 +2,15 @@
 
 // Protocol proof: the whole core runs the real SPI mode-0 master program
 // (rom.vh): one transaction of NBYTES bytes, which the host supplies at any
-// times (the FIFO may run dry between them), against a symbolic MISO.
+// times (the FIFO may run dry between them, and bytes beyond the
+// transaction may already be waiting), against a symbolic MISO.
 // While CS is high SCK rests low and never moves; CS falls at least HALF
 // cycles before SCK's first edge; within a byte every SCK half period is
 // exactly HALF cycles, and between bytes SCK may only pause (at its idle
 // level); CS rises only between bytes; MOSI never moves while SCK is high;
 // at every rising edge MOSI is the next bit (MSB first) of the popped
-// bytes, in order; SCK never runs without a byte.
+// bytes, in order; SCK never runs without a byte; CS rises after exactly
+// NBYTES bytes.
 module spi_master_properties (input wire clk);
   localparam HALF = 2, NBYTES = 2, CS = 0, MOSI = 1, SCK = 3;
   `include "rom.vh"
@@ -26,7 +28,6 @@ module spi_master_properties (input wire clk);
   // supplies nothing and inputs are constant, so everything before is one
   // deterministic run: prearm.py simulates it and the proof starts there.
   reg       configured = 1'b0;
-  reg [2:0] provided = 3'd0;     // bytes the host has supplied
   reg [7:0] head = 8'd0;
 
   wire [9:0]  instruction_address;
@@ -60,11 +61,9 @@ module spi_master_properties (input wire clk);
       configured <= 1'b1;
     if (!rst_n) begin
       has <= 1'b0;
-      provided <= 3'd0;
     end else if (!has || tx_pop[0]) begin
-      has  <= configured && arrive && provided < NBYTES;
+      has  <= configured && arrive;
       head <= configured ? arriving : 8'd0;
-      if (configured && arrive && provided < NBYTES) provided <= provided + 3'd1;
     end
   end
 
@@ -75,6 +74,7 @@ module spi_master_properties (input wire clk);
   reg [7:0] run = 8'd0;          // cycles since SCK last changed
   reg [7:0] cs_low_for = 8'd0;
   reg       first_edge = 1'b1;   // no SCK edge yet since CS fell
+  reg [4:0] sent = 5'd0;         // bytes completed since CS fell
   initial begin q[0] = 0; q[1] = 0; q[2] = 0; q[3] = 0; end
   wire sck  = gpio_oe[SCK] && gpio_out[SCK];
   wire mosi = gpio_out[MOSI];
@@ -92,6 +92,8 @@ module spi_master_properties (input wire clk);
       if (edge) seen <= 1'b1;
       run <= edge ? 8'd1 : (run == 8'hff ? run : run + 8'd1);
       cs_low_for <= cs ? 8'd0 : (cs_low_for == 8'hff ? cs_low_for : cs_low_for + 8'd1);
+      if (cs) sent <= 5'd0;
+      else if (byte_done) sent <= sent + 5'd1;
       if (cs) first_edge <= 1'b1;
       else if (edge) first_edge <= 1'b0;
       if (rise) bit_index <= bit_index + 3'd1;
@@ -115,6 +117,8 @@ module spi_master_properties (input wire clk);
       if (rise && !first_edge && bit_index == 3'd0)
         assert(run >= HALF);                                       // a pause between bytes
       if (cs && !cs_q) assert(bit_index == 3'd0 && !sck);          // CS rises between bytes
+      if (cs && !cs_q) assert(sent == NBYTES);                     // after exactly NBYTES
+      if (byte_done) assert(sent < NBYTES);
       if (sck && sck_q) assert(mosi == mosi_q);                    // MOSI stable while high
       if (rise) assert(count != 3'd0 && mosi == q[0][3'd7 - bit_index]);
       cover(rise);

@@ -31,6 +31,6 @@ VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPS
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_host,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet,cocotb_tests.test_packets,cocotb_tests.test_contexts,cocotb_tests.test_determinism,cocotb_tests.test_ws2812,cocotb_tests.test_jtag,cocotb_tests.test_onewire,cocotb_tests.test_can,cocotb_tests.test_i2s,cocotb_tests.test_spi_slave,cocotb_tests.test_dmx,cocotb_tests.test_swd,cocotb_tests.test_ps2_host,cocotb_tests.test_can_rx,cocotb_tests.test_i2c_slave
+COCOTB_TEST_MODULES = cocotb_tests.test_top,cocotb_tests.test_host,cocotb_tests.test_uart,cocotb_tests.test_spi,cocotb_tests.test_i2c,cocotb_tests.test_ps2,cocotb_tests.test_usb,cocotb_tests.test_ethernet,cocotb_tests.test_packets,cocotb_tests.test_contexts,cocotb_tests.test_determinism,cocotb_tests.test_ws2812,cocotb_tests.test_jtag,cocotb_tests.test_onewire,cocotb_tests.test_can,cocotb_tests.test_i2s,cocotb_tests.test_spi_slave,cocotb_tests.test_dmx,cocotb_tests.test_swd,cocotb_tests.test_ps2_host,cocotb_tests.test_can_rx,cocotb_tests.test_i2c_slave,cocotb_tests.test_gpio_expander,cocotb_tests.test_quadrature,cocotb_tests.test_vga,cocotb_tests.test_hdlc
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim
