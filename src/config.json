@@ -28,7 +28,14 @@
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.1,
+
+  "//": "Setup margin and a post-route repair pass. Signoff gates only the typical",
+  "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
+  "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
+  "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
+  "RUN_POST_GRT_RESIZER_TIMING": 1,
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.0,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
@@ -43,8 +50,8 @@
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
         "program_memory.sram": {
-          "location": [42, 81],
-          "orientation": "R0"
+          "location": [3.12, 5.90],
+          "orientation": "FS"
         }
       },
       "gds": [
@@ -54,13 +61,13 @@
         "pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
       ],
       "lib": {
-        "nom_*": [
+        "nom_typ_1p20V_25C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
         ],
-        "min_*": [
+        "nom_fast_1p32V_m40C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
         ],
-        "max_*": [
+        "nom_slow_1p08V_125C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
         ]
       },
@@ -77,9 +84,10 @@
     "program_memory.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
-  "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only",
+  "// SRAM placement": "In the core's bottom-left corner (as in ihp-um-janestreet-prism), flipped (FS) so its pins, on its LEF bottom edge, face up into the core at y 342.36. Its offsets from the cell grid are those of the signed-off R0 placement at [42, 81], mirrored. Half a site (0.24 um) in from the core's left edge: its right edge, x 150.0, is then mid-site, so the nearest cells start 0.24 um away (on the site grid it would be at 149.76, cells abut it, and their Metal1 is 0.06 um from its own: 087c26c, 350 M1.b errors). Its y, 5.90 = -(81 + 336.46) mod 7.56 (two rows, one N and one FS), keeps its NWell edges where they were relative to the rows' NWell bands (at 3.78 one was 0.32 um from a band edge: eadb444, NW.b). Nothing goes left of or below it, and it leaves no cells beside it: cells left of it could only cross it on Metal3, which it blocks (d48031f: 33 shorts), and a sliver of rows there got partial power stripes that broke M4.a (02d0933).",
+  "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only. Above its pin edge, LEF x 132.0-147.4",
   "ROUTING_OBSTRUCTIONS": [
-    ["Metal3", 174.0, 80.4, 189.4, 81.0]
+    ["Metal3", 135.12, 342.36, 150.52, 342.96]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",
@@ -133,10 +141,10 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "//": "Pitch near the 1024x8 SRAM's ~48 um power-column spacing; ExtendPowerStripes still rewrites any residual misalignment onto LEF pin columns",
+  "//": "Pitch near the 1024x8 SRAM's ~48 um power-column spacing; ExtendPowerStripes still rewrites any residual misalignment onto LEF pin columns. The offset (from the core edge, x 2.88; the SRAM starts at 3.12) puts the stripes 25.405 um past the SRAM's left edge, where they were in the signed-off 585cfe5 layout",
   "PDN_VPITCH": 48.34,
   "PDN_VWIDTH": 2.1,
-  "PDN_VOFFSET": 16.185,
+  "PDN_VOFFSET": 25.645,
   "PDN_VSPACING": 2.0,
 
   "//": "Clock",

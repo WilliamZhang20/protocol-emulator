@@ -1,25 +1,19 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# SRAM-Programmed Protocol Emulator
+# Spatial Protocol Emulator
 
-This Tiny Tapeout design is a deterministic, reprogrammable bit-level protocol
-engine. A host loads bytecode into the on-chip foundry SRAM, exchanges payload
-bytes through TX/RX FIFOs, and starts the engine. Timing, shifting, GPIO output
-and output-enable control, pin mapping, waits, and branches are protocol-neutral;
-UART behavior is supplied entirely by the SRAM image.
+A Tiny Tapeout chip that speaks serial protocols on its pins (UART, SPI,
+I²C, PS/2, low-speed USB, 10BASE-T Ethernet, CAN, JTAG, SWD, 1-Wire, I²S,
+WS2812, DMX512, HDLC, VGA and more) without any of them being built into
+the hardware.
 
-The RTL includes UART TX/RX, a synchronous host interface, an 8×16 register
-file and ALU, configurable GPIO, TX/RX FIFOs, a generic CPU CRC/timer path,
-and two 16-slot real-time action lanes. SPI, I²C, JTAG, and low-speed
-line patterns are action-region programs; the old bit-transfer and line-pair
-blocks and opcodes have been removed. See [architecture.md](docs/architecture.md).
+Instead, the chip has general-purpose hardware blocks: timers, shifters,
+counters, a CRC engine, small logic cells and pin drivers. A program in
+on-chip memory **connects** these blocks for one protocol, then steps
+aside. The connected blocks run every clock cycle on their own, so every
+bit comes out at exactly the right time.
 
-Each lane has separate TX/RX shifters, a counter and delay timer, and a local
-configurable CRC/LFSR. A compound action can shift, sample, change a side-set
-pin, update the LFSR, count, and schedule a short delay together. Streaming
-shifts automatically pull and push bytes with FIFO backpressure. The dispatcher
-admits complete pin claims atomically, stalls conflicts, and fairly arbitrates
-the shared FIFO ports. GPIO mapping remains one-to-one by swapping assignments.
+New to the project? Start with [docs/README.md](docs/README.md).
 
 ## Local verification
 
@@ -36,23 +30,26 @@ make verify
 `make verify` runs:
 
 - full-hierarchy Verilator lint;
-- a standalone compile/test of the delivered foundry SRAM model;
+- `dead-check`: Verilator unused/undriven signals plus yosys constant or
+  never-active flip-flops (must be zero);
 - a flattened-synthesis check that requires the LibreLane-visible SRAM instance
   to be named `program_memory.sram`;
-- cocotb smoke, UART, clocked-region, orchestration, and fuzz tests through the
-  top-level pins; and
 - a GDS configuration preflight for the SRAM views, placement, supply hooks,
   required Metal4 PDN, and the SRAM Metal3 M3.f keepout;
-- formal SRAM/UART checks plus FIFO ordering, event tokens, GPIO ownership,
-  lane admission, action repeat/claim lifetime, automatic stream handshakes,
-  shared-resource safety, cover traces, and mutation testing.
+- a standalone compile/test of the delivered foundry SRAM model;
+- cocotb tests of every protocol through the top-level pins, against
+  models of the devices on the other end; and
+- formal checks of every block and of the whole core, with unbounded proofs
+  where they converge, cover traces, and mutation testing, and protocol
+  proofs that run whole protocol programs on the whole core.
 
-Individual commands include `make lint`, `make synth-check`,
+Individual commands include `make lint`, `make dead-check`, `make synth-check`,
 `make gds-config-check`, `make memory-test`, `make sim`, and `make formal`.
 
 ## Documentation
 
-- [Architecture, ISA, and host protocol](docs/architecture.md)
+- [Start here: reading order and glossary](docs/README.md)
+- [External hardware, pins, and clocks](docs/hardware.md)
 - [Dynamic verification](test/README.md)
 - [Formal verification](formal/README.md)
 - [Tiny Tapeout datasheet text](docs/info.md)

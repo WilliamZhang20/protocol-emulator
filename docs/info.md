@@ -9,28 +9,53 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-The project is an SRAM-programmed deterministic protocol engine. Programs use
-shared timing, shifting, FIFO, CRC, and configurable GPIO resources to
-implement protocols without dedicated UART, SPI, or I2C state machines. The
-architecture uses a reusable CPU and two programmable real-time lanes; clocked
-transfers and two-pin line states compile to action regions (see architecture.md).
+This chip speaks serial protocols on its pins, but none of them is built
+into the hardware. Instead it has general-purpose blocks:
 
-See the [architecture and programming reference](architecture.md) for the host
-commands, bytecode, component structure, roadmap (Phases A–D), and
-reprogrammability model.
+- 4 timers, 2 shifters and 2 counters;
+- a CRC engine;
+- 8 small logic cells and 8 pin drivers;
+- 8 byte tiles for packet work: escaping, checksums, filtering.
+
+A program in on-chip SRAM **connects** these blocks for one protocol,
+through 64 shared wires, then steps aside. The connected blocks run every
+clock cycle on their own, so the timing is exact. A tiny controller (PX8)
+loads the setup and makes the step-by-step decisions, but it never drives
+a pin or times a bit. Every block holds two setups, and can switch
+between them in one step.
+
+UART, SPI (master and slave), I2C (master and slave), PS/2 (device and
+host), low-speed USB, 10BASE-T Ethernet, CAN 2.0A, JTAG, SWD, 1-Wire,
+I2S, WS2812, DMX512, synchronous HDLC, async HDLC/PPP, SLIP, a 74HC595/165
+GPIO expander, a quadrature decoder and VGA are all programs, each tested
+against a model of the other end; eight are also formally proven on the
+whole core. See [the documentation](README.md).
 
 ## How to test
 
-Run `make verify` for lint, foundry SRAM compilation/testing, cocotb, and formal
-checks. The UART tests load separate TX and RX programs through `ui_in`, execute
-them from SRAM, and observe an 8-N-1 frame through `uio[0]`. The action-region clocked-transfer tests exercise the same autonomous engine for SPI mode 0/3 and I²C write/ACK
-with clock stretching.
+Load a program and payload over the nibble host link on `ui_in`, start the
+engine, and observe the protocol on `uio[7:0]`. Hold each host command and
+each `8'h00` separator for at least 2 clocks. Each shifter has its own TX
+and RX FIFO channel; host command `E` selects the one the FIFO commands
+use. Run `make verify` for lint,
+dead-logic detection, cocotb protocol tests, and formal checks.
 
 ## External hardware
 
-The basic loopback demonstrations require only suitable pin connections. Paired
-endpoint tests may use a microcontroller, FPGA, or protocol analyzer.
+All pins are 3.3 V digital and inputs are not 5 V tolerant. Default
+protocol pins follow the Tiny Tapeout recommended pinouts:
 
-Soft low-speed USB demos (non-compliant) use two `uio` pins as D+/D−. For an LS
-device idle-J, add a 1.5 kΩ pull-up from D− to 3.3 V and series resistors on
-both lines; do not expect USB-IF compliance without a real PHY.
+- **UART:** `uio[1]` TXD, `uio[2]` RXD. Any 3.3 V USB-UART Pmod.
+- **SPI:** `uio[0..3]` CS/MOSI/MISO/SCK. Direct to 3.3 V devices.
+- **I2C:** `uio[2]` SCL, `uio[3]` SDA. Needs 2.2–4.7 kΩ pull-ups to 3.3 V.
+- **PS/2:** `uio[4]` CLK, `uio[5]` DATA. Needs a 5 V ↔ 3.3 V
+  bidirectional level shifter.
+- **Low-speed USB:** `uio[4]` D+, `uio[5]` D−. Needs series resistors and a
+  1.5 kΩ (device) or 15 kΩ (host) termination; a buffer helps on long
+  cables.
+- **10BASE-T:** `uio[6]` TD+, `uio[7]` TD− (send), `uio[4]` RD (receive).
+  Needs a 40 MHz clock, a line driver, a resistor network, magnetics, and
+  a receive comparator.
+
+See [hardware.md](hardware.md) for clock choices, host-link timing, and
+details.

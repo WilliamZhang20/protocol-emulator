@@ -1,0 +1,24 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+bmc: depth 24
+cover: depth 48
+
+[engines]
+bmc: smtbmc bitwuzla
+cover: btor btormc
+
+[script]
+read -formal -sv config_bank.v
+read -formal -sv fabric_shifter.v
+read -formal -sv fabric_shifter_properties.sv
+prep -top fabric_shifter_properties
+
+[files]
+../../src/config_bank.v
+../../src/fabric_shifter.v
+fabric_shifter_properties.sv
