@@ -174,8 +174,17 @@ def main() -> None:
         "SRAM must use FS (pins facing the core; Metal4 power columns keep die-frame X)",
     )
     require(
-        placement.get("location") == [3.12, 3.78],
-        "SRAM location must stay at [3.12, 3.78], in the core corner",
+        placement.get("location") == [3.12, 5.90],
+        "SRAM location must stay at [3.12, 5.90], in the core corner",
+    )
+    # FS mirrors it: its top, y + 336.46, must sit where its bottom sat in
+    # the signed-off R0 placement at y 81, mirrored about the rows' NWell
+    # bands (period 7.56 um, two rows), or its NWell edges come within NW.b
+    # (0.62 um) of theirs.
+    top = round((placement["location"][1] + 336.46) * 1000)
+    require(
+        (top + 81000) % 7560 == 0,
+        f"SRAM top {top / 1000:.2f} is off the NWell-band phase of the signed-off layout (NW.b)",
     )
     # Its right edge must be off the 0.48 um site grid (from the core edge,
     # x 2.88), or cells abut it and break M1.b (0.18 um) against its Metal1.
@@ -192,7 +201,7 @@ def main() -> None:
     )
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
-    hotspot = (135.12, 340.24, 150.52, 340.84)
+    hotspot = (135.12, 342.36, 150.52, 342.96)
     covered = any(
         ob[0] == "Metal3"
         and ob[1] <= hotspot[0]

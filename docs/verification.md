@@ -56,9 +56,9 @@ that no input sequence breaks the protocol:
 
 These are bounded proofs: 60 to 190 cycles after the program arms the
 fabric, 640 for `vga_framebuffer` (a whole frame; its cover takes over an
-hour, so it runs on Slurm). `hdlc_transmit` is bounded at 320, which takes about 17 hours, so
+hour, so it runs on Slurm). `hdlc_transmit` is bounded at 320, which takes about 13 hours, so
 it runs on a Slurm cluster (`formal/slurm/deep.sh`) rather than in CI. Its
-first frame byte leaves the line about 311 cycles after arm (the controller
+first frame byte leaves the line about 300 cycles after arm (the controller
 lets the first flag go and a second one opens the frame), so the bound
 checks one byte; the end of a frame (about 470) is out of reach. Until arming, the harness supplies no bytes and holds the inputs
 constant, so the configuration phase is a single deterministic run.
