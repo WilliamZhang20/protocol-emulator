@@ -170,7 +170,7 @@ module hdlc_transmit_properties (input wire clk);
         assert(body_n == 8'd0 || (in_fcs && fcs_bits == 5'd16 && crc == RESIDUE));
         if (body_n != 8'd0) assert(bit_index == 3'd0);
       end
-      cover(byte_end && !in_fcs);                                // a frame byte on the line
+      cover(byte_end);                                           // a frame's first byte, 311 after arm
     end
   end
 endmodule

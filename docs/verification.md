@@ -52,13 +52,15 @@ that no input sequence breaks the protocol:
 | `vga` | (small timing) HSYNC low exactly SYNC cycles every LINE; every pixel cell of every visible line is the next popped byte's bit, MSB first, exactly CELL cycles; black in the porches, blank lines and before line 0; VSYNC low exactly in its rows; a whole frame and the next frame's first line |
 | `vga_framebuffer` | (small timing, any image in SRAM) the same HSYNC, VSYNC and black-porch checks; every pixel cell of every visible line is the matching bit of its row's image byte, each row on two lines, and that byte was read from SRAM; a whole frame and the next frame's first line |
 | `hdlc_receive` | (RXC a regular clock, any RXD) every byte pushed is the next byte of an independent reference receiver (destuffing, flags, aborts, bytes LSB first), with *eop* exactly on a frame's last byte and *err* exactly when its FCS check fails |
-| `hdlc_transmit` | (any frames, arriving at any time; 300 cycles, so a frame's bytes but not its closing flag) TXC rises every 10 cycles; TXD stable 2 cycles either side of every TXC rise; after the first flag only flags and frames; never six 1s but in a flag; each frame's bits, destuffed, are the next popped frame's bytes, LSB first. The FCS is not reached: the tests check it, including a loopback into the proven receiver |
+| `hdlc_transmit` | (any frames, arriving at any time; 320 cycles, so a frame's first byte but not its closing flag) TXC rises every 10 cycles; TXD stable 2 cycles either side of every TXC rise; after the first flag only flags and frames; never six 1s but in a flag; each frame's bits, destuffed, are the next popped frame's bytes, LSB first. The FCS is not reached: the tests check it, including a loopback into the proven receiver |
 
 These are bounded proofs: 60 to 190 cycles after the program arms the
 fabric, 640 for `vga_framebuffer` (a whole frame; its cover takes over an
-hour, so it runs on Slurm). `hdlc_transmit` is bounded at 300, which takes about 12 hours, so
-it runs on a Slurm cluster (`formal/slurm/deep.sh`) rather than in CI; the
-end of a frame (about 470) is out of reach. Until arming, the harness supplies no bytes and holds the inputs
+hour, so it runs on Slurm). `hdlc_transmit` is bounded at 320, which takes about 17 hours, so
+it runs on a Slurm cluster (`formal/slurm/deep.sh`) rather than in CI. Its
+first frame byte leaves the line about 311 cycles after arm (the controller
+lets the first flag go and a second one opens the frame), so the bound
+checks one byte; the end of a frame (about 470) is out of reach. Until arming, the harness supplies no bytes and holds the inputs
 constant, so the configuration phase is a single deterministic run.
 `prearm.py` simulates it and the solver starts from the armed state, which
 spends the whole bound on the protocol. The proofs use small timing

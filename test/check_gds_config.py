@@ -174,8 +174,16 @@ def main() -> None:
         "SRAM must use FS (pins facing the core; Metal4 power columns keep die-frame X)",
     )
     require(
-        placement.get("location") == [2.88, 3.78],
-        "SRAM location must stay at [2.88, 3.78], flush with the core corner",
+        placement.get("location") == [3.12, 3.78],
+        "SRAM location must stay at [3.12, 3.78], in the core corner",
+    )
+    # Its right edge must be off the 0.48 um site grid (from the core edge,
+    # x 2.88), or cells abut it and break M1.b (0.18 um) against its Metal1.
+    right_edge = placement["location"][0] + 146.88
+    to_site = (-round((right_edge - 2.88) * 1000)) % 480 / 1000   # in nm, then um
+    require(
+        to_site >= 0.18,
+        f"SRAM right edge {right_edge:.2f} leaves {to_site:.2f} um to the next cell site; needs >= 0.18 (M1.b)",
     )
 
     require(
@@ -184,7 +192,7 @@ def main() -> None:
     )
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
-    hotspot = (134.88, 340.24, 150.28, 340.84)
+    hotspot = (135.12, 340.24, 150.52, 340.84)
     covered = any(
         ob[0] == "Metal3"
         and ob[1] <= hotspot[0]
