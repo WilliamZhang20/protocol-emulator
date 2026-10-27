@@ -30,10 +30,12 @@ def lint(verilator: str, top: str, sources: list[str]) -> list[str]:
     env = dict(os.environ)
     env.pop("VERILATOR_ROOT", None)
     result = subprocess.run(
-        [verilator, "--lint-only", "-Wall", "-Wno-DECLFILENAME",
+        [verilator, "--lint-only", "-Wall", "-Wno-fatal", "-Wno-DECLFILENAME",
          "--top-module", top, *sources],
         capture_output=True, text=True, env=env, check=False,
     )
+    if result.returncode:
+        sys.exit(f"verilator failed:\n{result.stdout}{result.stderr}")
     return [line for line in result.stderr.splitlines()
             if line.startswith("%Warning-") and
             any(f"-{cls}:" in line for cls in LINT_CLASSES)]

@@ -29,9 +29,10 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
+.PHONY: help verify tooling-test lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
 
 help:
+	@echo "make tooling-test Test verification tooling without EDA dependencies"
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
 	@echo "make gds-config-check  Check SRAM macro and PDN configuration"
 	@echo "make pdn-def-check DEF=...  Check SRAM power nets in a final DEF"
@@ -44,7 +45,10 @@ help:
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
 
-verify: lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
+verify: tooling-test lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
+
+tooling-test:
+	$(PYTHON) -B -m unittest discover -s tools -p 'test_*.py'
 
 lint:
 	$(VERILATOR) --lint-only --timing -Wno-fatal -DFUNCTIONAL \
