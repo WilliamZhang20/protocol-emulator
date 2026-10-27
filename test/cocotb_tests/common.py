@@ -44,20 +44,6 @@ def status_running(status: int) -> bool:
     return bool(status & 0x80)
 
 
-def status_halted(status: int) -> bool:
-    return bool(status & 0x40)
-
-
-def status_finished(status: int) -> bool:
-    """True when the engine is no longer running.
-
-    After HALT the host clears `enable`, which also clears the core `halted`
-    flag — so bit 6 is not sticky. Prefer `not status_running(status)` once
-    the program has been started.
-    """
-    return (not status_running(status)) or status_halted(status)
-
-
 async def wait_until_halted(dut, timeout_cycles: int = 8000, poll_every: int = 64) -> None:
     """Poll host status until `running` clears (call after start_engine)."""
     for cycle in range(timeout_cycles):
