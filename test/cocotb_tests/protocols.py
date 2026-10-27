@@ -837,7 +837,7 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     """Low-speed USB packet receiver. Timer 0 recovers the bit clock by
     resynchronizing on every D+ transition; the fabric NRZI-decodes, drops
     stuffed bits, and pushes SYNC, PID, data and CRC bytes. At EOP the
-    controller pushes 0xA5 if the CRC16 residue checks, else 0xEE."""
+    controller pushes 0xA5 if CRC16 checks and no bytes were lost, else 0xEE."""
     p = Px8()
     tick = timer_rise(0)
     p.logic(0, truth(lambda dp: dp, 1), [pin_level(USB_DP)], enable=tick)
@@ -861,9 +861,16 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     p.wev(shifter_word(1))
     p.flags(0b01)
     p.wev(logic(3))
+    # A valid wire CRC does not imply that the host received every byte.
+    p.rd(rd_shifter_status(1))
+    p.andc(1 << 14)              # sticky receive overrun
+    p.jz("check_crc")
+    p.j("bad")
+    p.label("check_crc")
     p.rd(RD_CRC_LO)
     p.xrc(USB_CRC16_RESIDUE)
     p.jz("good")
+    p.label("bad")
     p.ldc(0xEE)
     p.push(channel=1)            # after the packet bytes, on shifter 1's channel
     p.j("done")

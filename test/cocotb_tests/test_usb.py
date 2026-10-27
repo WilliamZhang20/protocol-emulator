@@ -51,7 +51,7 @@ TX_CASES = {
     "empty": b"",
     "one_byte": b"\x00",
     "max_all_ones": bytes([0xFF] * 8),
-    "max_random": bytes(random.Random(5).randrange(256) for _ in range(8)),
+    "max_random": random.Random(5).randbytes(8),
     "stuffed_bit_before_eop": stuffed_at_eop_payload(),
 }
 
@@ -159,7 +159,7 @@ RX_CASES = {
     "fast_3pct": (bytes([0xFF, 0xFF, 0x00, 0x5A, 0xFC]), BIT - 1, 0),
     "max_all_ones": (bytes([0xFF] * 8), BIT, 0),
     "empty": (b"", BIT, 0),
-    "random_jitter": (bytes(random.Random(6).randrange(256) for _ in range(8)), BIT, 1),
+    "random_jitter": (random.Random(6).randbytes(8), BIT, 1),
     "stuffed_bit_before_eop": (stuffed_at_eop_payload(), BIT + 1, 0),
 }
 
@@ -176,3 +176,30 @@ async def test_usb_ls_receive_cases(dut, case):
     assert bytes(received[:-1]) == packet, bytes(received).hex()
     assert received[-1] == 0xA5, "CRC16 residue should check"
 
+
+
+@cocotb.test()
+async def test_usb_ls_receive_overrun_is_not_success(dut):
+    """A correct wire CRC must not hide bytes lost to host backpressure.
+
+    Hold off host reads until an eight-byte payload and its CRC have arrived.
+    The stream's four FIFO slots plus two byte-tile slots and one pending
+    shifter byte cannot retain the entire raw packet. The result must be bad,
+    even though the independent bit-level CRC checker sees a valid packet.
+    """
+    from cocotb_tests.fabric import drain_until_halted
+
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    bus.drive[USB_DP], bus.drive[USB_DM] = 0, 1
+    packet = data_packet(bytes(range(8)))
+    await load_program(dut, usb_ls_receive(BIT))
+    await select_channel(dut, 1)
+    await start_engine(dut)
+    await ClockCycles(dut.clk, 1500)
+    await drive_usb(dut, bus, usb_encode(packet), BIT)
+    await ClockCycles(dut.clk, BIT * 2)
+    received = await drain_until_halted(dut)
+    assert len(received) < len(packet) + 1, "fixture did not exercise receive overrun"
+    assert received[-1] == 0xEE, "valid CRC incorrectly reported success after FIFO data loss"
