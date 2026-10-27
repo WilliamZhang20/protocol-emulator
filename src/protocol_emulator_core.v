@@ -381,39 +381,29 @@ module protocol_emulator_core (
     end
   endgenerate
 
-  wire [15:0] s_rx_data_0, s_rx_data_1, s_status_0, s_status_1;
+  wire [31:0] s_rx_data, s_status;
 
-  fabric_shifter shifter0 (
-      .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || cfg_addr == 8'h32)),
-      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
-      .cfg_bank(write_bank), .ctx_next(context_next),
-      .lines(shifter_lines),
-      .pulls(sh_pulls[0]),
-      .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
-      .tx_data(sh_tx_byte[7:0]), .tx_eop(sh_tx_eop[0]), .tx_err(sh_tx_err[0]),
-      .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
-      .rx_byte(sh_rx_byte[7:0]), .rx_eop(sh_rx_eop[0]), .rx_err(sh_rx_err[0]),
-      .out(s_out[0]), .active(s_active[0]),
-      .word_pulse(s_word[0]), .stop_pulse(s_stop[0]),
-      .rx_data(s_rx_data_0), .status(s_status_0)
-  );
-
-  fabric_shifter shifter1 (
-      .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || cfg_addr == 8'h33)),
-      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
-      .cfg_bank(write_bank), .ctx_next(context_next),
-      .lines(shifter_lines),
-      .pulls(sh_pulls[1]),
-      .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
-      .tx_data(sh_tx_byte[15:8]), .tx_eop(sh_tx_eop[1]), .tx_err(sh_tx_err[1]),
-      .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),
-      .rx_byte(sh_rx_byte[15:8]), .rx_eop(sh_rx_eop[1]), .rx_err(sh_rx_err[1]),
-      .out(s_out[1]), .active(s_active[1]),
-      .word_pulse(s_word[1]), .stop_pulse(s_stop[1]),
-      .rx_data(s_rx_data_1), .status(s_status_1)
-  );
+  generate
+    for (k = 0; k < 2; k = k + 1) begin : shifter
+      localparam [5:0] CFG_BASE = 6'h04 + k;
+      localparam [7:0] BURST_ADDR = 8'h32 + k;
+      fabric_shifter tile (
+          .clk(clk), .rst_n(rst_n), .enable(live),
+          .cfg_we(cfg_we && (cfg_addr[7:2] == CFG_BASE || cfg_addr == BURST_ADDR)),
+          .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
+          .cfg_bank(write_bank), .ctx_next(context_next),
+          .lines(shifter_lines),
+          .pulls(sh_pulls[k]),
+          .tx_request(sh_tx_request[k]), .tx_grant(sh_tx_grant[k]),
+          .tx_data(sh_tx_byte[8*k +: 8]), .tx_eop(sh_tx_eop[k]), .tx_err(sh_tx_err[k]),
+          .rx_request(sh_rx_request[k]), .rx_grant(sh_rx_grant[k]),
+          .rx_byte(sh_rx_byte[8*k +: 8]), .rx_eop(sh_rx_eop[k]), .rx_err(sh_rx_err[k]),
+          .out(s_out[k]), .active(s_active[k]),
+          .word_pulse(s_word[k]), .stop_pulse(s_stop[k]),
+          .rx_data(s_rx_data[16*k +: 16]), .status(s_status[16*k +: 16])
+      );
+    end
+  endgenerate
 
   wire [31:0] crc_value;
   fabric_crc crc_tile (
@@ -470,10 +460,10 @@ module protocol_emulator_core (
   always @(*) begin
     case (rd_addr)
       4'd0:  rd_data = {8'd0, pin_sync};
-      4'd1:  rd_data = s_rx_data_0;
-      4'd2:  rd_data = s_status_0;
-      4'd3:  rd_data = s_rx_data_1;
-      4'd4:  rd_data = s_status_1;
+      4'd1:  rd_data = s_rx_data[15:0];
+      4'd2:  rd_data = s_status[15:0];
+      4'd3:  rd_data = s_rx_data[31:16];
+      4'd4:  rd_data = s_status[31:16];
       4'd5:  rd_data = {8'd0, counter[0].count};
       4'd6:  rd_data = {8'd0, counter[1].count};
       4'd7:  rd_data = crc_value[15:0];
