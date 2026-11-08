@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Test verification tooling
+        run: make tooling-test
+
       - name: Install Python packages
         shell: bash
         run: pip install -r test/requirements.txt

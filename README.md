@@ -29,6 +29,7 @@ make verify
 
 `make verify` runs:
 
+- `tooling-test`: Python regression tests for verification tooling;
 - full-hierarchy Verilator lint;
 - `dead-check`: Verilator unused/undriven signals plus yosys constant or
   never-active flip-flops (must be zero);
