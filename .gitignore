@@ -17,3 +17,5 @@ core.*
 build/
 .venv/
 .tools/
+formal/protocols/*_rom.vh
+formal/protocols/*_prearm.ys

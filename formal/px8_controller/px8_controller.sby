@@ -1,0 +1,22 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+bmc: depth 16
+cover: depth 28
+
+[engines]
+bmc: smtbmc boolector
+cover: btor btormc
+
+[script]
+read -formal -sv px8_controller.v
+read -formal -sv px8_controller_properties.sv
+prep -top px8_controller_properties
+
+[files]
+../../src/px8_controller.v
+px8_controller_properties.sv

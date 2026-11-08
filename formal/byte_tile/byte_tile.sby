@@ -1,0 +1,33 @@
+[tasks]
+roundtrip
+checksum
+cover_roundtrip
+cover_checksum
+
+[options]
+roundtrip: mode bmc
+checksum: mode bmc
+cover_roundtrip: mode cover
+cover_checksum: mode cover
+roundtrip: depth 32
+checksum: depth 20
+cover_roundtrip: depth 32
+cover_checksum: depth 32
+
+[engines]
+roundtrip: abc bmc3
+checksum: abc bmc3
+cover_roundtrip: smtbmc boolector
+cover_checksum: smtbmc boolector
+
+[script]
+read -formal -sv byte_tile.v
+read -formal -sv byte_tile_properties.sv
+roundtrip: prep -top byte_tile_roundtrip
+cover_roundtrip: prep -top byte_tile_roundtrip
+checksum: prep -top byte_tile_checksum
+cover_checksum: prep -top byte_tile_checksum
+
+[files]
+../../src/byte_tile.v
+byte_tile_properties.sv

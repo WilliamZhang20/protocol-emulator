@@ -27,9 +27,94 @@ class Mutation:
     sources: tuple[str, ...]
     harness: str
     top: str
+    engine: str = "smtbmc boolector"
 
+
+CORE_SOURCES = (
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
+)
 
 MUTATIONS = (
+    Mutation(
+        "host_unsynchronized_accept", "host_interface", "host_interface.v",
+        "wire stable = host_sync == host_prev;",
+        "wire stable = 1'b1;",
+        ("host_interface.v",), "host_interface_properties.sv", "host_interface_properties",
+    ),
+    Mutation(
+        "host_no_post_increment", "host_interface", "host_interface.v",
+        "address_register <= address_register + 1'b1;",
+        "address_register <= address_register;",
+        ("host_interface.v",), "host_interface_properties.sv", "host_interface_properties",
+    ),
+    Mutation(
+        "px8_prefix_dropped", "px8_controller", "px8_controller.v",
+        "oreg     <= op == OP_PFIX ? opnd[11:0] : 12'd0;",
+        "oreg     <= op == OP_PFIX ? {8'd0, n} : 12'd0;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_djnz_off_by_one", "px8_controller", "px8_controller.v",
+        "OP_DJNZ: if (cnt_dec != 16'd0) next_pc = opnd[9:0];",
+        "OP_DJNZ: if (cnt != 16'd0) next_pc = opnd[9:0];",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_level_wait_same_cycle", "px8_controller", "px8_controller.v",
+        "OP_WEV:  retire = event_ready && (waiting || !opnd[5]);",
+        "OP_WEV:  retire = event_ready;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_p_from_a_ignored", "px8_controller", "px8_controller.v",
+        "4'd10: ptr <= acc[9:0];",
+        "4'd10: ptr <= ptr;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_a_from_p_reads_pc", "px8_controller", "px8_controller.v",
+        "4'd11: acc <= {6'd0, ptr};",
+        "4'd11: acc <= {6'd0, pc};",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_block_bytes_swapped", "px8_controller", "px8_controller.v",
+        "assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;",
+        "assign cfg_data      = block ? {acc[7:0], instruction_data} : acc;",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "px8_block_pointer_stuck", "px8_controller", "px8_controller.v",
+        """          if (!block_last)
+            ptr <= ptr + 10'd1;""",
+        """          if (!block_last)
+            ptr <= ptr;""",
+        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+    ),
+    Mutation(
+        "context_write_ignores_mask", "fabric_logic", "config_bank.v",
+        "wire we_shadow = we && write_bank[!cur];",
+        "wire we_shadow = we;",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
+    ),
+    Mutation(
+        "context_select_inverted", "fabric_logic", "config_bank.v",
+        "assign next = swap ? shadow_w : active_w;",
+        "assign next = swap ? active_w : shadow_w;",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
+    ),
+    Mutation(
+        "logic_enable_ignored", "fabric_logic", "fabric_logic.v",
+        "else if (lines[{1'b0, mode[4:0]}])",
+        "else",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
+    ),
+    Mutation(
+        "core_arm_bypassed", "fabric_core", "protocol_emulator_core.v",
+        "wire        live = enable && armed;",
+        "wire        live = enable;",
+        (CORE_SOURCES), "fabric_core_properties.sv", "fabric_core_properties",
+    ),
     Mutation(
         "fifo_count_direction", "byte_fifo", "byte_fifo.v",
         "2'b10: count <= count + 1'b1;",
@@ -37,30 +122,137 @@ MUTATIONS = (
         ("byte_fifo.v",), "byte_fifo_properties.sv", "byte_fifo_properties",
     ),
     Mutation(
-        "timer_token_decrement", "event_engine", "event_engine.v",
-        "next_timer = next_timer - 1'b1;",
-        "next_timer = next_timer + 1'b1;",
-        ("event_engine.v",), "event_engine_properties.sv", "event_engine_properties",
+        "timer_reload_off_by_one", "fabric_timer", "fabric_timer.v",
+        "count <= reload;",
+        "count <= reload + 16'd1;",
+        ("config_bank.v", "fabric_timer.v"), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
-        "mapping_alias", "gpio_ownership", "gpio_datapath.v",
-        "pin_map[swap_index] <= pin_map[logical_pin];",
-        "pin_map[swap_index] <= physical_pin;",
-        ("gpio_arbiter.v", "gpio_datapath.v"),
-        "gpio_ownership_properties.sv", "gpio_ownership_properties",
+        "timer_hold_ignored", "fabric_timer", "fabric_timer.v",
+        "wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);",
+        "wire hold       = 1'b0;",
+        ("config_bank.v", "fabric_timer.v"), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
     Mutation(
-        "claim_release", "action_engine", "action_lane.v",
-        "assign claim = reserved_claim;",
-        "assign claim = 8'b0;",
-        ("action_lane.v",), "action_engine_properties.sv", "action_engine_properties",
+        "shifter_rx_bit_order", "fabric_shifter", "fabric_shifter.v",
+        "wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;",
+        "wire [3:0] data_pos = data_pos_raw;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
-        "branch_polarity", "shared_resources", "vm_sequencer.v",
-        "(is_jz && alu_zero) ||",
-        "(is_jz && !alu_zero) ||",
-        ("instruction_decoder.v", "vm_sequencer.v"),
-        "shared_resources_properties.sv", "shared_resources_properties",
+        "shifter_tx_bit_order", "fabric_shifter", "fabric_shifter.v",
+        "frame_bit_at = w[msb_first ? (frame[3:0] - raw) : raw];",
+        "frame_bit_at = w[raw];",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_parity_polarity", "fabric_shifter", "fabric_shifter.v",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
+        "frame_bit_at = (^(w & len_mask)) ^ !odd_parity ^ word_err;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_overrun_lost", "fabric_shifter", "fabric_shifter.v",
+        "          overrun <= 1'b1;",
+        "          overrun <= 1'b0;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_burst_end_forgotten", "fabric_shifter", "fabric_shifter.v",
+        "!(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));",
+        "!(levels[burst[4:0]] || (burst[6] && word_eop));",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_burst_keeps_pre", "fabric_shifter", "fabric_shifter.v",
+        "        index     <= pre_n;",
+        "        index     <= 5'd0;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_injection_ignored", "fabric_shifter", "fabric_shifter.v",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;",
+        "frame_bit_at = (^(w & len_mask)) ^ odd_parity;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_abort_ignored", "fabric_shifter", "fabric_shifter.v",
+        "        if (done || abort)",
+        "        if (done)",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "shifter_rx_eop_lost", "fabric_shifter", "fabric_shifter.v",
+        "push_eop  <= done && burst_mode;",
+        "push_eop  <= 1'b0;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
+    ),
+    Mutation(
+        "tile_escape_map_swapped", "byte_tile", "byte_tile.v",
+        "wire [7:0]  mapped   = in_data == c0 ? m0 : m1;",
+        "wire [7:0]  mapped   = in_data == c0 ? m1 : m0;",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_unescape_wrong_byte", "byte_tile", "byte_tile.v",
+        "wire [7:0]  restored = in_data == m0 ? c0 : in_data == m1 ? c1 : in_data;",
+        "wire [7:0]  restored = in_data == m0 ? c1 : in_data == m1 ? c1 : in_data;",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_checksum_not_negated", "byte_tile", "byte_tile.v",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next) ^ {8{in_err}};",
+        "p_data <= acc_next ^ {8{in_err}};",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_checksum",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_injection_ignored", "byte_tile", "byte_tile.v",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next) ^ {8{in_err}};",
+        "p_data <= (use_xor ? acc_next : 8'd0 - acc_next);",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_checksum",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "tile_output_dropped", "byte_tile", "byte_tile.v",
+        """      if (o_valid && out_ready)
+        o_valid <= 1'b0;""",
+        """      if (o_valid)
+        o_valid <= 1'b0;""",
+        ("byte_tile.v",), "byte_tile_properties.sv", "byte_tile_roundtrip",
+        engine="abc bmc3",
+    ),
+    Mutation(
+        "counter_equal_restart", "fabric_counter", "fabric_counter.v",
+        "default: next = data == last ? inc : 8'd1;",
+        "default: next = data == last ? inc : 8'd0;",
+        ("config_bank.v", "fabric_counter.v"), "fabric_counter_properties.sv", "fabric_counter_properties",
+    ),
+    Mutation(
+        "logic_start_value_ignored", "fabric_logic", "fabric_logic.v",
+        "q_r <= mode[5];",
+        "q_r <= 1'b0;",
+        ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
+    ),
+    Mutation(
+        "counter_ge_one_cycle_late", "fabric_counter", "fabric_counter.v",
+        "ge_r <= value_next >= match_next;",
+        "ge_r <= value >= match;",
+        ("config_bank.v", "fabric_counter.v"), "fabric_counter_properties.sv", "fabric_counter_properties",
+    ),
+    Mutation(
+        "crc_absorb_gate_ignored", "fabric_crc", "fabric_crc.v",
+        "(!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);",
+        "1'b1;",
+        ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
+    ),
+    Mutation(
+        "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",
+        "wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];",
+        "wire feedback = msb;",
+        ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),
 )
 
@@ -81,23 +273,26 @@ def run_mutation(mutation: Mutation, sby: str, scratch: Path) -> bool:
     harness = ROOT / "formal" / mutation.target / mutation.harness
     config = scratch / mutation.name / "mutation.sby"
     config.write_text(
-        "[tasks]\nbmc\n\n[options]\nmode bmc\ndepth 48\nmulticlock on\n\n"
-        "[engines]\nsmtbmc boolector\n\n[script]\n"
+        "[tasks]\nbmc\n\n[options]\nmode bmc\ndepth 24\n\n"
+        f"[engines]\n{mutation.engine}\n\n[script]\n"
         + "\n".join(f"read -formal -sv {source.name}" for source in sources)
         + f"\nread -formal -sv {harness.name}\nprep -top {mutation.top}\n\n"
         "[files]\n"
         + "\n".join(str(source) for source in sources)
         + f"\n{harness}\n"
     )
-    result = subprocess.run(
-        [sby, "-f", "-d", str(scratch / mutation.name / "run"), str(config), "bmc"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    log = result.stdout + result.stderr
-    caught = result.returncode != 0 and "DONE (FAIL" in log
+    try:
+        result = subprocess.run(
+            [sby, "-f", "-d", str(scratch / mutation.name / "run"), str(config), "bmc"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        log = result.stdout + result.stderr
+        caught = result.returncode != 0 and "DONE (FAIL" in log
+    except subprocess.TimeoutExpired:
+        log, caught = "timed out after 600 s", False
     if not caught:
         print(f"{mutation.name}: verification did not reject the mutation")
         print("\n".join(log.splitlines()[-12:]))

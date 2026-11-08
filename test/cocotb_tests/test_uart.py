@@ -1,91 +1,179 @@
-"""End-to-end programmable UART TX and RX tests through the Tiny Tapeout pins."""
+"""UART on the spatial fabric: exact bit timing and full-duplex operation."""
+
+import random
 
 import cocotb
 from cocotb.triggers import ClockCycles, RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock
-from cocotb_tests.reference.programs import uart_rx_program, uart_tx_program
+from cocotb_tests.fabric import (
+    Bus, drain_rx_tagged, load_program, pop_rx, push_tx, rx_empty, select_channel,
+    start_engine,
+)
+from cocotb_tests.protocols import (
+    UART_RX_PIN, UART_TX_PIN, framed_burst_loop, uart_dual_transmit, uart_full_duplex,
+)
 
-WAIT_CYCLES = 5
-SYMBOL_CYCLES = WAIT_CYCLES + 11
-FIRST_SAMPLE_WAIT = (3 * SYMBOL_CYCLES // 2) - 11
-
-
-async def host_command(dut, command: int, payload: int = 0) -> None:
-    dut.ui_in.value = ((command & 0xF) << 4) | (payload & 0xF)
-    await RisingEdge(dut.clk)
-    dut.ui_in.value = 0
-    await RisingEdge(dut.clk)
+BIT = 24
 
 
-async def set_program_address(dut, address: int) -> None:
-    await host_command(dut, 0x1, address)
-    await host_command(dut, 0x2, address >> 4)
-    await host_command(dut, 0x3, address >> 8)
-
-
-async def load_program(dut, program: list[int]) -> None:
-    await set_program_address(dut, 0)
-    for byte in program:
-        await host_command(dut, 0x4, byte)
-        await host_command(dut, 0x5, byte >> 4)
-
-
-async def push_tx(dut, byte: int) -> None:
-    await host_command(dut, 0x6, byte)
-    await host_command(dut, 0x7, byte >> 4)
-
-
-async def start_engine(dut) -> None:
-    await host_command(dut, 0x8, 1)
-
-
-async def wait_for_tx_start(dut, timeout_cycles: int = 500) -> None:
-    saw_idle = False
-    for _ in range(timeout_cycles):
+async def receive_frame(dut, bus: Bus, bit: int, pin: int = UART_TX_PIN) -> int:
+    """Reference UART receiver: wait for a start bit, sample mid-bit."""
+    while bus.level(pin):
         await RisingEdge(dut.clk)
-        driven = int(dut.uio_oe.value) & 1
-        level = int(dut.uio_out.value) & 1
-        saw_idle |= bool(driven and level)
-        if saw_idle and driven and not level:
-            return
-    raise AssertionError("UART TX did not produce a start bit")
+    await ClockCycles(dut.clk, bit // 2)
+    assert bus.level(pin) == 0, "start bit glitch"
+    value = 0
+    for index in range(8):
+        await ClockCycles(dut.clk, bit)
+        value |= bus.level(pin) << index
+    await ClockCycles(dut.clk, bit)
+    assert bus.level(pin) == 1, "missing stop bit"
+    return value
+
+
+async def send_frame(dut, bus: Bus, value: int, bit: int) -> None:
+    for level in [0] + [(value >> i) & 1 for i in range(8)] + [1]:
+        bus.drive[UART_RX_PIN] = level
+        await ClockCycles(dut.clk, bit)
 
 
 @cocotb.test()
-async def test_uart_tx_program(dut):
+async def test_uart_tx_bit_period_is_exact(dut):
+    """0x55 toggles every bit, so every edge interval must equal BIT."""
     await start_clock(dut)
     await reset_top(dut)
-    value = 0xA6
-
-    await load_program(dut, uart_tx_program(WAIT_CYCLES))
-    await push_tx(dut, value)
+    bus = Bus(dut)
+    await load_program(dut, uart_full_duplex(BIT))
+    await push_tx(dut, 0x55)
     await start_engine(dut)
-    await wait_for_tx_start(dut)
 
-    expected = [0] + [(value >> bit) & 1 for bit in range(8)] + [1]
-    for bit_index, bit_value in enumerate(expected):
-        if bit_index:
-            await ClockCycles(dut.clk, SYMBOL_CYCLES)
-        assert (int(dut.uio_out.value) & 1) == bit_value
+    edges = []
+    previous = bus.level(UART_TX_PIN)
+    cycle = 0
+    while len(edges) < 10:
+        await RisingEdge(dut.clk)
+        cycle += 1
+        level = bus.level(UART_TX_PIN)
+        if level != previous:
+            edges.append(cycle)
+            previous = level
+        assert cycle < 50 * BIT, "TX never produced 10 edges"
+    intervals = [b - a for a, b in zip(edges, edges[1:])]
+    assert intervals == [BIT] * 9, intervals
 
 
 @cocotb.test()
-async def test_uart_rx_program(dut):
+async def test_uart_tx_stream(dut):
     await start_clock(dut)
     await reset_top(dut)
-    value = 0x5B
-    dut.uio_in.value = 1
-
-    await load_program(dut, uart_rx_program(WAIT_CYCLES, FIRST_SAMPLE_WAIT))
+    bus = Bus(dut)
+    await load_program(dut, uart_full_duplex(BIT))
+    payload = [0xA6, 0x00, 0xFF, 0x3C]
+    for byte in payload:
+        await push_tx(dut, byte)
     await start_engine(dut)
-    await ClockCycles(dut.clk, 100)
+    received = [await receive_frame(dut, bus, BIT) for _ in payload]
+    assert received == payload
 
-    frame = [0] + [(value >> bit) & 1 for bit in range(8)] + [1]
-    for bit_value in frame:
-        dut.uio_in.value = bit_value
-        await ClockCycles(dut.clk, SYMBOL_CYCLES)
 
-    await ClockCycles(dut.clk, 50)
-    await host_command(dut, 0x9)
-    assert int(dut.uo_out.value) == value
+@cocotb.test()
+async def test_uart_full_duplex(dut):
+    """TX and RX tiles run at the same time without interfering."""
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    rng = random.Random(7)
+    tx_bytes = [rng.randrange(256) for _ in range(3)]
+    rx_bytes = [rng.randrange(256) for _ in range(3)]
+    await load_program(dut, uart_full_duplex(BIT))
+    for byte in tx_bytes:
+        await push_tx(dut, byte)
+    await start_engine(dut)
+
+    async def stimulus():
+        # Start once the fabric is configured (TX start bit observed), then
+        # offset RX frames from TX frames by a non-multiple of BIT.
+        while bus.level(UART_TX_PIN):
+            await RisingEdge(dut.clk)
+        await ClockCycles(dut.clk, 37)
+        for byte in rx_bytes:
+            await send_frame(dut, bus, byte, BIT)
+
+    driver = cocotb.start_soon(stimulus())
+    received_tx = [await receive_frame(dut, bus, BIT) for _ in tx_bytes]
+    await driver
+    await ClockCycles(dut.clk, 4 * BIT)
+
+    # Each shifter owns a FIFO channel: RX bytes arrive on channel 1 only.
+    assert await rx_empty(dut)
+    await select_channel(dut, 1)
+    received_rx = []
+    while not await rx_empty(dut):
+        received_rx.append(await pop_rx(dut))
+    assert received_tx == tx_bytes
+    assert received_rx == rx_bytes
+
+
+@cocotb.test()
+async def test_fifo_channels_stream_independently(dut):
+    """Each shifter pulls its own FIFO channel: two transmitters at
+    different bit rates send their own byte streams at the same time."""
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    bits, pins = (BIT, BIT + 10), (UART_TX_PIN, 4)
+    rng = random.Random(11)
+    streams = [[rng.randrange(256) for _ in range(4)] for _ in range(2)]
+    await load_program(dut, uart_dual_transmit(bits, pins))
+    for channel in (1, 0):
+        await select_channel(dut, channel)
+        for byte in streams[channel]:
+            await push_tx(dut, byte)
+    await start_engine(dut)
+
+    async def listen(k):
+        return [await receive_frame(dut, bus, bits[k], pins[k]) for _ in streams[k]]
+
+    listeners = [cocotb.start_soon(listen(k)) for k in range(2)]
+    assert [await listener for listener in listeners] == streams
+
+
+@cocotb.test()
+async def test_burst_frames_words_without_inner_framing(dut):
+    """Burst mode: start bit, three bytes back to back, parity over the last
+    byte, stop bit. The transmitter's bit stream is checked bit by bit and
+    replayed into the receiver, which pushes each byte on its own and tags
+    the frame's last byte eop."""
+    await start_clock(dut)
+    await reset_top(dut)
+    bus = Bus(dut)
+    data = [0xA7, 0x3C, 0x01]
+    bits = [0]
+    for byte in data:
+        bits += [(byte >> i) & 1 for i in range(8)]
+    bits += [bin(data[-1]).count("1") & 1, 1]
+    await load_program(dut, framed_burst_loop(BIT, len(data)))
+    for byte in data:
+        await push_tx(dut, byte)
+    await start_engine(dut)
+
+    while bus.level(UART_TX_PIN):
+        await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, BIT // 2)
+    sent = []
+    for _ in bits:
+        sent.append(bus.level(UART_TX_PIN))
+        await ClockCycles(dut.clk, BIT)
+    assert sent == bits
+    for _ in range(3 * BIT):             # idle high after the stop bit
+        assert bus.level(UART_TX_PIN) == 1
+        await RisingEdge(dut.clk)
+
+    for level in bits + [1]:
+        bus.drive[UART_RX_PIN] = level
+        await ClockCycles(dut.clk, BIT)
+    await ClockCycles(dut.clk, 2 * BIT)
+    await select_channel(dut, 1)
+    assert await drain_rx_tagged(dut) == [(0xA7, False, False), (0x3C, False, False),
+                                          (0x01, True, False)]

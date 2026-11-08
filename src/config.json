@@ -28,7 +28,14 @@
 
   "//": "Hold slack margin - Increase them in case you are getting hold violations.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.05,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.1,
+
+  "//": "Setup margin and a post-route repair pass. Signoff gates only the typical",
+  "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
+  "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
+  "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
+  "RUN_POST_GRT_RESIZER_TIMING": 1,
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.0,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
@@ -54,13 +61,13 @@
         "pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_1024x8_c2_bm_bist.lef"
       ],
       "lib": {
-        "nom_*": [
+        "nom_typ_1p20V_25C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_typ_1p20V_25C.lib"
         ],
-        "min_*": [
+        "nom_fast_1p32V_m40C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_fast_1p32V_m55C.lib"
         ],
-        "max_*": [
+        "nom_slow_1p08V_125C": [
           "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_1024x8_c2_bm_bist_slow_1p08V_125C.lib"
         ]
       },
@@ -80,6 +87,11 @@
   "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only",
   "ROUTING_OBSTRUCTIONS": [
     ["Metal3", 174.0, 80.4, 189.4, 81.0]
+  ],
+
+  "// FP_OBSTRUCTIONS": "No cells in the strip left of the SRAM (x < 42, y 81-416): the only horizontal routing layer is Metal3, which the SRAM blocks, so their nets crossed it as shorts (d48031f: 275 cells, 33 shorts). From the die edge: a sliver of rows left at the core edge got its own partial power stripes, whose ends broke M4.a (02d0933: 4 errors)",
+  "FP_OBSTRUCTIONS": [
+    [0.0, 78.5, 42.0, 417.5]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",

@@ -1,0 +1,32 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+bmc: depth 190
+cover: mode cover
+cover: depth 190
+
+[engines]
+smtbmc boolector
+
+[script]
+read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v
+read -formal -sv vga_properties.sv
+prep -top vga_properties
+script prearm.ys
+
+[files]
+../../src/protocol_emulator_core.v
+../../src/px8_controller.v
+../../src/fabric_timer.v
+../../src/fabric_shifter.v
+../../src/fabric_counter.v
+../../src/fabric_crc.v
+../../src/fabric_logic.v
+../../src/byte_tile.v
+../../src/config_bank.v
+vga_properties.sv
+rom.vh vga_rom.vh
+prearm.ys vga_prearm.ys
