@@ -5,7 +5,8 @@ What the chip cannot do yet, and what is not yet measured.
 ## Protocol limits
 
 - **Two streams at once.** There are two shifters, so at most two serial
-  streams run at the same time.
+  streams run at the same time. Each can have its own CRC engine (there
+  are two), so a full-duplex framed link checks both directions.
 - **Words up to 16 bits.** Longer fields need burst mode, which works in
   whole words.
 - **Fast signals.** The fabric needs at least 2 clock cycles per half bit.
@@ -31,19 +32,19 @@ What the chip cannot do yet, and what is not yet measured.
   time. The SPI master pauses SCK between bytes and WS2812 lengthens a
   low time, both legal. A CAN frame, an I2S stream or a DMX512 packet
   that runs dry instead ends early. The host or the controller (streaming
-  from SRAM at 11 cycles a byte) has to keep ahead.
-- **CAN bus integration.** The receiver node takes the first edge after
-  arming as a start of frame. Joining a bus in the middle of someone
-  else's frame gives one bad packet; the CAN rule of waiting for 11
-  recessive bits needs a logic cell. The logic-cell node has none left;
-  the bit-coder node (`can_receive_coded`) frees one, but does not use it
-  for this yet.
-- **Resources.** The CAN receiver and the HDLC transmitter use all 8
-  logic cells; the CAN receiver also all 4 timers, both shifters and
-  counters, and the CRC. The shifters' bit coder takes stuffing, NRZI and
-  the CRC tail out of the logic cells: CAN transmit then needs none, USB
-  transmit 3 (see [protocols](protocols.md)). HDLC and 10BASE-T
-  (Manchester) do not use it yet. Counters are 8-bit and only count up: the
+  from SRAM at 11 cycles a byte) has to keep ahead; each FIFO holds 8
+  bytes.
+- **CAN.** The receiver nodes integrate into the bus (11 recessive bits
+  before a start of frame) but are receive-and-acknowledge only: no error
+  frames, error counters or arbitration as a transmitter.
+- **Resources.** The logic-cell versions of the CAN receiver, CAN, USB
+  and HDLC transmitters and the 10BASE-T link use all 8 logic cells. On
+  the shifters' bit coder (stuffing, NRZI, Manchester, the CRC tail) none
+  of them uses more than 7, or more than 1 counter (see
+  [protocols](protocols.md)); timers are the fullest now (4 of 4 in the
+  10BASE-T link and the 1-Wire master). The coder does not decode
+  Manchester: the 10BASE-T receiver recovers its clock with logic cells.
+  Counters are 8-bit and only count up: the
   quadrature decoder therefore sends each step to the host, which keeps
   the count, and VGA counts lines on the controller (the fabric still
   applies VSYNC on the line boundary).
@@ -65,11 +66,16 @@ What the chip cannot do yet, and what is not yet measured.
 
 ## Measured
 
-- **Timing and area** (`f43b69b`, the registered signal space): +2.61 ns
-  setup slack at the slow corner (1.08 V, 125 °C), +9.25 ns typical,
-  +0.069 ns hold at the fast corner; 561k µm² of standard cells at 67.7 %
-  utilization; DRC and LVS clean. Every protocol here is a program, so
+- **Timing and area, 8x4 tile** (`2945e58`, the bit coder): +2.81 ns
+  setup slack at the slow corner (1.08 V, 125 °C), +9.18 ns typical,
+  +0.088 ns hold at the fast corner; 52.6 % utilization of the 1,208k µm²
+  core; DRC, LVS and antenna clean; 26 max-slew and 15 max-cap warnings,
+  which a post-route repair pass now targets (`src/config.json`). The
+  edge cells, second CRC and 8-byte FIFOs add about 10 % more cells
+  (local synthesis), about 58 %. Every protocol here is a program, so
   none of them changes these numbers.
+- **On the 6x4 tile** (`016f736`, branch `arch/spatial`): +2.48 ns slow
+  corner, 67.8 % utilization.
 
 ## Compared with an embedded FPGA
 

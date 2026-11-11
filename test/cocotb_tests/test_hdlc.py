@@ -10,7 +10,8 @@ from cocotb_tests.fabric import (
     Bus, load_program, pop_rx_tagged, push_packet, select_channel, start_engine,
 )
 from cocotb_tests.protocols import (
-    HDLC_RXC, HDLC_RXD, HDLC_TXC, HDLC_TXD, hdlc_receive, hdlc_transmit,
+    HDLC_RXC, HDLC_RXD, HDLC_TXC, HDLC_TXD, hdlc_receive, hdlc_receive_coded, hdlc_transmit,
+    hdlc_transmit_coded,
 )
 
 FLAG = [0, 1, 1, 1, 1, 1, 1, 0]
@@ -106,13 +107,14 @@ async def capture(dut, bits: list[int], margins: list[int]) -> None:
         prev_clk = clk
 
 
-async def transmit(dut, bit_cycles: int, frames: list[bytes], wait_bits: int) -> list[int]:
+async def transmit(dut, bit_cycles: int, frames: list[bytes], wait_bits: int,
+                   coded: bool = False) -> list[int]:
     await start_clock(dut, 25)
     await reset_top(dut)
     bits: list[int] = []
     margins: list[int] = []
     cocotb.start_soon(capture(dut, bits, margins))
-    await load_program(dut, hdlc_transmit(bit_cycles))
+    await load_program(dut, (hdlc_transmit_coded if coded else hdlc_transmit)(bit_cycles))
     await start_engine(dut)
     await select_channel(dut, 1)
     for frame in frames:
@@ -125,29 +127,33 @@ async def transmit(dut, bit_cycles: int, frames: list[bytes], wait_bits: int) ->
 
 
 @cocotb.test()
-async def test_hdlc_tx_frames(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_tx_frames(dut, coded):
     """Frames with every awkward byte (flags, escapes, runs of 1s): exact
     flags, stuffing, bytes and FCS; only flags between frames."""
     rng = random.Random(3309)
     frames = [bytes([0x7E, 0x7D, 0xFF, 0x00]), bytes([0xFF] * 6), bytes([0x3C]),
               bytes(rng.randrange(256) for _ in range(9))]
-    bits = await transmit(dut, 10, frames, wait_bits=40 + sum(14 * (len(f) + 4) for f in frames))
+    bits = await transmit(dut, 10, frames, wait_bits=40 + sum(14 * (len(f) + 4) for f in frames),
+                          coded=coded)
     assert decode(bits) == frames
 
 
 @cocotb.test()
-async def test_hdlc_tx_fcs_ending_in_ones(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_tx_fcs_ending_in_ones(dut, coded):
     """Frames whose FCS ends in five 1s: the stuffed 0 goes before the
     closing flag."""
     hits = [bytes([a, b]) for a in range(256) for b in (0x00, 0x55)
             if lsb_bits(fcs16(bytes([a, b])).to_bytes(2, "little"))[-5:] == [1] * 5][:3]
     assert hits
-    bits = await transmit(dut, 16, hits, wait_bits=40 + 14 * 6 * len(hits))
+    bits = await transmit(dut, 16, hits, wait_bits=40 + 14 * 6 * len(hits), coded=coded)
     assert decode(bits) == hits
 
 
 @cocotb.test()
-async def test_hdlc_tx_slow_host(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_tx_slow_host(dut, coded):
     """Frames arriving at random times, some while the line idles with
     flags, some during the previous frame: every frame exact, and only
     whole flags between them."""
@@ -156,7 +162,7 @@ async def test_hdlc_tx_slow_host(dut):
     bits: list[int] = []
     margins: list = []
     cocotb.start_soon(capture(dut, bits, margins))
-    await load_program(dut, hdlc_transmit(12))
+    await load_program(dut, (hdlc_transmit_coded if coded else hdlc_transmit)(12))
     await start_engine(dut)
     await select_channel(dut, 1)
     rng = random.Random(1662)
@@ -170,7 +176,8 @@ async def test_hdlc_tx_slow_host(dut):
 
 
 @cocotb.test(timeout_time=2, timeout_unit="ms")
-async def test_hdlc_tx_arrival_sweep(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_tx_arrival_sweep(dut, coded):
     """One-byte frames, each pushed a different number of cycles after the
     previous one (a sweep across a whole flag), so the controller marks a
     frame pending at every point of the flag in progress: every frame
@@ -182,7 +189,7 @@ async def test_hdlc_tx_arrival_sweep(dut):
     bits: list[int] = []
     margins: list = []
     cocotb.start_soon(capture(dut, bits, margins))
-    await load_program(dut, hdlc_transmit(10))
+    await load_program(dut, (hdlc_transmit_coded if coded else hdlc_transmit)(10))
     await start_engine(dut)
     await select_channel(dut, 1)
     frames = [bytes([(0x11 * k) & 0xFF]) for k in range(1, 15)]
@@ -204,13 +211,14 @@ async def drive(dut, bus: Bus, bits: list[int], half: int) -> None:
         await ClockCycles(dut.clk, half)
 
 
-async def receive(dut, line: list[int], half: int = 3) -> list[tuple[bytes, bool]]:
+async def receive(dut, line: list[int], half: int = 3,
+                  coded: bool = False) -> list[tuple[bytes, bool]]:
     await start_clock(dut, 25)
     await reset_top(dut)
     bus = Bus(dut)
     bus.drive[HDLC_RXC] = 1
     bus.drive[HDLC_RXD] = 1
-    await load_program(dut, hdlc_receive())
+    await load_program(dut, hdlc_receive_coded() if coded else hdlc_receive())
     await start_engine(dut)
     await ClockCycles(dut.clk, 300)
     await select_channel(dut, 1)
@@ -235,7 +243,8 @@ async def receive(dut, line: list[int], half: int = 3) -> list[tuple[bytes, bool
 
 
 @cocotb.test()
-async def test_hdlc_rx_frames(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_rx_frames(dut, coded):
     """Good frames (flags shared or doubled, idle 1s between), a bad FCS and
     an abort: bytes and FCS reach the host, eop on the last, err exactly
     on the bad ones."""
@@ -251,7 +260,7 @@ async def test_hdlc_rx_frames(dut):
     line += FLAG + encode(good[2], bad_fcs=True) + FLAG
     line += FLAG + stuff(lsb_bits(b"\x12\x34\x56")) + [1] * 8        # abort
     line += FLAG + encode(good[2]) + FLAG
-    packets = await receive(dut, line)
+    packets = await receive(dut, line, coded=coded)
     bad = good[2] + bytes([(fcs16(good[2]) ^ 1) & 0xFF, fcs16(good[2]) >> 8])
     assert packets[0] == (with_fcs(good[0]), False), packets
     assert packets[1] == (with_fcs(good[1]), False), packets
@@ -262,11 +271,13 @@ async def test_hdlc_rx_frames(dut):
 
 
 @cocotb.test()
-async def test_hdlc_loopback(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_hdlc_loopback(dut, coded):
     """The transmitter's line, recorded, is a valid receiver input."""
     rng = random.Random(11)
     frames = [bytes(rng.randrange(256) for _ in range(rng.randrange(1, 8))) for _ in range(4)]
-    bits = await transmit(dut, 10, frames, wait_bits=40 + sum(14 * (len(f) + 4) for f in frames))
+    bits = await transmit(dut, 10, frames, wait_bits=40 + sum(14 * (len(f) + 4) for f in frames),
+                          coded=coded)
     assert decode(bits) == frames
-    packets = await receive(dut, bits)
+    packets = await receive(dut, bits, coded=coded)
     assert [p[0][:-2] for p in packets] == frames and not any(p[1] for p in packets)

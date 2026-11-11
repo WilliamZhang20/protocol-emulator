@@ -31,7 +31,7 @@ class Mutation:
 
 
 CORE_SOURCES = (
-    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
+    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_edge.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
 )
 
 MUTATIONS = (
@@ -129,7 +129,7 @@ MUTATIONS = (
     ),
     Mutation(
         "timer_hold_ignored", "fabric_timer", "fabric_timer.v",
-        "wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);",
+        "wire hold       = out_r && sync[12] && (levels[sync[11:7]] ^ sync[13]);",
         "wire hold       = 1'b0;",
         ("config_bank.v", "fabric_timer.v"), "fabric_timer_properties.sv", "fabric_timer_properties",
     ),
@@ -200,6 +200,26 @@ MUTATIONS = (
         "wire [2:0] run_b   = (start || burst_next) ?",
         ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_coder_properties.sv",
         "fabric_shifter_coder_properties",
+    ),
+    Mutation(
+        "manchester_mid_bit_no_flip", "fabric_shifter", "fabric_shifter.v",
+        "      out_r <= !out_r;",
+        "      out_r <= out_r;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_manchester_properties.sv",
+        "fabric_shifter_manchester_properties",
+    ),
+    Mutation(
+        "manchester_advances_every_tick", "fabric_shifter", "fabric_shifter.v",
+        "wire shift_raw  = shift_line && !half_tick;",
+        "wire shift_raw  = shift_line;",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_manchester_properties.sv",
+        "fabric_shifter_manchester_properties",
+    ),
+    Mutation(
+        "edge_qualifier_polarity_ignored", "fabric_edge", "fabric_edge.v",
+        "(levels[cfg[9:5]] ^ cfg[11])",
+        "levels[cfg[9:5]]",
+        ("fabric_edge.v",), "fabric_edge_properties.sv", "fabric_edge_properties",
     ),
     Mutation(
         "tile_escape_map_swapped", "byte_tile", "byte_tile.v",

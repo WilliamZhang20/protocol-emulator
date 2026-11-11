@@ -16,6 +16,7 @@ RTL_SOURCES := \
 	src/fabric_shifter.v \
 	src/fabric_counter.v \
 	src/fabric_crc.v \
+	src/fabric_edge.v \
 	src/fabric_logic.v \
 	src/byte_tile.v \
 	src/config_bank.v \

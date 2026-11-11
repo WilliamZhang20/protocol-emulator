@@ -21,18 +21,20 @@ def timer_rise(k: int) -> int: return 4 + 2 * k
 def timer_fall(k: int) -> int: return 5 + 2 * k
 def shifter_word(k: int) -> int: return 12 + 2 * k
 def shifter_stop(k: int) -> int: return 13 + 2 * k
-def pin_rise(p: int) -> int: return 16 + p
-def pin_fall(p: int) -> int: return 24 + p
+def edge_line(e: int) -> int: return 16 + e     # edge cell e (see Px8.rise/fall/edges)
+def counter_hit(k: int) -> int: return 24 + k
 def pin_level(p: int) -> int: return 32 + p
 def timer_out(k: int) -> int: return 40 + k
 def shifter_out(k: int) -> int: return 44 + k
 def shifter_active(k: int) -> int: return 46 + k
 def counter_ge(k: int) -> int: return 48 + k
-def counter_hit(k: int) -> int: return 50 + k
+def crc_out(c: int) -> int: return 52 - 2 * c
+def crc_ok(c: int) -> int: return 53 - 2 * c
 
 
-CRC_OUT = 52
-CRC_OK = 53
+CRC_OUT = crc_out(0)
+CRC_OK = crc_ok(0)
+EDGE_CELLS = 8
 
 
 def flag(n: int) -> int: return 54 + n
@@ -69,6 +71,8 @@ def rd_counter(k: int) -> int: return 5 + k
 
 RD_CRC_LO = 7
 RD_CRC_HI = 8
+RD_CRC1_LO = 11
+RD_CRC1_HI = 12
 
 # counter modes
 COUNT_STEPS, RUN_ONES, RUN_ZEROS, RUN_EQUAL = range(4)
@@ -120,6 +124,7 @@ class Px8:
         self.data_fixups: list[tuple[int, int, int]] = []   # (code at, op, data offset)
         self.pending: list[tuple[int, int]] = []
         self.tables: list[tuple[int, int]] = []         # (data offset, length)
+        self.edge_cells: list[int] = []                 # config word per cell
 
     def _flush(self) -> None:
         writes, self.pending = self.pending, []
@@ -231,6 +236,28 @@ class Px8:
         return image
 
     # ------------------------------------------------------------- fabric
+    def edge(self, pin: int, *, rise: bool, fall: bool, when: int | None = None,
+             when_low: bool = False) -> int:
+        """A pulse line for an edge of `pin` (rising, falling or both),
+        optionally only while level line `when` is high (`when_low`: low).
+        Allocates an edge cell; identical requests share one, and a program
+        that needs more than the chip has fails here, at assembly."""
+        assert 0 <= pin < 8 and (rise or fall)
+        word = pin | (int(rise) << 3) | (int(fall) << 4)
+        if when is not None:
+            word |= (_level(when) << 5) | (1 << 10) | (int(when_low) << 11)
+        if word in self.edge_cells:
+            return edge_line(self.edge_cells.index(word))
+        e = len(self.edge_cells)
+        assert e < EDGE_CELLS, f"program needs more than {EDGE_CELLS} edge cells"
+        self.edge_cells.append(word)
+        self.cfg(0x80 + e, word)
+        return edge_line(e)
+
+    def rise(self, pin: int, **when) -> int: return self.edge(pin, rise=True, fall=False, **when)
+    def fall(self, pin: int, **when) -> int: return self.edge(pin, rise=False, fall=True, **when)
+    def edges(self, pin: int, **when) -> int: return self.edge(pin, rise=True, fall=True, **when)
+
     def timer(self, k: int, *, reload: int, phase: int, start: int = ZERO,
               stop: int = ZERO, idle: int = 0, pulse: bool = False,
               resync: int | None = None, hold: int | None = None,
@@ -240,9 +267,10 @@ class Px8:
         self.cfg(base + 1, phase)
         sync = 0
         if resync is not None:
-            sync |= _level(resync) | (1 << 5)
+            assert 0 <= resync < 64
+            sync |= resync | (1 << 6)
         if hold is not None:
-            sync |= (_level(hold) << 6) | (1 << 11) | (int(hold_invert) << 12)
+            sync |= (_level(hold) << 7) | (1 << 12) | (int(hold_invert) << 13)
         self.cfg(base + 3, sync)
         self.cfg(base + 2, start | (stop << 6) | (idle << 12) | (int(pulse) << 13))
 
@@ -267,16 +295,21 @@ class Px8:
     def shifter_coder(self, k: int, *, stuff: int = 0, ones: bool = False,
                       nrzi: bool = False, rx: bool = False, sof: bool = False,
                       tail: int = 0, tail_invert: bool = False, strobe: bool = False,
-                      gate: int | None = None, skip: int = 0) -> None:
+                      gate: int | None = None, skip: int = 0,
+                      manchester: bool = False) -> None:
         """Bit coder between shifter k's frame and its line: insert (or,
         with `rx`, drop) a stuff bit after `stuff` equal bits (`ones`: 1s)
-        in a row, NRZI, and after the last word send `tail` bits from the
-        CRC tile (inverted with `tail_invert`). `sof` waits for the first
-        0; `gate` (a level) enables stuffing; the CRC link skips the first
-        `skip` frame bits; `strobe` makes the word line pulse per bit."""
-        assert 0 <= stuff < 8 and 0 <= tail < 64 and 0 <= skip < 32
+        in a row, NRZI or (transmit) Manchester, and after the last word
+        send `tail` bits from CRC tile k (inverted with `tail_invert`).
+        `sof` waits for the first 0; `gate` (a level) enables stuffing; the
+        CRC link skips the first `skip` frame bits; `strobe` makes the word
+        line pulse per bit. With `manchester` the shift line ticks every
+        half bit."""
+        assert 0 <= stuff < 8 and 0 <= tail < 64 and 0 <= skip < 128
+        assert not (manchester and (nrzi or rx))
         self.cfg(0x36 + k, stuff | (int(ones) << 3) | (int(nrzi) << 4) | (int(rx) << 5) |
-                 (int(sof) << 6) | (int(tail_invert) << 7) | (int(strobe) << 8) | (tail << 9))
+                 (int(sof) << 6) | (int(tail_invert) << 7) | (int(strobe) << 8) | (tail << 9) |
+                 (int(manchester) << 15))
         self.cfg(0x38 + k, (0 if gate is None else _level(gate) | (1 << 5)) | (skip << 6))
 
     def shifter_abort(self, k: int, line: int) -> None:
@@ -333,27 +366,31 @@ class Px8:
     def crc(self, *, width: int, poly: int, check: int, absorb: int = ZERO,
             data: int | None = None, emit: int = ZERO, init: int = ZERO,
             init_ones: bool = True, absorb_gate: int | None = None,
-            emit_gate: int | None = None, link: int | None = None) -> None:
-        """The register holds its init value until the fabric is armed;
-        `init` re-initializes it at runtime (e.g. between packets). A gate
-        level qualifies absorb or emit inside the tile, at no extra cycle.
-        With `link` = k, shifter k's bit coder supplies absorb, data and
-        emit directly (no lines; see shifter_coder)."""
+            emit_gate: int | None = None, link: int | None = None,
+            tile: int = 0) -> None:
+        """CRC tile 0 or 1 (lines crc_out(tile), crc_ok(tile)). The
+        register holds its init value until the fabric is armed; `init`
+        re-initializes it at runtime (e.g. between packets). A gate level
+        qualifies absorb or emit inside the tile, at no extra cycle. With
+        `link` = k, shifter k's bit coder supplies absorb, data and emit
+        directly (no lines; see shifter_coder). A coder's tail reads the
+        CRC tile with its own number."""
         assert (link is None) == (data is not None), "a CRC takes its data from lines or a link"
-        self.cfg(0x28, poly & 0xFFFF)
-        self.cfg(0x29, poly >> 16)
-        self.cfg(0x2A, check & 0xFFFF)
-        self.cfg(0x2B, check >> 16)
-        self.cfg(0x2E, (width - 1) | (int(init_ones) << 5) |
+        base = 0x28 if tile == 0 else 0x88
+        self.cfg(base + 0, poly & 0xFFFF)
+        self.cfg(base + 1, poly >> 16)
+        self.cfg(base + 2, check & 0xFFFF)
+        self.cfg(base + 3, check >> 16)
+        self.cfg(base + 6, (width - 1) | (int(init_ones) << 5) |
                  (0 if link is None else (1 << 6) | (link << 7)))
-        self.cfg(0x2D, emit | (_pulse(init) << 6))
-        self.cfg(0x2C, absorb | ((0 if data is None else _level(data)) << 6))
+        self.cfg(base + 5, emit | (_pulse(init) << 6))
+        self.cfg(base + 4, absorb | ((0 if data is None else _level(data)) << 6))
         gates = 0
         if absorb_gate is not None:
             gates |= _level(absorb_gate) | (1 << 5)
         if emit_gate is not None:
             gates |= (_level(emit_gate) << 6) | (1 << 11)
-        self.cfg(0x2F, gates)
+        self.cfg(base + 7, gates)
 
     def logic(self, k: int, table: int, inputs: list[int], *,
              start: int = 0, enable: int = ONE) -> None:
@@ -522,7 +559,7 @@ class Bus:
 
 
 async def drain_until_halted(dut, timeout_cycles: int = 60000) -> list[int]:
-    """The RX FIFO is 4 deep, so drain it while the program runs."""
+    """The RX FIFO is 8 deep, so drain it while the program runs."""
     received = []
     for _ in range(timeout_cycles // 8):
         await ClockCycles(dut.clk, 4)

@@ -18,7 +18,7 @@ from cocotb_tests.fabric import (
 from cocotb_tests.line_codes import bits_to_bytes, ethernet_fcs, lsb_bits
 from cocotb_tests.protocols import (
     ETH_FRAME_ADDR, ETH_RD, ETH_TD_N, ETH_TD_P, NLP_TICK, NLP_TICKS, TP_IDL_CYCLES,
-    ethernet_10baset_link, ethernet_10baset_receive,
+    ethernet_10baset_link, ethernet_10baset_link_coded, ethernet_10baset_receive,
 )
 
 CLOCK_NS = 25       # 40 MHz: one 10 Mb/s bit = 4 cycles
@@ -72,14 +72,15 @@ def levels(changes: list, first: int, last: int) -> tuple[list[int], list[int]]:
     return plus, minus
 
 
-async def run_session(dut, frame: bytes, nlp_tick: int = NLP_TICK) -> None:
+async def run_session(dut, frame: bytes, nlp_tick: int = NLP_TICK, coded: bool = False) -> None:
     """Run the link-session program on `frame` and check every pulse, bit,
     the FCS and TP_IDL on the pins."""
     period = nlp_tick * NLP_TICKS
     await start_clock(dut, CLOCK_NS)
     await reset_top(dut)
     stream = PREAMBLE + frame
-    await load_program(dut, ethernet_10baset_link(len(stream), nlp_tick))
+    link = ethernet_10baset_link_coded if coded else ethernet_10baset_link
+    await load_program(dut, link(len(stream), nlp_tick))
     await load_program(dut, list(stream), address=ETH_FRAME_ADDR)
     changes: list = []
     cocotb.start_soon(record_pins(dut, changes))
@@ -130,9 +131,11 @@ async def run_session(dut, frame: bytes, nlp_tick: int = NLP_TICK) -> None:
 
 
 @cocotb.test()
-async def test_10baset_link_session(dut):
-    """The real timing: link pulses exactly 16 ms apart around one frame."""
-    await run_session(dut, test_frame())
+@cocotb.parametrize(coded=[False, True])
+async def test_10baset_link_session(dut, coded):
+    """The real timing: link pulses exactly 16 ms apart around one frame
+    (coded: the shifter's Manchester coder and CRC tail)."""
+    await run_session(dut, test_frame(), coded=coded)
 
 
 def frame_with(payload: bytes) -> bytes:
@@ -149,15 +152,15 @@ FRAME_CASES = {
 
 
 @cocotb.test()
-@cocotb.parametrize(case=list(FRAME_CASES))
-async def test_10baset_frames(dut, case):
+@cocotb.parametrize(case=list(FRAME_CASES), coded=[False, True])
+async def test_10baset_frames(dut, case, coded):
     """Frame contents and lengths up to 400 payload bytes (the frame fills
     most of the SRAM after the program), with link pulses on a short tick:
     every bit, the FCS against zlib, TP_IDL and the pulses still check."""
     # The tick must outlast the frame: the program counts the next 16 ms
     # from the frame's end (true at the real 1.6 ms tick for any 802.3
     # frame, at most 1.2 ms long).
-    await run_session(dut, FRAME_CASES[case], nlp_tick=16000)
+    await run_session(dut, FRAME_CASES[case], nlp_tick=16000, coded=coded)
 
 
 # ---------------------------------------------------------------- receive

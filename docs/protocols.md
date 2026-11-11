@@ -23,7 +23,7 @@ symbolic FIFO bytes and pins (see [Verification](verification.md)).
 | --- | --- |
 | **USB low speed** send | NRZI, bit stuffing (also inside the checksum), CRC16, end of packet; every edge on the bit grid; empty, 1-byte and 8-byte payloads |
 | **USB low speed** receive | recovers the sender's clock (3% fast or slow, or jittery); removes stuffed bits; checks CRC16; detects a bad CRC |
-| **10BASE-T** send (40 MHz clock) | link pulses exactly 100 ns wide and 16 ms apart; frames of 46 to 400 payload bytes with exact 2-cycle half bits; the checksum equals `zlib.crc32` |
+| **10BASE-T** send (40 MHz clock) | link pulses exactly 100 ns wide and 16 ms apart; frames of 46 to 400 payload bytes with exact 2-cycle half bits; the checksum equals `zlib.crc32`; TP_IDL exactly 300 ns; all of it again on the bit coder's Manchester mode |
 | **10BASE-T** receive (40 MHz clock) | frames recovered bit-exact; a bad checksum tagged *err*; back-to-back frames; link pulses ignored |
 
 ## Others
@@ -32,7 +32,7 @@ symbolic FIFO bytes and pins (see [Verification](verification.md)).
 | --- | --- |
 | **PS/2** receive | 11-bit frames with odd parity, clocked by the device |
 | **PS/2** host | commands to a keyboard model (reset, set LEDs) with its ACKs and replies on the same two open-drain lines; every clock inhibit exactly 100 us (scaled) |
-| **CAN 2.0A** receive (node) | on a wired-AND bus with a reference transmitter: clock recovery on every dominant edge, destuffing, frames recovered bit-exact, CRC-15 checked in the fabric; good frames acknowledged for exactly their ACK slot, a bad one tagged *err* and not acknowledged; the whole fabric is one CAN node |
+| **CAN 2.0A** receive (node) | on a wired-AND bus with a reference transmitter: clock recovery on every dominant edge, destuffing, frames recovered bit-exact, CRC-15 checked in the fabric; good frames acknowledged for exactly their ACK slot, a bad one tagged *err* and not acknowledged; bus integration: a node started in the middle of another frame ignores it (no packet, no ACK) and receives the next; the whole fabric is one CAN node |
 | **CAN 2.0A** send | stuff bits after five equal bits, in the header, data and CRC-15, matching a reference bit for bit; every edge on the bit grid; random identifiers and 0–8 byte payloads |
 | **JTAG** master | TMS/TDI change only while TCK is low; against a full IEEE 1149.1 TAP state machine: IDCODE read, IR write, user register write and read back |
 | **SWD** host | line reset, JTAG-to-SWD switch, DP IDCODE read with ACK and parity, a SELECT write, a read back; turnarounds with no bus contention |
@@ -43,8 +43,8 @@ symbolic FIFO bytes and pins (see [Verification](verification.md)).
 | **WS2812 (NeoPixel)** | every bit period 1.25 us and every high time 0.4 / 0.8 us exactly, across a gapless strip; *proven* |
 | **DMX512** send | break >= 88 us, mark after break >= 8 us, every 8N2 slot on the bit grid; two packets |
 | **Async HDLC / PPP** over UART | escape bytes and delimiters on the wire; checksum added and checked |
-| **Synchronous HDLC** send | flags between frames (one flag closes a frame and opens the next), a 0 after every five 1s, the CRC-16/X.25 FCS against an independent implementation, TXD stable around every TXC rise; frames arriving at any time; *proven* to the bound in [Verification](verification.md), which reaches a frame's first byte but not its FCS |
-| **Synchronous HDLC** receive | every frame byte and FCS to the host, the last tagged *eop*, a bad FCS or an abort tagged *err*; shared and doubled flags, idle 1s; loopback from the sender; *proven* |
+| **Synchronous HDLC** send | flags between frames (one flag closes a frame and opens the next), a 0 after every five 1s, the CRC-16/X.25 FCS against an independent implementation, TXD stable around every TXC rise; frames arriving at any time; *proven* to the bound in [Verification](verification.md), which reaches a frame's first byte but not its FCS; on the bit coder too |
+| **Synchronous HDLC** receive | every frame byte and FCS to the host, the last tagged *eop*, a bad FCS or an abort tagged *err*; shared and doubled flags, idle 1s; loopback from the sender; *proven*; on the bit coder too |
 | **GPIO expander** (74HC595 + 74HC165 chains) | 24 outputs and 24 inputs: each update latches exactly its bytes after exactly 24 SRCLK edges, all outputs at once; inputs captured when the update starts, even if they then move; a slow or early host; *proven* (one chip of each) |
 | **Quadrature decoder** | every step of A/B, with its direction, as one byte to the host (which keeps the count, with no range limit); reversals, glitches, missed steps reported; *proven* |
 | **VGA** 640 x 480 | 31.25 kHz lines and 59.5 Hz frames at 50 MHz: every HSYNC and VSYNC edge and every 8-pixel cell checked on every cycle of a whole frame, black porches and blank lines; *proven* (small timing). From a frame buffer in SRAM too (`vga_framebuffer`, 80 x 60 cells in 600 bytes): every pixel checked against the stored image over a whole frame; *proven* for any image (small timing) |
@@ -88,11 +88,25 @@ on the bit coder, against the same reference models:
 | --- | --- | --- |
 | CAN transmit | 8 → 0 | 2 → 0 |
 | USB transmit | 8 → 3 | 2 → 0 |
-| USB receive | 6 → 2 | 1 → 0 |
+| USB receive | 5 → 1 | 1 → 0 |
 | CAN receive | 8 → 7 | 2 → 1 |
+| HDLC transmit | 8 → 4 | 2 → 0 |
+| HDLC receive | 2 → 1 | 2 → 1 |
+| 10BASE-T send | 8 → 3 | 2 → 0 |
 
 The CAN receiver also reports stuff errors, which the logic-cell version
-cannot see.
+cannot see. Both CAN receivers integrate into the bus (they wait for 11
+recessive bits before taking an edge as a start of frame) with one logic
+cell, using the end-of-frame timer they already have.
+
+[Edge cells](tiles.md#edge-cell) took over logic cells that only combined
+pin edges: "any edge of D+" in the USB receivers and the Modbus-style
+receiver, the CAN receivers' start-of-frame edge, and the I2C slave's
+START, STOP and either (3 cells; it now uses 5 of 8).
+
+What is full now: no bit-coder program uses more than 7 logic cells or 1
+counter; timers are the tightest (4 of 4 in the 10BASE-T link and the
+1-Wire master).
 
 ### 10BASE-T receive
 

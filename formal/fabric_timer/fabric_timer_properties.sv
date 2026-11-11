@@ -26,12 +26,12 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
   // Shadow configuration, programmed only while stopped and not starting.
   reg [15:0] reload_s = 16'd0, phase_s = 16'd0;
   reg [13:0] ctl_s = 14'd0;
-  reg [12:0] sync_s = 13'd0;
+  reg [13:0] sync_s = 14'd0;
   wire stop   = lines[ctl_s[11:6]];
   wire start  = lines[ctl_s[5:0]];
   wire [31:0] levels = lines[63:32];
-  wire resync = sync_s[5] && levels[sync_s[4:0]];
-  wire hold   = out && sync_s[11] && (levels[sync_s[10:6]] ^ sync_s[12]);
+  wire resync = sync_s[6] && lines[sync_s[5:0]];
+  wire hold   = out && sync_s[12] && (levels[sync_s[11:7]] ^ sync_s[13]);
 
   reg        r_run = 1'b0;
   reg        r_first = 1'b0;
@@ -45,7 +45,7 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n) begin
-      reload_s <= 16'd0; phase_s <= 16'd0; ctl_s <= 14'd0; sync_s <= 13'd0;
+      reload_s <= 16'd0; phase_s <= 16'd0; ctl_s <= 14'd0; sync_s <= 14'd0;
       r_run <= 1'b0; r_first <= 1'b0; r_since <= 17'd0;
     end else begin
       if (cfg_we) begin
@@ -53,7 +53,7 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
           2'd0: reload_s <= cfg_data;
           2'd1: phase_s  <= cfg_data;
           2'd2: ctl_s    <= cfg_data[13:0];
-          default: sync_s <= cfg_data[12:0];
+          default: sync_s <= cfg_data[13:0];
         endcase
       end
       if (!enable || stop) begin
@@ -106,7 +106,7 @@ module fabric_timer_properties (input wire clk);   // one solver step = one cloc
   always @(*) begin
     if (rst_n) begin
       cover(rise && !r_first && reload_s == 16'd3);
-      cover(fall && sync_s[12]);
+      cover(fall && sync_s[13]);
       cover(rise && r_first && phase_s == 16'd2 && reload_s == 16'd5);
     end
   end

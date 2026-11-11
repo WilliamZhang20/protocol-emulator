@@ -6,7 +6,7 @@ SBY ?= $(if $(wildcard $(EDA_BIN)/sby),$(EDA_BIN)/sby,sby)
 YOSYS ?= $(if $(wildcard $(EDA_BIN)/yosys),$(EDA_BIN)/yosys,yosys)
 BUILD_DIR ?= $(PROJECT_ROOT)/build/formal
 TARGETS := program_memory byte_fifo host_interface fabric_timer fabric_shifter \
-	fabric_counter fabric_crc fabric_logic byte_tile px8_controller fabric_core
+	fabric_counter fabric_crc fabric_edge fabric_logic byte_tile px8_controller fabric_core
 # Protocol proofs: the whole core running a real protocol program (the
 # bytes the cocotb tests load, assembled into protocols/<name>_rom.vh).
 PROTOCOLS := uart_tx ws2812 spi_master gpio_expander quadrature_decoder vga \
@@ -27,10 +27,11 @@ program_memory_TASKS := bmc prove cover
 byte_fifo_TASKS := bmc prove cover
 host_interface_TASKS := bmc prove cover
 fabric_timer_TASKS := bmc cover
-fabric_shifter_TASKS := bmc cover coder_bmc coder_cover
+fabric_shifter_TASKS := bmc cover coder_bmc coder_cover manch_bmc manch_cover
 fabric_counter_TASKS := bmc prove cover
 fabric_crc_TASKS := bmc prove cover
 fabric_logic_TASKS := bmc prove cover
+fabric_edge_TASKS := bmc prove cover
 byte_tile_TASKS := roundtrip checksum cover_roundtrip cover_checksum
 px8_controller_TASKS := bmc cover
 fabric_core_TASKS := bmc cover

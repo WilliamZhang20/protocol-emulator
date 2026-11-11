@@ -182,3 +182,46 @@ async def test_can_receive_coded_flags_stuff_error(dut):
         assert parse(stream) == (ident, data, True), stream.hex()
     assert packets[0][1], "a stuff error must tag the frame err"
     assert not packets[1][1], "the stuff error must not leak into the next frame"
+
+
+@cocotb.test()
+@cocotb.parametrize(coded=[False, True])
+async def test_can_receive_joins_bus_mid_frame(dut, coded):
+    """Bus integration: a node armed in the middle of someone else's frame
+    waits for 11 recessive bits. That frame yields no packet (not even a
+    bad one) and no ACK; the next frame is received and acknowledged."""
+    await start_clock(dut, 25)
+    await reset_top(dut)
+    bus = Bus(dut)
+    bus.drive[CAN_RX] = 1
+    rng = random.Random(77)
+    cases = [(0x3A5, bytes(rng.randrange(256) for _ in range(8))), (0x0F0, bytes([0x42, 0x24]))]
+    frames = [wire_frame(i, d) for i, d in cases]
+    await load_program(dut, (can_receive_coded if coded else can_receive)(BIT, SAMPLE))
+    await select_channel(dut, 1)
+    acks: list[list[int]] = []
+    # The first frame starts before the node is even started, and lasts
+    # well past the moment it arms.
+    driver = cocotb.start_soon(run_bus(dut, bus, frames, acks))
+    for _ in range(5 * BIT + 20 * BIT):
+        await RisingEdge(dut.clk)
+    await start_engine(dut)
+    entries = []
+    while not driver.done():
+        entry = await pop_rx_tagged(dut)
+        if entry is not None:
+            entries.append(entry)
+    await driver
+    entries += await drain_rx_tagged(dut)
+    packets, current = [], []
+    for byte, eop, err in entries:
+        current.append(byte)
+        if eop:
+            packets.append((bytes(current), err))
+            current = []
+    assert current == [], f"stray bytes: {bytes(current).hex()}"
+    assert len(packets) == 1, [(p[0].hex(), p[1]) for p in packets]
+    stream, err = packets[0]
+    assert parse(stream) == (cases[1][0], cases[1][1], True) and not err, stream.hex()
+    assert min(acks[0]) == 1, "acknowledged a frame it joined in the middle"
+    assert acks[1] == [0] * BIT, ("ACK slot", "".join(map(str, acks[1])))

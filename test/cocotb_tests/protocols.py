@@ -8,8 +8,8 @@ values absorb a fixed, documented latency.
 
 from cocotb_tests.fabric import (
     CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RD_PINS, RUN_EQUAL, RUN_ONES, RUN_ZEROS,
-    CRC_OK, Px8, counter_ge, counter_hit, fire, flag, logic, pin_fall, pin_level,
-    pin_rise, rd_counter, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
+    CRC_OK, Px8, counter_ge, counter_hit, fire, flag, logic, pin_level,
+    rd_counter, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
     shifter_stop, shifter_word, tile_event, timer_fall, timer_out, timer_rise, truth,
     tx_tile,
 )
@@ -40,9 +40,9 @@ def uart_full_duplex(bit_cycles: int) -> list[int]:
     # RX: a falling edge starts both the sampling timer (first tick in the
     # middle of the start bit, net of synchronizer latency) and the shifter.
     p.timer(1, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
-            start=pin_fall(UART_RX_PIN), stop=shifter_stop(1))
+            start=p.fall(UART_RX_PIN), stop=shifter_stop(1))
     p.shifter(1, pre=1, post=1, post_val=1, shift=timer_rise(1), sample=timer_rise(1))
-    p.shifter_io(1, start=pin_fall(UART_RX_PIN),
+    p.shifter_io(1, start=p.fall(UART_RX_PIN),
                  data_in=pin_level(UART_RX_PIN), push=True)
     p.shifter_io(0, pull=True)
     p.arm()
@@ -76,7 +76,7 @@ def framed_burst_loop(bit_cycles: int, words: int) -> list[int]:
     p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
             start=shifter_active(0), stop=shifter_stop(0))
     p.timer(1, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
-            start=pin_fall(UART_RX_PIN), stop=shifter_stop(1))
+            start=p.fall(UART_RX_PIN), stop=shifter_stop(1))
     for k in range(2):
         p.counter(k, match=words - 1, step=shifter_word(k))
         p.shifter_burst(k, end=counter_ge(k))
@@ -86,7 +86,7 @@ def framed_burst_loop(bit_cycles: int, words: int) -> list[int]:
               sample=timer_rise(1))
     p.pin_cell(UART_TX_PIN, src=shifter_out(0), mode=MODE_PUSH_PULL)
     p.shifter_io(0, pull=True)
-    p.shifter_io(1, start=pin_fall(UART_RX_PIN),
+    p.shifter_io(1, start=p.fall(UART_RX_PIN),
                  data_in=pin_level(UART_RX_PIN), push=True)
     p.arm()
     p.idle_forever()
@@ -104,10 +104,10 @@ def _uart_tx(p: Px8, k: int, bit_cycles: int, pin: int, **frame) -> None:
 
 def _uart_rx(p: Px8, k: int, timer: int, bit_cycles: int, pin: int, **frame) -> None:
     p.timer(timer, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
-            start=pin_fall(pin), stop=shifter_stop(k))
+            start=p.fall(pin), stop=shifter_stop(k))
     p.shifter(k, pre=1, post=1, post_val=1, shift=timer_rise(timer),
               sample=timer_rise(timer), **frame)
-    p.shifter_io(k, start=pin_fall(pin), data_in=pin_level(pin), push=True)
+    p.shifter_io(k, start=p.fall(pin), data_in=pin_level(pin), push=True)
 
 
 def uart_packet_link(bit_cycles: int, codes: tuple, *, prepend: bool,
@@ -147,19 +147,17 @@ def idle_framed_receiver(bit_cycles: int, gap_bits: int, address: int) -> list[i
     """Modbus-RTU-style receiver: packets are delimited by line idle time,
     and only packets whose first byte is `address` reach the host.
 
-    The bit layer finds the gaps: logic cell 0 marks every RX pin edge and
+    The bit layer finds the gaps: an edge cell marks every RX pin edge and
     restarts timer 2, which fires only after `gap_bits` without an edge.
     The byte layer packetizes on that event (TAG) and filters on the
     address (MATCH). The controller waits for the first match and then
     raises a pin through a flag line."""
     p = Px8()
     _uart_rx(p, 0, 1, bit_cycles, UART_RX_PIN)
-    edge = logic(0)
-    p.logic(0, truth(lambda r, f: r or f, 2),
-           [pin_rise(UART_RX_PIN), pin_fall(UART_RX_PIN)])
+    edge = p.edges(UART_RX_PIN)
     gap = gap_bits * bit_cycles
     p.timer(2, reload=gap - 1, phase=gap - 1, pulse=True,
-            start=pin_fall(UART_RX_PIN), resync=edge)
+            start=p.fall(UART_RX_PIN), resync=edge)
     p.tile_tag(rx_tile(0, 0), end=timer_rise(2))
     p.tile_match(rx_tile(0, 1), value=address)
     p.pin_cell(MODBUS_DONE_PIN, src=flag(0), mode=MODE_PUSH_PULL)
@@ -497,6 +495,7 @@ HDLC_FLAG = 0x7E
 HDLC_FCS_POLY = 0x1021        # CRC-16/X.25, fed in wire order
 HDLC_FCS_RESIDUE = 0x1D0F     # the register after a good frame's FCS
 HDLC_FLAG_CHECK = 0xA1F2      # ... and after the closing flag's first 7 bits
+HDLC_FLAG_CHECK_CODED = 0xD0F9    # ... its first 6 (the coder drops the 6th 1)
 
 
 def hdlc_transmit(bit_cycles: int, poly: int = HDLC_FCS_POLY) -> list[int]:
@@ -590,6 +589,94 @@ def hdlc_transmit(bit_cycles: int, poly: int = HDLC_FCS_POLY) -> list[int]:
     return p.assemble()
 
 
+def hdlc_transmit_coded(bit_cycles: int, poly: int = HDLC_FCS_POLY) -> list[int]:
+    """hdlc_transmit on shifter 0's bit coder: four logic cells and no
+    counters (hdlc_transmit: eight and two). The coder sends the frame
+    bytes, inserts a 0 after five 1s (in the FCS too, and after it when
+    due), sends the 16-bit FCS from CRC tile 0 as its tail and feeds that
+    CRC every frame bit over its link. Shifter 1 sends flags back to back
+    outside a frame (cell 1); cell 2 is "a frame is waiting or in flight",
+    from the controller's FIRE 0 to shifter 0's stop; a flag that ends
+    while it is set starts the bytes (cell 3), and their stop starts the
+    closing flag. Cell 0 (TXD) picks shifter 0 while it is active, else
+    shifter 1. Each flag's end re-initializes the CRC. The controller is
+    hdlc_transmit's."""
+    assert bit_cycles >= 8 and bit_cycles % 2 == 0
+    p = Px8()
+    tick = timer_rise(0)
+    a0 = shifter_active(0)
+    x, flags, frame, go = (logic(i) for i in range(4))
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 1, pulse=True, start=ONE)
+    # Every bit reaches TXD 3 cycles after its tick (shifter, cell 0, pin),
+    # the first data bit after a flag 5 (stop line, cell 3): TXC rises
+    # half-way through the window in between.
+    half = bit_cycles // 2
+    p.timer(1, reload=half - 1, phase=bit_cycles + (bit_cycles + 8) // 2 - 3, start=ONE)
+    p.logic(0, truth(lambda act0, so0, so1: so0 if act0 else so1, 3),
+           [a0, shifter_out(0), shifter_out(1)])
+    p.logic(1, truth(lambda done, in_frame: done or not in_frame, 2), [shifter_stop(0), frame])
+    p.logic(2, truth(lambda f0, done, q: f0 or (q and not done), 3),
+           [fire(0), shifter_stop(0), frame])
+    p.logic(3, truth(lambda s1, in_frame: s1 and in_frame, 2), [shifter_stop(1), frame])
+    p.crc(width=16, poly=poly, check=HDLC_FCS_RESIDUE, link=0, init=shifter_stop(1))
+    p.shifter(1, shift=tick)
+    p.shifter_data(1, HDLC_FLAG)
+    p.shifter_io(1, start=flags)
+    p.shifter(0, shift=tick)
+    p.shifter_burst(0, end=flag(1), on_eop=True)
+    p.shifter_io(0, start=go, pull=True)
+    p.shifter_coder(0, stuff=5, ones=True, tail=16)
+    p.pin_cell(HDLC_TXD, src=x, mode=MODE_PUSH_PULL)
+    p.pin_cell(HDLC_TXC, src=timer_out(1), mode=MODE_PUSH_PULL)
+    p.arm()
+    p.wev(shifter_word(1))          # the first flag (maybe partial) has gone
+    p.label("frame")
+    p.pull(1)
+    p.clrev()
+    p.label("copy")
+    p.c_from_a()
+    p.andc(0x100)                   # eop tag
+    p.jz("more")
+    p.a_from_c()
+    p.txp(0, eop=True)
+    p.fire(0)
+    p.wev(shifter_stop(0))          # the bytes and FCS have gone ...
+    p.wev(shifter_active(1))        # ... and the closing flag has started
+    p.j("frame")
+    p.label("more")
+    p.a_from_c()
+    p.txp(0)
+    p.fire(0)
+    p.pull(1)
+    p.j("copy")
+    return p.assemble()
+
+
+def hdlc_receive_coded(check: int = HDLC_FLAG_CHECK_CODED) -> list[int]:
+    """hdlc_receive on shifter 1's bit coder: one logic cell and one
+    counter (hdlc_receive: two and two). The coder drops the 0 after five
+    1s and links the CRC to every other bit; counter 1 still finds the
+    flag (six 1s), which aborts the partial byte. The closing flag's sixth
+    1 is a stuff violation to the coder, so it never reaches the CRC: the
+    flag check covers the flag's first 6 bits."""
+    p = Px8()
+    rise, d = p.rise(HDLC_RXC), pin_level(HDLC_RXD)
+    bad = logic(0)
+    p.counter(1, match=6, step=rise, data=d, mode=RUN_ONES)
+    p.timer(0, reload=1, phase=1, start=counter_hit(1), stop=timer_fall(0))
+    p.logic(0, truth(lambda r, f, ok, q: (not ok) if r else (q and not f)),
+           [timer_rise(0), timer_fall(0), CRC_OK, bad])
+    p.crc(width=16, poly=HDLC_FCS_POLY, check=check, link=1, init=timer_fall(0))
+    p.shifter(1, shift=rise, sample=rise)
+    p.shifter_io(1, start=ONE, data_in=d, push=True)
+    p.shifter_coder(1, stuff=5, ones=True, rx=True)
+    p.shifter_abort(1, counter_ge(1))
+    p.tile_tag(rx_tile(1, 0), end=timer_fall(0), err=bad)
+    p.arm()
+    p.idle_forever()
+    return p.assemble()
+
+
 def hdlc_receive(check: int = HDLC_FLAG_CHECK) -> list[int]:
     """Synchronous HDLC receiver on RXC and RXD: the bytes of each frame,
     FCS included, reach RX channel 1, the last tagged eop and err if the
@@ -606,7 +693,7 @@ def hdlc_receive(check: int = HDLC_FLAG_CHECK) -> list[int]:
     layer (TAG) and re-initializes the CRC, 6 cycles after the sixth 1:
     RXC may run at up to clk / 6."""
     p = Px8()
-    rise, d = pin_rise(HDLC_RXC), pin_level(HDLC_RXD)
+    rise, d = p.rise(HDLC_RXC), pin_level(HDLC_RXD)
     take, bad = logic(0), logic(1)
     p.logic(0, truth(lambda r, five, b: r and not (five and not b), 3),
            [rise, counter_ge(0), d])
@@ -678,7 +765,7 @@ class _I2c:
 
     def _configure_shifter(self, ninth: int) -> None:
         self.p.shifter(0, msb=True, post=1, post_val=ninth, idle=1,
-                       shift=self.step, sample=pin_rise(I2C_SCL))
+                       shift=self.step, sample=self.p.rise(I2C_SCL))
 
     def _condition(self, sda: list[int], scl: list[int]) -> None:
         """Play one half period per slot on both pins; SCL then rests at its
@@ -756,7 +843,7 @@ def ps2_receive() -> list[int]:
     synchronized CLK falling edge samples and advances one bit."""
     p = Px8()
     p.shifter(1, pre=1, post=1, post_val=1, parity=2,
-              shift=pin_fall(PS2_CLK), sample=pin_fall(PS2_CLK))
+              shift=p.fall(PS2_CLK), sample=p.fall(PS2_CLK))
     p.shifter_io(1, start=ONE, data_in=pin_level(PS2_DATA), push=True)
     p.arm()
     p.idle_forever()
@@ -889,12 +976,12 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     p.logic(2, truth(lambda e, st: e and not st, 2), [tick, counter_ge(0)])
     p.logic(3, truth(lambda dp, dm: not dp and not dm, 2),
            [pin_level(USB_DP), pin_level(USB_DM)])
-    p.logic(4, truth(lambda r, f: r or f, 2), [pin_rise(USB_DP), pin_fall(USB_DP)])
+    edge = p.edges(USB_DP)
     p.logic(5, truth(lambda e, st, f0: e and not st and f0, 3),
            [tick, counter_ge(0), flag(0)])
-    # Mid-bit sampling: sync (2) + pulse register (1) + resync (1) + tick.
-    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 3, pulse=True,
-            start=logic(4), resync=logic(4), stop=logic(3))
+    # Mid-bit sampling: sync (2) + edge pulse (1) + resync (1) + tick.
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
+            start=edge, resync=edge, stop=logic(3))
     p.counter(0, match=6, step=tick, data=logic(1), mode=RUN_ONES)
     p.crc(width=16, poly=USB_CRC16_POLY, check=USB_CRC16_RESIDUE,
           absorb=logic(5), data=logic(1))
@@ -920,17 +1007,16 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
 
 
 def usb_ls_receive_coded(bit_cycles: int) -> list[int]:
-    """usb_ls_receive on the shifter's bit coder: two logic cells (SE0 and
-    D+ edges for clock recovery) and no counter. The coder NRZI-decodes
-    D+, drops each stuffed 0, and links the CRC to every bit after SYNC
-    and PID."""
+    """usb_ls_receive on the shifter's bit coder: one logic cell (SE0),
+    one edge cell (any D+ edge, for clock recovery) and no counter. The
+    coder NRZI-decodes D+, drops each stuffed 0, and links the CRC to every
+    bit after SYNC and PID."""
     p = Px8()
-    tick, se0, edge = timer_rise(0), logic(0), logic(1)
+    tick, se0, edge = timer_rise(0), logic(0), p.edges(USB_DP)
     p.logic(0, truth(lambda dp, dm: not dp and not dm, 2),
             [pin_level(USB_DP), pin_level(USB_DM)])
-    p.logic(1, truth(lambda r, f: r or f, 2), [pin_rise(USB_DP), pin_fall(USB_DP)])
-    # Mid-bit sampling: sync (2) + pulse register (1) + resync (1) + tick.
-    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 3, pulse=True,
+    # Mid-bit sampling: sync (2) + edge pulse (1) + resync (1) + tick.
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 2, pulse=True,
             start=edge, resync=edge, stop=se0)
     p.shifter(1, shift=tick, sample=tick)
     p.shifter_io(1, start=ONE, data_in=pin_level(USB_DP), push=True)
@@ -1045,6 +1131,76 @@ def ethernet_10baset_link(frame_bytes: int, nlp_tick: int = NLP_TICK) -> list[in
     # ---- one frame
     p.flags(0b10)
     p.fire(0)
+    p.stream_sram_to_tx(ETH_FRAME_ADDR, ETH_FRAME_ADDR + frame_bytes)
+    p.wev(idl_done)
+    p.flags(0b00)
+    wait_16ms()
+    link_pulse()
+    p.halt()
+    program = p.assemble()
+    assert len(program) <= ETH_FRAME_ADDR, len(program)
+    return program
+
+
+def ethernet_10baset_link_coded(frame_bytes: int, nlp_tick: int = NLP_TICK) -> list[int]:
+    """ethernet_10baset_link on shifter 0's bit coder in Manchester mode:
+    three logic cells and no counters (ethernet_10baset_link: eight and
+    two). Timer 0 ticks every half bit; the coder sends each bit as its
+    complement then itself, gives the CRC every bit after the 64 of
+    preamble and SFD, and sends the 32-bit FCS from CRC tile 0 as its
+    tail. The burst ends when the TX FIFO runs dry, as before. TD+ is
+    the coder's line while it is active, then TP_IDL: high from the
+    shifter's stop (cell 0 covers the cycle cell 2 needs) until timer 3,
+    a one-shot, ends it. TD- is the complement while active, else low.
+    Link pulses and the controller are ethernet_10baset_link's."""
+    p = Px8()
+    p.write_contexts(3)
+    tick, act, stop = timer_rise(0), shifter_active(0), shifter_stop(0)
+    td_p, td_n, idl = logic(0), logic(1), logic(2)
+    idl_done = timer_rise(3)
+    # ---- frame datapath
+    p.timer(0, reload=1, phase=1, pulse=True, start=ONE)
+    p.shifter(0, shift=tick)
+    p.shifter_burst(0, end=flag(0))
+    p.shifter_io(0, start=tick, pull=True)
+    p.shifter_coder(0, manchester=True, tail=32, skip=64)
+    p.crc(width=32, poly=ETH_CRC32_POLY, check=ETH_CRC32_RESIDUE, link=0, init=fire(0))
+    p.logic(0, truth(lambda s, a, so, i: so if a else (s or i)), [stop, act, shifter_out(0), idl])
+    p.logic(1, truth(lambda a, so: a and not so, 2), [act, shifter_out(0)])
+    p.logic(2, truth(lambda s, done, q: (s or q) and not done, 3), [stop, idl_done, idl])
+    p.timer(3, reload=TP_IDL_CYCLES, phase=TP_IDL_CYCLES - 1, pulse=True,
+            start=stop, stop=idl_done)
+    # ---- link pulses
+    p.timer(1, reload=nlp_tick - 1, phase=nlp_tick - 1, pulse=True, start=ONE)
+    p.timer(2, reload=3, phase=0, idle=0, start=fire(1), stop=timer_fall(2))
+    p.write_contexts(1)
+    p.pin_cell(ETH_TD_P, src=timer_out(2), mode=MODE_PUSH_PULL)
+    p.pin_cell(ETH_TD_N, const=0, mode=MODE_PUSH_PULL)
+    p.write_contexts(2)
+    p.pin_cell(ETH_TD_P, src=td_p, mode=MODE_PUSH_PULL)
+    p.pin_cell(ETH_TD_N, src=td_n, mode=MODE_PUSH_PULL)
+    p.write_contexts(1)
+    p.context_select(flag(1))
+
+    def wait_16ms() -> None:
+        p.clrev()
+        for _ in range(NLP_TICKS):
+            p.wev(timer_rise(1))
+
+    def link_pulse() -> None:
+        p.clrev()
+        p.fire(1)
+        p.wev(timer_fall(2))
+
+    p.arm()
+    p.clrev()
+    p.wev(timer_rise(1))
+    link_pulse()
+    wait_16ms()
+    link_pulse()
+    p.flags(0b10)
+    p.fire(0)
+    p.clrev()
     p.stream_sram_to_tx(ETH_FRAME_ADDR, ETH_FRAME_ADDR + frame_bytes)
     p.wev(idl_done)
     p.flags(0b00)
@@ -1387,7 +1543,7 @@ def spi_slave() -> list[int]:
     cs_low = logic(0)
     p.logic(0, truth(lambda cs: not cs, 1), [pin_level(SPI_CS)])
     p.write_contexts(3)
-    p.shifter(0, msb=True, shift=pin_fall(SPI_SCK), sample=pin_rise(SPI_SCK))
+    p.shifter(0, msb=True, shift=p.fall(SPI_SCK), sample=p.rise(SPI_SCK))
     p.shifter_io(0, start=cs_low, data_in=pin_level(SPI_MOSI), pull=True, push=True)
     p.write_contexts(1)
     p.pin_cell(SPI_MISO, src=shifter_out(0), mode=MODE_PUSH_PULL)
@@ -1510,18 +1666,19 @@ def ps2_host(commands: list[tuple[int, int]], inhibit_cycles: int) -> list[int]:
     p.pin_cell(PS2_CLK, src=timer_out(1), mode=MODE_OPEN_DRAIN)
     p.pin_cell(PS2_DATA, src=shifter_out(0), mode=MODE_OPEN_DRAIN)
     p.shifter(0, pre=1, pre_val=0, parity=2, post=1, post_val=1, idle=1,
-              shift=pin_fall(PS2_CLK), sample=pin_fall(PS2_CLK))
+              shift=p.fall(PS2_CLK), sample=p.fall(PS2_CLK))
     p.shifter_io(0, start=fire(0), data_in=pin_level(PS2_DATA))
     p.shifter(1, pre=1, post=1, post_val=1, parity=2,
-              shift=pin_fall(PS2_CLK), sample=pin_fall(PS2_CLK))
+              shift=p.fall(PS2_CLK), sample=p.fall(PS2_CLK))
     p.shifter_io(1, start=ONE, data_in=pin_level(PS2_DATA), push=True)
+    clk_rise = p.rise(PS2_CLK)
     p.arm()
     for command, replies in commands:
         p.shifter_io(1)                  # the receiver stands aside
         p.shifter_data(0, command)
         p.clrev()
         p.fire(1)
-        p.wev(pin_fall(PS2_CLK))         # our own inhibit edge has passed
+        p.wev(p.fall(PS2_CLK))         # our own inhibit edge has passed
         p.fire(0)
         p.wev(shifter_stop(0))
         p.rd(rd_shifter_status(0))
@@ -1532,9 +1689,22 @@ def ps2_host(commands: list[tuple[int, int]], inhibit_cycles: int) -> list[int]:
         for _ in range(replies):
             p.wev(shifter_word(1))
         p.clrev()
-        p.wev(pin_rise(PS2_CLK))         # the device releases its last clock
+        p.wev(clk_rise)                  # the device releases its last clock
     p.halt()
     return p.assemble()
+
+
+def _can_integration(p: Px8, bit_cycles: int, edge: int, idle: int) -> None:
+    """Timer 3 is the end of frame: it fires once 11 bits pass without a
+    dominant edge, and stops itself. It runs from arming (start ONE, so it
+    restarts at once and fires every 11 bits on an idle bus, which ends
+    nothing: no packet is open), so its first firing is also bus
+    integration, which logic cell `idle` latches."""
+    eof = timer_rise(3)
+    p.timer(3, reload=11 * bit_cycles, phase=11 * bit_cycles + 1, pulse=True,
+            start=ONE, resync=edge, stop=eof)
+    k = idle - logic(0)
+    p.logic(k, truth(lambda t, q: t or q, 2), [eof, idle])
 
 
 def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
@@ -1544,7 +1714,7 @@ def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
     failed; a frame whose CRC checks is acknowledged in its ACK slot.
 
     Timer 0 samples `sample_at` cycles into each bit, resynchronized on
-    every recessive-to-dominant edge (logic cell 0). Counter 0 counts
+    every recessive-to-dominant edge (an edge cell). Counter 0 counts
     equal bits; after five, the next sample is a stuff bit and is not
     consumed (cell 1 is the consume pulse). Counter 1 counts consumed bits:
     its hit just before the DLC starts shifter 0, which captures the 4 DLC
@@ -1555,20 +1725,28 @@ def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
     and destuffing stops there; timer 2 times the ACK slot from the
     delimiter, and cell 4 drives it dominant only if the residue checks. Timer 3 ends the frame once 11 bits
     pass without a dominant edge (end of frame), which also re-initializes
-    the CRC and counters, and ends the packet in the byte layer. All eight
-    logic cells, all four timers, both shifters and counters, and the CRC:
-    the whole fabric is one CAN node."""
+    the CRC and counters, and ends the packet in the byte layer.
+
+    Bus integration (cell 0): the node takes an edge as a start of frame
+    only once it has seen 11 recessive bits, which timer 3 (running from
+    arming) already measures, so a node armed in the middle of someone
+    else's frame waits for its end instead of decoding it. All eight logic
+    cells, three timers, both shifters and counters, and the CRC."""
     assert bit_cycles - sample_at >= 8, "the ACK needs 8 cycles after the delimiter's sample"
     p = Px8()
     rx = pin_level(CAN_RX)
-    edge, consume, in_frame, crc_on, ack, past_dlc, ack_go, bad = (logic(i) for i in range(8))
+    idle, consume, in_frame, crc_on, ack, past_dlc, ack_go, bad = (logic(i) for i in range(8))
     tick, eof = timer_rise(0), timer_rise(3)
+    edge = p.fall(CAN_RX)
     stuff = counter_ge(0)
-    p.logic(0, truth(lambda f: f, 1), [pin_fall(CAN_RX)])
+    _can_integration(p, bit_cycles, edge, idle)
     # Destuffing stops after the CRC delimiter (the recessive tail is not
-    # stuffed), so the tail completes the frame's last byte.
-    p.logic(1, truth(lambda t, st, c: t and not (st and c), 3), [tick, stuff, crc_on])
-    p.logic(2, truth(lambda q, e, end: (q or e) and not end, 3), [in_frame, edge, eof])
+    # stuffed), so the tail completes the frame's last byte. Bits count
+    # only inside a frame (not while integrating).
+    p.logic(1, truth(lambda t, st, c, f: t and f and not (st and c)),
+            [tick, stuff, crc_on, in_frame])
+    p.logic(2, truth(lambda e, end, q, ok: (q or (e and ok)) and not end),
+            [edge, eof, in_frame, idle])
     # CRC on from SOF (the first edge of an idle bus) through the delimiter.
     p.logic(3, truth(lambda q, e, f, go: (q or (e and not f)) and not go),
             [crc_on, edge, in_frame, ack_go])
@@ -1579,11 +1757,9 @@ def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
             [past_dlc, shifter_stop(0), eof])
     p.logic(6, truth(lambda h, past: h and past, 2), [counter_hit(1), past_dlc])
     p.logic(7, truth(lambda c, f, ok: f and not c and not ok, 3), [crc_on, in_frame, CRC_OK])
-    # Sample point: edge on the wire + 2 (synchronizer) + 1 (pulse) + 1
-    # (cell 0) + resync + tick + pulse = phase + 6.
-    p.timer(0, reload=bit_cycles - 1, phase=sample_at - 6, pulse=True,
-            start=edge, resync=edge, stop=eof)
-    p.timer(3, reload=11 * bit_cycles, phase=11 * bit_cycles, pulse=True,
+    # Sample point: edge on the wire + 2 (synchronizer) + 1 (edge pulse)
+    # + resync + tick + pulse = phase + 5.
+    p.timer(0, reload=bit_cycles - 1, phase=sample_at - 5, pulse=True,
             start=edge, resync=edge, stop=eof)
     # ACK slot: the bit after the CRC delimiter; cell 6 fires sample_at + 3
     # cycles into the delimiter; timer 2's output follows its start by
@@ -1606,6 +1782,9 @@ def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
     p.label("frame")
     p.clrev()
     p.wev(shifter_stop(0))
+    # An end of frame from before this frame (one the node joined in the
+    # middle of, while integrating) must not end this one's wait below.
+    p.clrev()
     p.rd(rd_shifter_data(0))
     # delimiter = 35 + 8 * min(DLC, 8): DLC 8..15 have bit 3 set.
     p.andc(0x8)
@@ -1640,14 +1819,17 @@ def can_receive_coded(bit_cycles: int, sample_at: int) -> list[int]:
     equal bits, while the CRC is on), flags a stuff error, links the CRC
     and pulses its word line once per destuffed bit, which counter 1 and
     the DLC shifter use. That frees counter 0 and a logic cell (the
-    consume pulse); the rest of the node is can_receive's."""
+    consume pulse), and bits count only inside a frame by construction;
+    the rest of the node, bus integration included, is can_receive's."""
     assert bit_cycles - sample_at >= 8, "the ACK needs 8 cycles after the delimiter's sample"
     p = Px8()
     rx = pin_level(CAN_RX)
-    edge, in_frame, crc_on, ack, past_dlc, ack_go, bad = (logic(i) for i in range(7))
+    idle, in_frame, crc_on, ack, past_dlc, ack_go, bad = (logic(i) for i in range(7))
     tick, eof, bit = timer_rise(0), timer_rise(3), shifter_word(1)
-    p.logic(0, truth(lambda f: f, 1), [pin_fall(CAN_RX)])
-    p.logic(1, truth(lambda q, e, end: (q or e) and not end, 3), [in_frame, edge, eof])
+    edge = p.fall(CAN_RX)
+    _can_integration(p, bit_cycles, edge, idle)
+    p.logic(1, truth(lambda e, end, q, ok: (q or (e and ok)) and not end),
+            [edge, eof, in_frame, idle])
     p.logic(2, truth(lambda q, e, f, go: (q or (e and not f)) and not go),
             [crc_on, edge, in_frame, ack_go])
     p.logic(3, truth(lambda a, ok: not (a and ok), 2), [timer_out(2), CRC_OK], start=1)
@@ -1658,9 +1840,7 @@ def can_receive_coded(bit_cycles: int, sample_at: int) -> list[int]:
     # Shifter 1 samples on the tick itself, a cycle before can_receive's
     # consume pulse; its bit pulse (the word line) lands where that pulse
     # did, so counter 1, the DLC shifter and the ACK keep their timing.
-    p.timer(0, reload=bit_cycles - 1, phase=sample_at - 6, pulse=True,
-            start=edge, resync=edge, stop=eof)
-    p.timer(3, reload=11 * bit_cycles, phase=11 * bit_cycles, pulse=True,
+    p.timer(0, reload=bit_cycles - 1, phase=sample_at - 5, pulse=True,
             start=edge, resync=edge, stop=eof)
     p.timer(2, reload=bit_cycles - 1, phase=bit_cycles - sample_at - 8, idle=0,
             start=ack_go, stop=timer_fall(2))
@@ -1679,6 +1859,7 @@ def can_receive_coded(bit_cycles: int, sample_at: int) -> list[int]:
     p.label("frame")
     p.clrev()
     p.wev(shifter_stop(0))
+    p.clrev()                            # see can_receive
     p.rd(rd_shifter_data(0))
     p.andc(0x8)
     p.jz("small")
@@ -1715,29 +1896,30 @@ def i2c_slave(address: int) -> list[int]:
     0 bytes until the master answers NACK. Other addresses are not
     acknowledged and never driven.
 
-    Logic cells: 0 START and 1 STOP (SDA falling / rising while SCL is
-    high), 2 in a transaction, 3 the ACK window (loaded at every SCL fall:
-    true from the fall after a byte's 8th bit to the fall after the 9th),
-    4 the SDA driver, 5 START or STOP, 6 a byte boundary (START or the 9th
-    rising edge), 7 the read phase (the controller's flag 1, taken at an
-    SCL fall so SDA never moves while SCL is high). Counter 0 counts SCL
+    Edge cells give START, STOP and either (SDA falling, rising or both
+    while SCL is high). Logic cells: 2 in a transaction, 3 the ACK window
+    (loaded at every SCL fall: true from the fall after a byte's 8th bit to
+    the fall after the 9th), 4 the SDA driver, 6 a byte boundary (START or
+    the 9th rising edge), 7 the read phase (the controller's flag 1, taken
+    at an SCL fall so SDA never moves while SCL is high); 0, 1 and 5 are
+    free. Counter 0 counts SCL
     falls and counter 1 rises within a byte; timer 1 turns cell 6 into the
     pulse that clears them. Shifter 1 receives every byte (8 bits and the
     ACK bit, on SCL rising edges); shifter 0 sends during reads (changing
     after SCL falls, releasing for the master's ACK bit). The controller
     compares the address while SCL is high after its 8th bit."""
-    scl_rise, scl_fall = pin_rise(I2C_SCL), pin_fall(I2C_SCL)
-    start, stop, in_txn, ack_win, sda_out, start_stop, boundary, read_eff = (
-        logic(i) for i in range(8))
-    matched, reading = flag(0), flag(1)
     p = Px8()
-    p.logic(0, truth(lambda f, scl: f and scl, 2), [pin_fall(I2C_SDA), pin_level(I2C_SCL)])
-    p.logic(1, truth(lambda r, scl: r and scl, 2), [pin_rise(I2C_SDA), pin_level(I2C_SCL)])
+    scl_rise, scl_fall = p.rise(I2C_SCL), p.fall(I2C_SCL)
+    scl_high = pin_level(I2C_SCL)
+    start = p.fall(I2C_SDA, when=scl_high)
+    stop = p.rise(I2C_SDA, when=scl_high)
+    start_stop = p.edges(I2C_SDA, when=scl_high)
+    in_txn, ack_win, sda_out, boundary, read_eff = (logic(i) for i in (2, 3, 4, 6, 7))
+    matched, reading = flag(0), flag(1)
     p.logic(2, truth(lambda q, s, e: (q or s) and not e, 3), [in_txn, start, stop])
     p.logic(3, truth(lambda ge: ge, 1), [counter_ge(0)], enable=scl_fall)
     p.logic(4, truth(lambda w, m, rd, so: (not (w and m and not rd)) and (not rd or so)),
             [ack_win, matched, read_eff, shifter_out(0)], start=1)
-    p.logic(5, truth(lambda s, e: s or e, 2), [start, stop])
     p.logic(6, truth(lambda w, s: w or s, 2), [shifter_word(1), start])
     p.logic(7, truth(lambda r: r, 1), [reading], enable=scl_fall)
     p.timer(1, reload=3, phase=0, pulse=True, start=boundary, stop=timer_rise(1))

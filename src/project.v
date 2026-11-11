@@ -46,7 +46,7 @@ module tt_um_protocol_emulator (
   wire [19:0] tx_pop_data;
   wire [1:0] tx_empty;
   wire [1:0] tx_full;
-  wire [5:0] tx_level;
+  wire [7:0] tx_level;              // channel k: [4k +: 4], 0-8
 
   wire [1:0] rx_push;
   wire [19:0] rx_push_data;
@@ -55,7 +55,12 @@ module tt_um_protocol_emulator (
   wire [9:0]  host_rx_entry = host_channel ? rx_pop_data[19:10] : rx_pop_data[9:0];
   wire [1:0] rx_empty;
   wire [1:0] rx_full;
-  wire [5:0] rx_level;
+  wire [7:0] rx_level;
+  // The host's level command has 3 bits per FIFO: an 8-deep FIFO reads 7
+  // when it holds 7 or 8 (tx_full and rx_empty in the same reply are exact).
+  function automatic [2:0] level3(input [3:0] level);
+    level3 = level[3] ? 3'd7 : level[2:0];
+  endfunction
 
   host_interface host (
       .clk(clk),
@@ -74,11 +79,11 @@ module tt_um_protocol_emulator (
       .tx_push(host_tx_push),
       .tx_push_data(host_tx_push_data),
       .tx_full(tx_full[host_channel]),
-      .tx_level(host_channel ? tx_level[5:3] : tx_level[2:0]),
+      .tx_level(level3(host_channel ? tx_level[7:4] : tx_level[3:0])),
       .rx_pop(host_rx_pop),
       .rx_pop_data(host_rx_entry),
       .rx_empty(rx_empty[host_channel]),
-      .rx_level(host_channel ? rx_level[5:3] : rx_level[2:0]),
+      .rx_level(level3(host_channel ? rx_level[7:4] : rx_level[3:0])),
       .engine_halted(engine_halted)
   );
 
@@ -105,7 +110,9 @@ module tt_um_protocol_emulator (
   genvar k;
   generate
     for (k = 0; k < 2; k = k + 1) begin : channel
-      byte_fifo #(.WIDTH(10)) tx_fifo (
+      // 8 entries a direction: two words of slack for 32-bit-word bursts
+      // and for a host that services the link every few bytes.
+      byte_fifo #(.DEPTH(8), .ADDRESS_WIDTH(3), .WIDTH(10)) tx_fifo (
           .clk(clk),
           .rst_n(internal_rst_n),
           .push(tx_push[k]),
@@ -114,10 +121,10 @@ module tt_um_protocol_emulator (
           .pop_data(tx_pop_data[10*k +: 10]),
           .empty(tx_empty[k]),
           .full(tx_full[k]),
-          .level(tx_level[3*k +: 3])
+          .level(tx_level[4*k +: 4])
       );
 
-      byte_fifo #(.WIDTH(10)) rx_fifo (
+      byte_fifo #(.DEPTH(8), .ADDRESS_WIDTH(3), .WIDTH(10)) rx_fifo (
           .clk(clk),
           .rst_n(internal_rst_n),
           .push(rx_push[k]),
@@ -126,7 +133,7 @@ module tt_um_protocol_emulator (
           .pop_data(rx_pop_data[10*k +: 10]),
           .empty(rx_empty[k]),
           .full(rx_full[k]),
-          .level(rx_level[3*k +: 3])
+          .level(rx_level[4*k +: 4])
       );
     end
   endgenerate

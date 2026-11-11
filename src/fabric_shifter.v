@@ -26,9 +26,9 @@
 //            of equal bits)  [4] NRZI  [5] code the received bits (else
 //            the transmitted ones)  [6] arm at the first 0
 //            [7] invert tail bits  [8] word line pulses every frame bit
-//            [14:9] tail length
+//            [14:9] tail length  [15] Manchester (transmit)
 //   6 coder  [4:0] stuffing gate level (signal space 32-63)  [5] gated
-//            [10:6] frame bits not given to the CRC link
+//            [12:6] frame bits not given to the CRC link
 //
 // Bit coder (registers 5 and 6; all zero: off). It codes the bit stream
 // between the frame and the pin, so the stuffing, NRZI and CRC-sequencing
@@ -53,6 +53,11 @@
 //   sampled, never a stuff or tail bit), from the arming 0 on and after
 //   the first `register 6 [10:6]` such bits, and steps it once per tail
 //   bit, over a direct registered link (the CRC tile selects it).
+// - Manchester (transmit, not with NRZI). The shift line ticks every half
+//   bit: each bit goes out as its complement, then (at the half-bit tick)
+//   as itself, so a 1 is low-high (IEEE 802.3) and every bit has a mid-bit
+//   transition. Only the second tick of a bit advances the frame, so
+//   stuffing, the tail and the CRC link work per bit as above.
 // - Bit strobe. With [8] the word line pulses for every frame bit instead
 //   of every word (an RX bit counter for CAN); FIFO pushes stay per word.
 // A receiving coder needs the shift and sample lines to be the same.
@@ -117,8 +122,8 @@ module fabric_shifter (
   wire [11:0] step;
   wire [12:0] io;
   wire [12:0] burst;
-  wire [14:0] coder;
-  wire [10:0] coder2;
+  wire [15:0] coder;
+  wire [12:0] coder2;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
   reg        par_cap, post_wrong;    // RX framing check (see below)
@@ -156,13 +161,15 @@ module fabric_shifter (
   wire       tail_inv   = coder[7];
   wire       bit_strobe = coder[8];
   wire [5:0] tail_n     = coder[14:9];
-  wire [4:0] skip_n     = coder2[10:6];
+  wire       manch      = coder[15] && !coder[5];
+  wire [6:0] skip_n     = coder2[12:6];
 
   // Coder state.
   reg [2:0] run_len;     // equal bits (or ones) in a row, saturating
   reg       cur_bit;     // last coded bit, before NRZI
   reg       armed;       // stuffing and CRC link active
-  reg [4:0] skip_left;   // frame bits still kept from the CRC link
+  reg [6:0] skip_left;   // frame bits still kept from the CRC link
+  reg       mid;         // Manchester: the bit's second half is on the line
   reg       stuffing;    // TX: the current bit is a stuff bit
   reg       tailing;     // TX: the frame is sending its tail
   reg [5:0] tail_left;   // tail bits after the current one
@@ -222,7 +229,10 @@ module fabric_shifter (
   wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;
 
   wire [31:0] levels = lines[63:32];
-  wire shift_raw  = active_r && lines[step[5:0]];
+  wire shift_line = active_r && lines[step[5:0]];
+  // Manchester: the first half-bit tick of a bit only flips the line.
+  wire half_tick  = manch && shift_line && !lead_wait && !mid;
+  wire shift_raw  = shift_line && !half_tick;
   wire sample_raw = active_r && lines[step[11:6]] && !lead_wait;
   // A stuff bit is due once the run is long enough; a transmitter sends
   // it at this boundary instead of advancing, a receiver drops this
@@ -302,11 +312,11 @@ module fabric_shifter (
   config_bank #(.WIDTH(13)) burst_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
       .ctx_next(ctx_next), .value(burst), .next());
-  config_bank #(.WIDTH(15)) coder_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 3'd5), .write_bank(cfg_bank), .data(cfg_data[14:0]),
+  config_bank #(.WIDTH(16)) coder_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd5), .write_bank(cfg_bank), .data(cfg_data),
       .ctx_next(ctx_next), .value(coder), .next());
-  config_bank #(.WIDTH(11)) coder2_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 3'd6), .write_bank(cfg_bank), .data(cfg_data[10:0]),
+  config_bank #(.WIDTH(13)) coder2_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd6), .write_bank(cfg_bank), .data(cfg_data[12:0]),
       .ctx_next(ctx_next), .value(coder2), .next());
 
   // The output is a register so downstream logic cells and tiles start their
@@ -321,9 +331,10 @@ module fabric_shifter (
   wire bit_next  = frame_bit_at(index + 5'd1, tx_word);
   wire bit_hold  = frame_bit_at(index, tx_word);
   wire bit_tail  = crc_in ^ tail_inv;
-  // NRZI: a 0 toggles the line, a 1 keeps it.
+  // NRZI: a 0 toggles the line, a 1 keeps it. Manchester: the first half
+  // of a bit is its complement.
   function automatic line_for(input b);
-    line_for = nrzi_tx ? (out_r ^ !b) : b;
+    line_for = nrzi_tx ? (out_r ^ !b) : (b ^ manch);
   endfunction
   always @(posedge clk) begin
     if (!rst_n)
@@ -334,13 +345,15 @@ module fabric_shifter (
       out_r <= line_for(bit_burst);
     else if (!active_r || done || !run)
       out_r <= idle_next;
+    else if (half_tick)
+      out_r <= !out_r;
     else if (stuff_tx)
       out_r <= line_for(!cur_bit);
     else if (tail_step)
       out_r <= line_for(bit_tail);
     else if (advance)
       out_r <= line_for(bit_next);
-    else if (!nrzi_tx && !stuffing && !tailing)
+    else if (!nrzi_tx && !manch && !stuffing && !tailing)
       out_r <= bit_hold;
   end
 
@@ -363,7 +376,7 @@ module fabric_shifter (
   assign word_pulse = bit_strobe ? bit_taken : word_end;
   wire [2:0] run_b   = fresh ? 3'd0 : run_len;
   wire       armed_b = fresh ? !sof_arm : armed;
-  wire [4:0] skip_b  = fresh ? skip_n : skip_left;
+  wire [6:0] skip_b  = fresh ? skip_n : skip_left;
   wire [2:0] run_inc = run_b == 3'd7 ? 3'd7 : run_b + 3'd1;
   // A stuff position always restarts the run, as a correct stuff bit
   // would (a wrong one is flagged, and the stream stays in step).
@@ -378,7 +391,8 @@ module fabric_shifter (
       run_len      <= 3'd0;
       cur_bit      <= 1'b0;
       armed        <= 1'b0;
-      skip_left    <= 5'd0;
+      skip_left    <= 7'd0;
+      mid          <= 1'b0;
       stuffing     <= 1'b0;
       tailing      <= 1'b0;
       tail_left    <= 6'd0;
@@ -404,8 +418,8 @@ module fabric_shifter (
         if (stuff_bad)
           stuff_err <= 1'b1;
         if (!coded_stuff && !tail_step && armed_new) begin
-          if (skip_b != 5'd0) begin
-            skip_left <= skip_b - 5'd1;
+          if (skip_b != 7'd0) begin
+            skip_left <= skip_b - 7'd1;
           end else begin
             crc_absorb_r <= 1'b1;
             crc_bit_r    <= coded_bit;
@@ -414,6 +428,10 @@ module fabric_shifter (
       end
       if (sample_raw && nrzi_rx)
         prev_in <= in_line;
+      if (half_tick)
+        mid <= 1'b1;
+      else if (tx_evt || !active_r || done || !run)
+        mid <= 1'b0;
       // Transmit phase: a stuff bit or the tail is on the line.
       if (tx_evt || !active_r || done || !run)
         stuffing <= stuff_tx;

@@ -83,8 +83,9 @@ For `PULL`, `PUSH` and `TXP`, operand bit 4 picks the FIFO channel; for
 | 1, 3 | shifter 0 / 1 received word |
 | 2, 4 | shifter 0 / 1 status |
 | 5, 6 | counter 0 / 1 count |
-| 7, 8 | CRC low / high 16 bits |
+| 7, 8 | CRC 0 low / high 16 bits |
 | 9, 10 | remembered events |
+| 11, 12 | CRC 1 low / high 16 bits |
 
 ## Special configuration addresses
 
@@ -94,5 +95,7 @@ For `PULL`, `PUSH` and `TXP`, operand bit 4 picks the FIFO channel; for
 | `0x31` | arm the fabric |
 | `0x34`, `0x35` | [contexts](contexts.md): select line, which contexts writes go to |
 | `0x36`–`0x39` | shifter [bit coder](tiles.md#bit-coder) registers: `0x36 + k` (register 5), `0x38 + k` (register 6) |
+| `0x80`–`0x87` | [edge cells](tiles.md#edge-cell) |
+| `0x88`–`0x8F` | [CRC](tiles.md#crc) 1 (CRC 0 is `0x28`–`0x2F`) |
 
 Next: [Host link](host-link.md).

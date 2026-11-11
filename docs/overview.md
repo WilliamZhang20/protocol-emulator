@@ -43,6 +43,7 @@ From the pins inwards:
    - turn bytes into bits and back (shifters);
    - count things (counters);
    - compute checksums (CRC);
+   - pick out pin edges (edge cells);
    - do small bits of logic (logic cells);
    - drive the pins (pin cells).
 
@@ -50,7 +51,7 @@ From the pins inwards:
 2. **Byte layer.** Blocks that work on whole bytes. They sit between the
    shifters and the FIFOs, and handle things like escape bytes, checksums
    and filtering packets. See [Byte layer](byte-layer.md).
-3. **FIFOs.** Small queues (4 bytes each) between the chip and the host.
+3. **FIFOs.** Small queues (8 bytes each) between the chip and the host.
    There are two channels, one per shifter, each with a transmit (TX) and
    a receive (RX) queue.
 4. **Controller (PX8).** A tiny processor that runs the program from SRAM.
@@ -85,11 +86,12 @@ The controller did nothing after step 3. That is the whole idea.
 | Timers | 4 |
 | Shifters | 2 |
 | Counters | 2 |
-| CRC engine | 1 |
+| CRC engines | 2 |
 | Logic cells (4-input lookup table + flip-flop) | 8 |
+| Edge cells (pin edge detectors) | 8 |
 | Pin cells | 8 |
 | Byte tiles | 8 |
-| FIFO channels (TX + RX, 4 bytes each) | 2 |
+| FIFO channels (TX + RX, 8 bytes each) | 2 |
 | SRAM | 1 KB |
 
 Next: [Signal space](signal-space.md).

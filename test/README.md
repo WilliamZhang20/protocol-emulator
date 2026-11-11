@@ -81,10 +81,14 @@ two-bit SE0, J, and every transition on the 33-cycle bit grid). It also
 receives packets from a sender running 3% slow (clock recovery) and checks
 the CRC16 residue verdict for good and corrupted packets.
 
-`test_usb.py`, `test_can.py` and `test_can_rx.py` run every case twice
+`test_usb.py`, `test_can.py`, `test_can_rx.py`, `test_hdlc.py` and the
+10BASE-T send tests in `test_ethernet.py` run every case twice
 (`coded=False/True`): once with the logic-cell program and once with the
-shifter's bit coder doing the stuffing, NRZI and CRC tail
+shifter's bit coder doing the stuffing, NRZI or Manchester and CRC tail
 (`*_coded` in `protocols.py`), against the same reference models.
+`test_can_receive_joins_bus_mid_frame` starts the node in the middle of a
+long frame: it must ignore that frame (no packet, no ACK) and receive and
+acknowledge the next one (bus integration).
 `test_can_receive_coded_flags_stuff_error` sends a frame whose first stuff
 bit repeats the five before it; the destuffed bytes and the CRC are still
 the frame's, so only the coder's stuff check can tag it err (and the next

@@ -5,7 +5,8 @@ configuration registers (instruction `WCF`, or a block load `CFG`). Every
 field that says "line" is a number from the [signal space](signal-space.md).
 
 Contents: [Timer](#timer) · [Shifter](#shifter) · [Counter](#counter) ·
-[CRC](#crc) · [Logic cell](#logic-cell) · [Pin cell](#pin-cell)
+[CRC](#crc) · [Logic cell](#logic-cell) · [Edge cell](#edge-cell) ·
+[Pin cell](#pin-cell)
 
 ---
 
@@ -18,8 +19,9 @@ following an incoming clock (clock recovery).
 first tick comes `phase + 1` cycles after a start. In *toggle* mode its
 output flips on each tick; in *pulse* mode every tick is a rise pulse.
 
-- **Resync:** a line can restart the count from `phase`. Used to lock onto
-  an incoming clock.
+- **Resync:** a line (any line, so an [edge cell](#edge-cell)'s pulse
+  directly) can restart the count from `phase`. Used to lock onto an
+  incoming clock.
 - **Hold:** a line can freeze the timer while its output is high. Used for
   I2C clock stretching.
 
@@ -34,7 +36,7 @@ There are 4 timers, at configuration `0x00 + 4k`:
 | 0 | `reload` (period − 1) |
 | 1 | `phase` (first interval − 1) |
 | 2 | `[5:0]` start line, `[11:6]` stop line, `[12]` idle level, `[13]` pulse mode |
-| 3 | `[4:0]` resync level, `[5]` resync on, `[10:6]` hold level, `[11]` hold on, `[12]` hold inverted |
+| 3 | `[5:0]` resync line, `[6]` resync on, `[11:7]` hold level, `[12]` hold on, `[13]` hold inverted |
 
 Each cycle, in priority order: stop, start (only while stopped), resync,
 hold, count.
@@ -62,8 +64,8 @@ There are 2 shifters, at configuration `0x10 + 4k` (register 4 at
 | 2 | `[5:0]` shift line, `[11:6]` sample line |
 | 3 | `[5:0]` start line, `[10:6]` input line, `[11]` auto-pull, `[12]` auto-push |
 | 4 | `[4:0]` burst-end line, `[5]` burst mode, `[6]` end burst on an end-of-packet byte, `[12:7]` abort line |
-| 5 | bit coder: `[2:0]` stuff after N bits (0: off), `[3]` runs of ones (else equal bits), `[4]` NRZI, `[5]` code received bits (else sent ones), `[6]` arm at the first 0, `[7]` invert tail, `[8]` word line pulses every bit, `[14:9]` tail length |
-| 6 | bit coder: `[4:0]` stuffing gate level, `[5]` gated, `[10:6]` bits kept from the CRC link |
+| 5 | bit coder: `[2:0]` stuff after N bits (0: off), `[3]` runs of ones (else equal bits), `[4]` NRZI, `[5]` code received bits (else sent ones), `[6]` arm at the first 0, `[7]` invert tail, `[8]` word line pulses every bit, `[14:9]` tail length, `[15]` Manchester (sending) |
+| 6 | bit coder: `[4:0]` stuffing gate level, `[5]` gated, `[12:6]` bits kept from the CRC link |
 
 Good to know:
 
@@ -85,10 +87,12 @@ Good to know:
 
 ### Bit coder
 
-**What it is for:** the bit-level glue that USB, CAN and HDLC wrap around
-their bytes (bit stuffing, NRZI, and the CRC sent after the data). Without
-it, that glue takes logic cells and counters: CAN and USB transmit use all
-8 logic cells and both counters. With it, CAN transmit uses none of either.
+**What it is for:** the bit-level glue that USB, CAN, HDLC and 10BASE-T
+wrap around their bytes (bit stuffing, NRZI or Manchester, and the CRC sent
+after the data). Without it, that glue takes logic cells and counters: CAN,
+USB and HDLC transmit and the 10BASE-T link use all 8 logic cells and both
+counters. With it, CAN transmit uses none of either and none of the others
+more than 4 cells or any counter (see [protocols](protocols.md)).
 
 The coder sits between the frame and the line, inside the shifter. With
 registers 5 and 6 at 0 it is off and the shifter behaves exactly as above.
@@ -102,13 +106,20 @@ registers 5 and 6 at 0 it is off and the shifter behaves exactly as above.
   the *gate* level turns stuffing on and off (CAN's tail is not stuffed).
 - **NRZI.** Sending, a 0 flips the line and a 1 keeps it. Receiving, a
   bit is 1 when the line kept its level since the last sample.
+- **Manchester** (sending). The shift line ticks every half bit; each bit
+  goes out as its complement, then as itself (a 1 is low-high, as in IEEE
+  802.3), so every bit has a transition in its middle. Only every second
+  tick moves on in the frame, so stuffing, the tail and the CRC link
+  still work per bit.
 - **Tail.** After the last word, the sender puts out *tail length* bits
-  from the CRC engine (stuffed too), then ends. CAN's CRC goes out as it
-  is (*invert tail*); USB's and HDLC's are inverted by the CRC engine.
+  from CRC engine k (shifter k's own), stuffed too, then ends. CAN's CRC
+  goes out as it is (*invert tail*); the CRC engine already inverts USB's,
+  HDLC's and Ethernet's.
 - **CRC link.** The coder hands the CRC engine every frame bit (never a
   stuff or tail bit) and steps it once per tail bit, over a direct wire
   rather than signal-space lines (CRC register 6 `[6]`). The first
-  `register 6 [10:6]` bits are not handed over (USB: 16, SYNC and PID).
+  `register 6 [12:6]` bits are not handed over (USB: 16, SYNC and PID;
+  10BASE-T: 64, preamble and SFD).
 - **Bit pulse.** With `[8]` the word line pulses once per received bit
   instead of once per word, so a counter can count destuffed bits (CAN
   finds the DLC and the CRC delimiter that way). FIFO pushes stay per word.
@@ -156,7 +167,11 @@ the end of a packet.
 - **OK line:** high when the register equals the expected *check residue*
   (for example USB CRC16 `0x800D`, Ethernet CRC32 `0xC704DD7B`).
 
-There is 1 CRC engine, at configuration `0x28`–`0x2F`:
+There are 2 CRC engines, CRC 0 at configuration `0x28`–`0x2F` and CRC 1
+at `0x88`–`0x8F` (lines 52/53 and 50/51), so both directions of a link,
+or two links, each have their own. Shifter k's coder tail reads CRC k;
+either engine can take its bits from lines or from either shifter's
+link:
 
 | Reg | Field |
 | --- | --- |
@@ -206,6 +221,35 @@ There are 8 logic cells, at configuration `0x40 + 4k`:
 
 The configuration helper builds truth tables from a Python function, for
 example `truth(lambda a, b: a and not b, 2)`.
+
+---
+
+## Edge cell
+
+**What it is for:** turning a pin's changes into pulses: a clock edge to
+shift on, an edge to start or resync a timer, a start condition.
+
+**How it works:** it compares a pin's synchronized level with its value a
+cycle earlier and pulses on a rise, a fall or either, optionally only while
+a level line is high (or low). An I2C START is "SDA falls while SCL is
+high"; a USB receiver's clock recovery wants "any edge of D+". Its pulse is
+registered like every other pulse line.
+
+There are 8 edge cells, at configuration `0x80 + e` (line 16 + e). They
+keep one configuration (no contexts):
+
+| Field | Meaning |
+| --- | --- |
+| `[2:0]` | pin |
+| `[3]`, `[4]` | pulse on a rise, on a fall |
+| `[9:5]` | qualifying level line |
+| `[10]` | qualified: only while that level is high |
+| `[11]` | ... while it is low instead |
+
+The configuration helper allocates them as a program asks for edges
+(`p.rise(pin)`, `p.fall(pin)`, `p.edges(pin, when=line, when_low=True)`),
+shares a cell between identical requests and fails a program that needs
+more than 8 when it is assembled.
 
 ---
 

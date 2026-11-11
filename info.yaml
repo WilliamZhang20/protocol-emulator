@@ -24,6 +24,7 @@ project:
     - "fabric_shifter.v"
     - "fabric_counter.v"
     - "fabric_crc.v"
+    - "fabric_edge.v"
     - "fabric_logic.v"
     - "byte_tile.v"
     - "config_bank.v"

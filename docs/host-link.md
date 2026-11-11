@@ -43,6 +43,9 @@ Notes:
 
 - **Channel:** FIFO commands use the channel picked with `E` (channel 0
   after reset).
+- **Levels:** each FIFO holds 8 bytes, and the 3-bit level fields read 7
+  for 7 or 8. `tx_full` in the same answer tells the two apart for TX; for
+  RX, popping 7 always leaves the FIFO consistent.
 - **When the program halts,** the host clears the running bit, and every
   tile and pin goes idle.
 

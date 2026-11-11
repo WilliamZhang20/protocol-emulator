@@ -12,7 +12,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal
 endif
-PROJECT_SOURCES = project.v protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v program_memory.v byte_fifo.v host_interface.v
+PROJECT_SOURCES = project.v protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_edge.v fabric_logic.v byte_tile.v config_bank.v program_memory.v byte_fifo.v host_interface.v
 
 ifneq ($(GATES),yes)
 SIM_BUILD = sim_build/rtl

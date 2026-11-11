@@ -165,3 +165,30 @@ async def test_packet_tags_cross_host_and_controller(dut):
     assert await drain_rx_tagged(dut, settle_polls=4) == [
         (0x12, False, False), (0x34, False, False), (0xEE, True, True)]
 
+
+
+@cocotb.test()
+async def test_fifos_hold_eight(dut):
+    """Each FIFO holds 8 bytes. The host's 3-bit level fields read 7 for 7
+    or 8, with tx_full / rx_empty exact; a 9th push is dropped; the bytes
+    come out in order."""
+    await start_clock(dut)
+    await reset_top(dut)
+    data = [0x10 + i for i in range(9)]
+    for i, byte in enumerate(data):
+        await push_tx(dut, byte)
+        levels = await fifo_levels(dut)
+        tx_level, tx_full = (levels >> 3) & 0b111, levels >> 7
+        assert tx_level == min(i + 1, 7) and tx_full == (i >= 7), (i, bin(levels))
+    p = Px8()
+    for _ in range(8):                  # copy the 8 TX bytes to RX, in order
+        p.pull(0)
+        p.push(0)
+    p.halt()
+    await load_program(dut, p.assemble())
+    await start_engine(dut)
+    await wait_until_halted(dut)
+    levels = await fifo_levels(dut)
+    assert levels & 0b111 == 7 and not (levels >> 6) & 1 and (levels >> 3) & 0b111 == 0, bin(levels)
+    assert [await pop_rx(dut) for _ in range(8)] == data[:8]
+    assert (await fifo_levels(dut) >> 6) & 1, "RX empty after 8 pops"

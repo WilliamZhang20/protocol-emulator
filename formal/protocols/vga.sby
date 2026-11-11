@@ -12,7 +12,7 @@ cover: depth 190
 smtbmc boolector
 
 [script]
-read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_logic.v byte_tile.v config_bank.v
+read -formal -sv protocol_emulator_core.v px8_controller.v fabric_timer.v fabric_shifter.v fabric_counter.v fabric_crc.v fabric_edge.v fabric_logic.v byte_tile.v config_bank.v
 read -formal -sv vga_properties.sv
 prep -top vga_properties
 script prearm.ys
@@ -24,6 +24,7 @@ script prearm.ys
 ../../src/fabric_shifter.v
 ../../src/fabric_counter.v
 ../../src/fabric_crc.v
+../../src/fabric_edge.v
 ../../src/fabric_logic.v
 ../../src/byte_tile.v
 ../../src/config_bank.v

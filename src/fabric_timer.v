@@ -10,11 +10,12 @@
 //   1 phase   first interval - 1 after a start or resync
 //   2 ctl     [5:0] start line  [11:6] stop line  [12] idle level
 //             [13] pulse mode
-//   3 sync    [4:0] resync level  [5] resync enable
-//             [10:6] hold level   [11] hold enable  [12] hold invert
+//   3 sync    [5:0] resync line  [6] resync enable
+//             [11:7] hold level  [12] hold enable  [13] hold invert
 //
-// Start/stop select any of the 64 lines; resync and hold select one of the
-// 32 level lines (signal space 32-63). Priority per cycle:
+// Start, stop and resync select any of the 64 lines (resync on an edge
+// cell's pulse needs no logic cell to stretch it into a level); hold
+// selects one of the 32 level lines (signal space 32-63). Priority per cycle:
 // stop, start (only while stopped), resync (restart the interval at phase,
 // for clock recovery), hold (freeze while the output is high and the hold
 // line, optionally inverted, is high: clock stretching), then count.
@@ -36,7 +37,7 @@ module fabric_timer (
 );
   wire [15:0] reload, phase;
   wire [13:0] ctl;
-  wire [12:0] sync;
+  wire [13:0] sync;
   reg  [15:0] count;
   reg        out_r;
   reg        run;
@@ -47,8 +48,8 @@ module fabric_timer (
   wire [31:0] levels = lines[63:32];
   wire stop_now   = lines[ctl[11:6]];
   wire start_now  = !run && lines[ctl[5:0]];
-  wire resync_now = run && sync[5] && levels[sync[4:0]];
-  wire hold       = out_r && sync[11] && (levels[sync[10:6]] ^ sync[12]);
+  wire resync_now = run && sync[6] && lines[sync[5:0]];
+  wire hold       = out_r && sync[12] && (levels[sync[11:7]] ^ sync[13]);
   wire tick = enable && run && !stop_now && !resync_now && !hold &&
               count == 16'd0;
 
@@ -65,8 +66,8 @@ module fabric_timer (
   config_bank #(.WIDTH(14)) ctl_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 2'd2), .write_bank(cfg_bank), .data(cfg_data[13:0]),
       .ctx_next(ctx_next), .value(ctl), .next());
-  config_bank #(.WIDTH(13)) sync_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 2'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+  config_bank #(.WIDTH(14)) sync_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 2'd3), .write_bank(cfg_bank), .data(cfg_data[13:0]),
       .ctx_next(ctx_next), .value(sync), .next());
 
   always @(posedge clk) begin

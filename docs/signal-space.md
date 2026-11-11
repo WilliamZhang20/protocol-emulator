@@ -17,20 +17,31 @@ shifter 0's "shift line" register to 4 (timer 0's rise line).
 | 2, 3 | controller `FIRE 0` / `FIRE 1` (a one-cycle pulse when the program asks) |
 | 4 + 2k, 5 + 2k | timer k rise, fall |
 | 12 + 2k, 13 + 2k | shifter k *word* (a word just finished), *stop* (went idle) |
-| 16 + p, 24 + p | pin p rise, fall |
+| 16 + e | edge cell e: a pin edge the program chose (rise, fall or both, optionally only while a level is high or low) |
+| 24 + k | counter k just reached its threshold |
+| 26–31 | spare (read 0) |
 | 32 + p | pin p level |
 | 40 + k | timer k output |
 | 44 + k, 46 + k | shifter k output, shifter k active |
-| 48 + k, 50 + k | counter k at or above threshold, counter k just reached it |
-| 52, 53 | CRC output bit, CRC matches its check value |
+| 48 + k | counter k at or above threshold |
+| 50, 51 | CRC 1 output bit, CRC 1 matches its check value |
+| 52, 53 | CRC 0 output bit, CRC 0 matches its check value |
 | 54, 55 | controller flags 0, 1 (levels the program sets) |
 | 56 + k | logic cell k output |
 
 (k is the tile number, p the pin number.)
 
+Pin edges used to have 16 fixed lines (every pin's rise and fall), but no
+program used more than 5 of them. Eight edge cells take 8 lines instead and
+each can be any pin, either or both directions, and qualified by a level:
+an I2C START ("SDA falls while SCL is high") is one edge cell rather than a
+logic cell. The configuration helper allocates them (`p.rise(pin)`,
+`p.fall(pin)`, `p.edges(pin, when=line)`), sharing identical requests, and
+refuses a program that needs more than 8.
+
 ## Two kinds of lines
 
-- **Pulses** (lines 2–31) are high for exactly one cycle when something
+- **Pulses** (lines 2–25) are high for exactly one cycle when something
   happens: a tick, a word ending, a pin edge.
 - **Levels** (lines 32–63) stay high or low: a pin's value, a timer's
   output, "shifter is busy".

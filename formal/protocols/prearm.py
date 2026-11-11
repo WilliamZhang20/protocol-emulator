@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 
 SOURCES = ["protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v",
-           "fabric_counter.v", "fabric_crc.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
+           "fabric_counter.v", "fabric_crc.v", "fabric_edge.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
            "byte_fifo.v"]
 HERE = Path(__file__).resolve().parent
 yosys, name = sys.argv[1], sys.argv[2]
