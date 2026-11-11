@@ -8,7 +8,7 @@ values absorb a fixed, documented latency.
 
 from cocotb_tests.fabric import (
     CRC_OUT, MODE_OPEN_DRAIN, MODE_PUSH_PULL, ONE, RD_CRC_LO, RD_PINS, RUN_EQUAL, RUN_ONES, RUN_ZEROS,
-    CRC_OK, Px8, counter_ge, counter_hit, fire, flag, logic, pin_level,
+    CRC_OK, Px8, counter_ge, counter_hit, crc_ok, fire, flag, logic, pin_level,
     rd_counter, rd_shifter_data, rd_shifter_status, rx_tile, shifter_active, shifter_out,
     shifter_stop, shifter_word, tile_event, timer_fall, timer_out, timer_rise, truth,
     tx_tile,
@@ -652,21 +652,22 @@ def hdlc_transmit_coded(bit_cycles: int, poly: int = HDLC_FCS_POLY) -> list[int]
     return p.assemble()
 
 
-def hdlc_receive_coded(check: int = HDLC_FLAG_CHECK_CODED) -> list[int]:
+def hdlc_receive_coded(check: int = HDLC_FLAG_CHECK_CODED, crc: int = 0) -> list[int]:
     """hdlc_receive on shifter 1's bit coder: one logic cell and one
     counter (hdlc_receive: two and two). The coder drops the 0 after five
     1s and links the CRC to every other bit; counter 1 still finds the
     flag (six 1s), which aborts the partial byte. The closing flag's sixth
     1 is a stuff violation to the coder, so it never reaches the CRC: the
-    flag check covers the flag's first 6 bits."""
+    flag check covers the flag's first 6 bits. Either CRC tile can check
+    it (`crc`)."""
     p = Px8()
     rise, d = p.rise(HDLC_RXC), pin_level(HDLC_RXD)
     bad = logic(0)
     p.counter(1, match=6, step=rise, data=d, mode=RUN_ONES)
     p.timer(0, reload=1, phase=1, start=counter_hit(1), stop=timer_fall(0))
     p.logic(0, truth(lambda r, f, ok, q: (not ok) if r else (q and not f)),
-           [timer_rise(0), timer_fall(0), CRC_OK, bad])
-    p.crc(width=16, poly=HDLC_FCS_POLY, check=check, link=1, init=timer_fall(0))
+           [timer_rise(0), timer_fall(0), crc_ok(crc), bad])
+    p.crc(width=16, poly=HDLC_FCS_POLY, check=check, link=1, init=timer_fall(0), tile=crc)
     p.shifter(1, shift=rise, sample=rise)
     p.shifter_io(1, start=ONE, data_in=d, push=True)
     p.shifter_coder(1, stuff=5, ones=True, rx=True)
@@ -1460,26 +1461,27 @@ def can_transmit(bit_cycles: int) -> list[int]:
     return p.assemble()
 
 
-def can_transmit_coded(bit_cycles: int) -> list[int]:
+def can_transmit_coded(bit_cycles: int, k: int = 0) -> list[int]:
     """can_transmit on the shifter's bit coder: no logic cells and no
     counters. The coder arms at the first dominant bit (SOF), stuffs a
     complement after five equal bits, sends the 15 CRC bits as the tail
     (stuffed too, a stuff bit after the last one included) and links the
-    CRC to every bit from SOF on; the line idles recessive."""
+    CRC to every bit from SOF on; the line idles recessive. Shifter k
+    (frames from TX FIFO channel k) and its own CRC tile k."""
     p = Px8()
     tick = timer_rise(0)
     # The first bit goes out as the shifter starts; the first tick follows
     # by phase + 2 (the timer starts a cycle later).
     p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
-            start=shifter_active(0), stop=fire(1))
-    p.shifter(0, msb=True, idle=1, shift=tick)
-    p.shifter_burst(0, end=flag(0), on_eop=True)
-    p.shifter_io(0, pull=True)
-    p.shifter_coder(0, stuff=5, sof=True, tail=15, tail_invert=True)
-    p.crc(width=15, poly=CAN_CRC15_POLY, check=0, link=0, init_ones=False)
-    p.pin_cell(CAN_TX, src=shifter_out(0), mode=MODE_PUSH_PULL)
+            start=shifter_active(k), stop=fire(1))
+    p.shifter(k, msb=True, idle=1, shift=tick)
+    p.shifter_burst(k, end=flag(0), on_eop=True)
+    p.shifter_io(k, pull=True)
+    p.shifter_coder(k, stuff=5, sof=True, tail=15, tail_invert=True)
+    p.crc(width=15, poly=CAN_CRC15_POLY, check=0, link=k, init_ones=False, tile=k)
+    p.pin_cell(CAN_TX, src=shifter_out(k), mode=MODE_PUSH_PULL)
     p.arm()
-    p.wev(shifter_stop(0))
+    p.wev(shifter_stop(k))
     p.clrev()
     for _ in range(13):           # delimiter, ACK, delimiter, EOF, IFS
         p.wev(tick)

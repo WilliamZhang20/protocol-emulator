@@ -89,6 +89,9 @@ shifter's bit coder doing the stuffing, NRZI or Manchester and CRC tail
 `test_can_receive_joins_bus_mid_frame` starts the node in the middle of a
 long frame: it must ignore that frame (no packet, no ACK) and receive and
 acknowledge the next one (bus integration).
+`test_can_coded_on_shifter_1_and_crc_1` and `test_hdlc_rx_coded_on_crc_1`
+run a coded transmitter and receiver on the second CRC tile (CRC 1), so
+both CRC tiles and both coder links are exercised.
 `test_can_receive_coded_flags_stuff_error` sends a frame whose first stuff
 bit repeats the five before it; the destuffed bytes and the CRC are still
 the frame's, so only the coder's stuff check can tag it err (and the next

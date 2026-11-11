@@ -212,13 +212,13 @@ async def drive(dut, bus: Bus, bits: list[int], half: int) -> None:
 
 
 async def receive(dut, line: list[int], half: int = 3,
-                  coded: bool = False) -> list[tuple[bytes, bool]]:
+                  coded: bool = False, crc: int = 0) -> list[tuple[bytes, bool]]:
     await start_clock(dut, 25)
     await reset_top(dut)
     bus = Bus(dut)
     bus.drive[HDLC_RXC] = 1
     bus.drive[HDLC_RXD] = 1
-    await load_program(dut, hdlc_receive_coded() if coded else hdlc_receive())
+    await load_program(dut, hdlc_receive_coded(crc=crc) if coded else hdlc_receive())
     await start_engine(dut)
     await ClockCycles(dut.clk, 300)
     await select_channel(dut, 1)
@@ -245,6 +245,17 @@ async def receive(dut, line: list[int], half: int = 3,
 @cocotb.test()
 @cocotb.parametrize(coded=[False, True])
 async def test_hdlc_rx_frames(dut, coded):
+    await rx_frames(dut, coded, crc=0)
+
+
+@cocotb.test()
+async def test_hdlc_rx_coded_on_crc_1(dut):
+    """The coded receiver with CRC tile 1 on shifter 1's link checking the
+    FCS (CRC 0 unused)."""
+    await rx_frames(dut, coded=True, crc=1)
+
+
+async def rx_frames(dut, coded: bool, crc: int) -> None:
     """Good frames (flags shared or doubled, idle 1s between), a bad FCS and
     an abort: bytes and FCS reach the host, eop on the last, err exactly
     on the bad ones."""
@@ -260,7 +271,7 @@ async def test_hdlc_rx_frames(dut, coded):
     line += FLAG + encode(good[2], bad_fcs=True) + FLAG
     line += FLAG + stuff(lsb_bits(b"\x12\x34\x56")) + [1] * 8        # abort
     line += FLAG + encode(good[2]) + FLAG
-    packets = await receive(dut, line, coded=coded)
+    packets = await receive(dut, line, coded=coded, crc=crc)
     bad = good[2] + bytes([(fcs16(good[2]) ^ 1) & 0xFF, fcs16(good[2]) >> 8])
     assert packets[0] == (with_fcs(good[0]), False), packets
     assert packets[1] == (with_fcs(good[1]), False), packets

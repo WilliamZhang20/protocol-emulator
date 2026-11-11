@@ -6,7 +6,7 @@ import cocotb
 from cocotb.triggers import RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock, wait_until_halted
-from cocotb_tests.fabric import Bus, load_program, push_packet, start_engine
+from cocotb_tests.fabric import Bus, load_program, push_packet, select_channel, start_engine
 from cocotb_tests.protocols import CAN_TX, can_transmit, can_transmit_coded
 
 BIT = 20                 # 2 Mbit/s at 40 MHz; any rate is a timer reload
@@ -98,13 +98,15 @@ def decode(levels: list[int]) -> tuple[int, bytes, list[int]]:
     return ident, data, raw[:k]
 
 
-async def send(dut, ident: int, data: bytes, coded: bool) -> list[int]:
-    """Reset the chip, load the transmitter (logic cells, or the shifter's
-    bit coder) and send one frame (the clock is started once per test)."""
+async def send(dut, ident: int, data: bytes, coded: bool, k: int = 0) -> list[int]:
+    """Reset the chip, load the transmitter (logic cells, or shifter k's
+    bit coder and CRC tile k) and send one frame (the clock is started once
+    per test)."""
     await reset_top(dut)
     bus = Bus(dut)
-    await load_program(dut, (can_transmit_coded if coded else can_transmit)(BIT))
+    await load_program(dut, can_transmit_coded(BIT, k) if coded else can_transmit(BIT))
     await start_engine(dut)
+    await select_channel(dut, k)
     task = cocotb.start_soon(record_line(dut, bus, BIT * (40 + 8 * len(data) + 40)))
     await push_packet(dut, fifo_bytes(ident, data))
     await wait_until_halted(dut, timeout_cycles=100000)
@@ -135,4 +137,17 @@ async def test_can_random_frames(dut, coded):
         ident = rng.randrange(0x800)
         data = bytes(rng.randrange(256) for _ in range(rng.randrange(9)))
         levels = await send(dut, ident, data, coded)
+        assert decode(levels)[:2] == (ident, data), (hex(ident), data.hex())
+
+
+@cocotb.test()
+async def test_can_coded_on_shifter_1_and_crc_1(dut):
+    """The same coded transmitter on shifter 1, whose tail comes from CRC
+    tile 1 over shifter 1's link (CRC 0 unused)."""
+    await start_clock(dut, 25)
+    rng = random.Random(41)
+    for _ in range(3):
+        ident = rng.randrange(0x800)
+        data = bytes(rng.randrange(256) for _ in range(rng.randrange(1, 9)))
+        levels = await send(dut, ident, data, coded=True, k=1)
         assert decode(levels)[:2] == (ident, data), (hex(ident), data.hex())
