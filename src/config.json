@@ -37,6 +37,17 @@
   "RUN_POST_GRT_RESIZER_TIMING": 1,
   "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.0,
 
+  "//": "Slew and capacitance. The only design repair ran after placement, on",
+  "//": "estimated wires, so nets that routed longer (1x gates on the CRC residue",
+  "//": "compare, fanout buffers, the SRAM's weak DOUT pins) ended up over the",
+  "//": "limits at signoff (2945e58: 26 slew, 15 cap). Repair again on the global",
+  "//": "route with a wider margin, and buffer any wire over 400 um on the 8x4 die.",
+  "RUN_POST_GRT_DESIGN_REPAIR": 1,
+  "GRT_DESIGN_REPAIR_MAX_SLEW_PCT": 25,
+  "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 25,
+  "DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
+  "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
+
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
   "LINTER_INCLUDE_PDK_MODELS": 1,
