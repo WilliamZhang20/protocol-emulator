@@ -188,6 +188,20 @@ MUTATIONS = (
         ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_properties.sv", "fabric_shifter_properties",
     ),
     Mutation(
+        "coder_stuffs_late", "fabric_shifter", "fabric_shifter.v",
+        "run_len >= stuff_n",
+        "run_len > stuff_n",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_coder_properties.sv",
+        "fabric_shifter_coder_properties",
+    ),
+    Mutation(
+        "coder_run_restarts_per_word", "fabric_shifter", "fabric_shifter.v",
+        "wire [2:0] run_b   = fresh ?",
+        "wire [2:0] run_b   = (start || burst_next) ?",
+        ("config_bank.v", "fabric_shifter.v"), "fabric_shifter_coder_properties.sv",
+        "fabric_shifter_coder_properties",
+    ),
+    Mutation(
         "tile_escape_map_swapped", "byte_tile", "byte_tile.v",
         "wire [7:0]  mapped   = in_data == c0 ? m0 : m1;",
         "wire [7:0]  mapped   = in_data == c0 ? m1 : m0;",
@@ -250,7 +264,7 @@ MUTATIONS = (
     ),
     Mutation(
         "crc_feedback_ignores_data", "fabric_crc", "fabric_crc.v",
-        "wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];",
+        "wire feedback = msb ^ data_in;",
         "wire feedback = msb;",
         ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),

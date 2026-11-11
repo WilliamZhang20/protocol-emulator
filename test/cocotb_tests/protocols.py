@@ -833,6 +833,50 @@ def usb_ls_transmit(bit_cycles: int) -> list[int]:
     return p.assemble()
 
 
+def usb_ls_transmit_coded(bit_cycles: int) -> list[int]:
+    """usb_ls_transmit on the shifter's bit coder: the same packet with
+    three logic cells and no counters. The coder stuffs a 0 after six 1s,
+    NRZI-codes the line (idle J), and after the last byte sends the CRC16
+    tail; its CRC link absorbs every bit after SYNC and PID (skip 16).
+
+    The shifter's stop (after the CRC and any stuffed bit) sets the SE0
+    latch (cell 0); D- also drops on the stop pulse itself, so SE0 starts
+    on the bit grid. The controller ends SE0 at the second tick after it
+    began and releases the bus one bit of J later."""
+    p = Px8()
+    tick, stop = timer_rise(0), shifter_stop(0)
+    se0 = logic(0)
+    # The shifter puts SYNC's first bit out as it starts; the timer starts
+    # a cycle later and its first tick follows by phase + 2.
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
+            start=shifter_active(0), stop=fire(1))
+    p.shifter(0, shift=tick)
+    p.shifter_burst(0, end=flag(0))         # ends when the TX FIFO runs dry
+    p.shifter_io(0, pull=True)
+    p.shifter_coder(0, stuff=6, ones=True, nrzi=True, tail=16, skip=16)
+    p.crc(width=16, poly=USB_CRC16_POLY, check=USB_CRC16_RESIDUE, link=0)
+    p.logic(0, truth(lambda s, t, q, f1: s or (q and not (t and f1))),
+            [stop, tick, se0, flag(1)])
+    # Line state 1 = K: D+ = K, D- = J, both low in SE0.
+    p.logic(1, truth(lambda k, s0: k and not s0, 2), [shifter_out(0), se0])
+    p.logic(2, truth(lambda s, k, s0: not (s or k or s0), 3), [stop, shifter_out(0), se0])
+    p.pin_cell(USB_DP, src=logic(1), mode=MODE_PUSH_PULL)
+    p.pin_cell(USB_DM, src=logic(2), mode=MODE_PUSH_PULL)
+    p.arm()
+    p.wev(stop)
+    p.clrev()
+    p.wev(tick)                  # one bit of SE0 ...
+    p.flags(0b10)                # ... the next tick ends it
+    p.wev(tick)
+    p.flags(0b00)
+    p.wev(tick)                  # one bit of J, then release the bus
+    p.fire(1)
+    p.pin_cell(USB_DP, mode=0)
+    p.pin_cell(USB_DM, mode=0)
+    p.halt()
+    return p.assemble()
+
+
 def usb_ls_receive(bit_cycles: int) -> list[int]:
     """Low-speed USB packet receiver. Timer 0 recovers the bit clock by
     resynchronizing on every D+ transition; the fabric NRZI-decodes, drops
@@ -866,6 +910,39 @@ def usb_ls_receive(bit_cycles: int) -> list[int]:
     p.jz("good")
     p.ldc(0xEE)
     p.push(channel=1)            # after the packet bytes, on shifter 1's channel
+    p.j("done")
+    p.label("good")
+    p.ldc(0xA5)
+    p.push(channel=1)
+    p.label("done")
+    p.halt()
+    return p.assemble()
+
+
+def usb_ls_receive_coded(bit_cycles: int) -> list[int]:
+    """usb_ls_receive on the shifter's bit coder: two logic cells (SE0 and
+    D+ edges for clock recovery) and no counter. The coder NRZI-decodes
+    D+, drops each stuffed 0, and links the CRC to every bit after SYNC
+    and PID."""
+    p = Px8()
+    tick, se0, edge = timer_rise(0), logic(0), logic(1)
+    p.logic(0, truth(lambda dp, dm: not dp and not dm, 2),
+            [pin_level(USB_DP), pin_level(USB_DM)])
+    p.logic(1, truth(lambda r, f: r or f, 2), [pin_rise(USB_DP), pin_fall(USB_DP)])
+    # Mid-bit sampling: sync (2) + pulse register (1) + resync (1) + tick.
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles // 2 - 3, pulse=True,
+            start=edge, resync=edge, stop=se0)
+    p.shifter(1, shift=tick, sample=tick)
+    p.shifter_io(1, start=ONE, data_in=pin_level(USB_DP), push=True)
+    p.shifter_coder(1, stuff=6, ones=True, nrzi=True, rx=True, skip=16)
+    p.crc(width=16, poly=USB_CRC16_POLY, check=USB_CRC16_RESIDUE, link=1)
+    p.arm()
+    p.wev(se0)
+    p.rd(RD_CRC_LO)
+    p.xrc(USB_CRC16_RESIDUE)
+    p.jz("good")
+    p.ldc(0xEE)
+    p.push(channel=1)
     p.j("done")
     p.label("good")
     p.ldc(0xA5)
@@ -1227,6 +1304,33 @@ def can_transmit(bit_cycles: int) -> list[int]:
     return p.assemble()
 
 
+def can_transmit_coded(bit_cycles: int) -> list[int]:
+    """can_transmit on the shifter's bit coder: no logic cells and no
+    counters. The coder arms at the first dominant bit (SOF), stuffs a
+    complement after five equal bits, sends the 15 CRC bits as the tail
+    (stuffed too, a stuff bit after the last one included) and links the
+    CRC to every bit from SOF on; the line idles recessive."""
+    p = Px8()
+    tick = timer_rise(0)
+    # The first bit goes out as the shifter starts; the first tick follows
+    # by phase + 2 (the timer starts a cycle later).
+    p.timer(0, reload=bit_cycles - 1, phase=bit_cycles - 3, pulse=True,
+            start=shifter_active(0), stop=fire(1))
+    p.shifter(0, msb=True, idle=1, shift=tick)
+    p.shifter_burst(0, end=flag(0), on_eop=True)
+    p.shifter_io(0, pull=True)
+    p.shifter_coder(0, stuff=5, sof=True, tail=15, tail_invert=True)
+    p.crc(width=15, poly=CAN_CRC15_POLY, check=0, link=0, init_ones=False)
+    p.pin_cell(CAN_TX, src=shifter_out(0), mode=MODE_PUSH_PULL)
+    p.arm()
+    p.wev(shifter_stop(0))
+    p.clrev()
+    for _ in range(13):           # delimiter, ACK, delimiter, EOF, IFS
+        p.wev(tick)
+    p.halt()
+    return p.assemble()
+
+
 def uart_transmit(bit_cycles: int) -> list[int]:
     """8N1 transmitter on the TX pin, bytes from TX FIFO channel 0."""
     p = Px8()
@@ -1527,6 +1631,78 @@ def can_receive(bit_cycles: int, sample_at: int) -> list[int]:
     p.wev(eof)
     p.ldc(15)
     p.wcf(0x24)                          # next frame: hit before its DLC again
+    p.j("frame")
+    return p.assemble()
+
+
+def can_receive_coded(bit_cycles: int, sample_at: int) -> list[int]:
+    """can_receive on the shifter's bit coder: shifter 1 destuffs (five
+    equal bits, while the CRC is on), flags a stuff error, links the CRC
+    and pulses its word line once per destuffed bit, which counter 1 and
+    the DLC shifter use. That frees counter 0 and a logic cell (the
+    consume pulse); the rest of the node is can_receive's."""
+    assert bit_cycles - sample_at >= 8, "the ACK needs 8 cycles after the delimiter's sample"
+    p = Px8()
+    rx = pin_level(CAN_RX)
+    edge, in_frame, crc_on, ack, past_dlc, ack_go, bad = (logic(i) for i in range(7))
+    tick, eof, bit = timer_rise(0), timer_rise(3), shifter_word(1)
+    p.logic(0, truth(lambda f: f, 1), [pin_fall(CAN_RX)])
+    p.logic(1, truth(lambda q, e, end: (q or e) and not end, 3), [in_frame, edge, eof])
+    p.logic(2, truth(lambda q, e, f, go: (q or (e and not f)) and not go),
+            [crc_on, edge, in_frame, ack_go])
+    p.logic(3, truth(lambda a, ok: not (a and ok), 2), [timer_out(2), CRC_OK], start=1)
+    p.logic(4, truth(lambda q, got, end: (q or got) and not end, 3),
+            [past_dlc, shifter_stop(0), eof])
+    p.logic(5, truth(lambda h, past: h and past, 2), [counter_hit(1), past_dlc])
+    p.logic(6, truth(lambda c, f, ok: f and not c and not ok, 3), [crc_on, in_frame, CRC_OK])
+    # Shifter 1 samples on the tick itself, a cycle before can_receive's
+    # consume pulse; its bit pulse (the word line) lands where that pulse
+    # did, so counter 1, the DLC shifter and the ACK keep their timing.
+    p.timer(0, reload=bit_cycles - 1, phase=sample_at - 6, pulse=True,
+            start=edge, resync=edge, stop=eof)
+    p.timer(3, reload=11 * bit_cycles, phase=11 * bit_cycles, pulse=True,
+            start=edge, resync=edge, stop=eof)
+    p.timer(2, reload=bit_cycles - 1, phase=bit_cycles - sample_at - 8, idle=0,
+            start=ack_go, stop=timer_fall(2))
+    p.counter(1, match=15, step=bit, clear=eof)
+    p.crc(width=15, poly=CAN_CRC15_POLY, check=CAN_CRC15_POLY, link=1, absorb_gate=crc_on,
+          init=eof, init_ones=False)
+    p.shifter(1, msb=True, shift=tick, sample=tick)
+    p.shifter_io(1, start=in_frame, data_in=rx, push=True)
+    p.shifter_abort(1, eof)
+    p.shifter_coder(1, stuff=5, rx=True, gate=crc_on, strobe=True)
+    p.tile_tag(rx_tile(1, 0), end=eof, err=bad)
+    p.shifter(0, length=4, msb=True, shift=bit, sample=bit)
+    p.shifter_io(0, start=counter_hit(1), data_in=rx)
+    p.pin_cell(CAN_TX, src=ack, mode=MODE_PUSH_PULL)
+    p.arm()
+    p.label("frame")
+    p.clrev()
+    p.wev(shifter_stop(0))
+    p.rd(rd_shifter_data(0))
+    p.andc(0x8)
+    p.jz("small")
+    p.ldc(35 + 64)
+    p.wcf(0x24)
+    p.j("wait")
+    p.label("small")
+    for dlc in range(8):
+        p.rd(rd_shifter_data(0))
+        p.xrc(dlc)
+        p.jz(f"dlc{dlc}")
+    p.label("dlc0")
+    p.ldc(35)
+    p.wcf(0x24)
+    p.j("wait")
+    for dlc in range(1, 8):
+        p.label(f"dlc{dlc}")
+        p.ldc(35 + 8 * dlc)
+        p.wcf(0x24)
+        p.j("wait")
+    p.label("wait")
+    p.wev(eof)
+    p.ldc(15)
+    p.wcf(0x24)
     p.j("frame")
     return p.assemble()
 

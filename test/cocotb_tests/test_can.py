@@ -7,7 +7,7 @@ from cocotb.triggers import RisingEdge
 
 from cocotb_tests.common import reset_top, start_clock, wait_until_halted
 from cocotb_tests.fabric import Bus, load_program, push_packet, start_engine
-from cocotb_tests.protocols import CAN_TX, can_transmit
+from cocotb_tests.protocols import CAN_TX, can_transmit, can_transmit_coded
 
 BIT = 20                 # 2 Mbit/s at 40 MHz; any rate is a timer reload
 
@@ -98,12 +98,12 @@ def decode(levels: list[int]) -> tuple[int, bytes, list[int]]:
     return ident, data, raw[:k]
 
 
-async def send(dut, ident: int, data: bytes) -> list[int]:
-    """Reset the chip, load the transmitter and send one frame (the clock
-    is started once per test)."""
+async def send(dut, ident: int, data: bytes, coded: bool) -> list[int]:
+    """Reset the chip, load the transmitter (logic cells, or the shifter's
+    bit coder) and send one frame (the clock is started once per test)."""
     await reset_top(dut)
     bus = Bus(dut)
-    await load_program(dut, can_transmit(BIT))
+    await load_program(dut, (can_transmit_coded if coded else can_transmit)(BIT))
     await start_engine(dut)
     task = cocotb.start_soon(record_line(dut, bus, BIT * (40 + 8 * len(data) + 40)))
     await push_packet(dut, fifo_bytes(ident, data))
@@ -112,12 +112,13 @@ async def send(dut, ident: int, data: bytes) -> list[int]:
 
 
 @cocotb.test()
-async def test_can_frame_with_stuffing(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_can_frame_with_stuffing(dut, coded):
     """Identifier and data with long equal runs, so stuff bits appear in
     the header, the data and the CRC."""
     await start_clock(dut, 25)
     ident, data = 0x000, bytes([0x00, 0xFF, 0x0F, 0xF0])
-    levels = await send(dut, ident, data)
+    levels = await send(dut, ident, data, coded)
     got_ident, got_data, raw = decode(levels)
     assert (got_ident, got_data) == (ident, data)
     expected = stuff(frame_bits(ident, data) + [
@@ -126,11 +127,12 @@ async def test_can_frame_with_stuffing(dut):
 
 
 @cocotb.test()
-async def test_can_random_frames(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_can_random_frames(dut, coded):
     await start_clock(dut, 25)
     rng = random.Random(2026)
     for _ in range(6):
         ident = rng.randrange(0x800)
         data = bytes(rng.randrange(256) for _ in range(rng.randrange(9)))
-        levels = await send(dut, ident, data)
+        levels = await send(dut, ident, data, coded)
         assert decode(levels)[:2] == (ident, data), (hex(ident), data.hex())

@@ -53,7 +53,7 @@ its TX FIFO (*auto-pull*) and give received bytes to its RX FIFO
 (*auto-push*).
 
 There are 2 shifters, at configuration `0x10 + 4k` (register 4 at
-`0x32 + k`):
+`0x32 + k`, the bit coder's registers 5 and 6 at `0x36 + k` and `0x38 + k`):
 
 | Reg | Field |
 | --- | --- |
@@ -62,6 +62,8 @@ There are 2 shifters, at configuration `0x10 + 4k` (register 4 at
 | 2 | `[5:0]` shift line, `[11:6]` sample line |
 | 3 | `[5:0]` start line, `[10:6]` input line, `[11]` auto-pull, `[12]` auto-push |
 | 4 | `[4:0]` burst-end line, `[5]` burst mode, `[6]` end burst on an end-of-packet byte, `[12:7]` abort line |
+| 5 | bit coder: `[2:0]` stuff after N bits (0: off), `[3]` runs of ones (else equal bits), `[4]` NRZI, `[5]` code received bits (else sent ones), `[6]` arm at the first 0, `[7]` invert tail, `[8]` word line pulses every bit, `[14:9]` tail length |
+| 6 | bit coder: `[4:0]` stuffing gate level, `[5]` gated, `[10:6]` bits kept from the CRC link |
 
 Good to know:
 
@@ -80,6 +82,38 @@ Good to know:
   injection).
 - **Overrun:** if a second byte arrives before the first was taken,
   `status[14]` is set.
+
+### Bit coder
+
+**What it is for:** the bit-level glue that USB, CAN and HDLC wrap around
+their bytes (bit stuffing, NRZI, and the CRC sent after the data). Without
+it, that glue takes logic cells and counters: CAN and USB transmit use all
+8 logic cells and both counters. With it, CAN transmit uses none of either.
+
+The coder sits between the frame and the line, inside the shifter. With
+registers 5 and 6 at 0 it is off and the shifter behaves exactly as above.
+
+- **Stuffing.** After N equal bits in a row (CAN: 5) or N ones (USB: 6,
+  HDLC: 5), a sender puts out one opposite bit without moving on in the
+  frame; a receiver drops that sample, and tags the frame *err*
+  (`status[4]`) if it was not the opposite bit. Runs carry across words,
+  burst words and back-to-back frames, and restart when the shifter
+  starts from idle. *Arm at the first 0* waits for CAN's start-of-frame;
+  the *gate* level turns stuffing on and off (CAN's tail is not stuffed).
+- **NRZI.** Sending, a 0 flips the line and a 1 keeps it. Receiving, a
+  bit is 1 when the line kept its level since the last sample.
+- **Tail.** After the last word, the sender puts out *tail length* bits
+  from the CRC engine (stuffed too), then ends. CAN's CRC goes out as it
+  is (*invert tail*); USB's and HDLC's are inverted by the CRC engine.
+- **CRC link.** The coder hands the CRC engine every frame bit (never a
+  stuff or tail bit) and steps it once per tail bit, over a direct wire
+  rather than signal-space lines (CRC register 6 `[6]`). The first
+  `register 6 [10:6]` bits are not handed over (USB: 16, SYNC and PID).
+- **Bit pulse.** With `[8]` the word line pulses once per received bit
+  instead of once per word, so a counter can count destuffed bits (CAN
+  finds the DLC and the CRC delimiter that way). FIFO pushes stay per word.
+
+A receiving coder needs the shift and sample lines to be the same.
 
 ---
 
@@ -130,8 +164,11 @@ There is 1 CRC engine, at configuration `0x28`–`0x2F`:
 | 2, 3 | check residue, low and high 16 bits |
 | 4 | `[5:0]` absorb line, `[10:6]` data line |
 | 5 | `[5:0]` emit line, `[10:6]` restart line |
-| 6 | `[4:0]` width − 1 (1 to 32 bits), `[5]` start at all ones |
+| 6 | `[4:0]` width − 1 (1 to 32 bits), `[5]` start at all ones, `[6]` linked to a shifter's bit coder, `[7]` which shifter |
 | 7 | `[4:0]` absorb gate level, `[5]` absorb gated, `[10:6]` emit gate level, `[11]` emit gated |
+
+Linked to a shifter's [bit coder](#bit-coder), the CRC takes absorb, data
+and emit from the coder instead of registers 4 and 5; the gates still apply.
 
 A gated absorb or emit acts only while its gate level is high. A raw timer
 edge can then step the CRC in the same cycle as the shifter it follows;

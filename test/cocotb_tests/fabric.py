@@ -264,6 +264,21 @@ class Px8:
         `on_eop`, a word pulled tagged eop)."""
         self.cfg(0x32 + k, _level(end) | (1 << 5) | (int(on_eop) << 6) | (abort << 7))
 
+    def shifter_coder(self, k: int, *, stuff: int = 0, ones: bool = False,
+                      nrzi: bool = False, rx: bool = False, sof: bool = False,
+                      tail: int = 0, tail_invert: bool = False, strobe: bool = False,
+                      gate: int | None = None, skip: int = 0) -> None:
+        """Bit coder between shifter k's frame and its line: insert (or,
+        with `rx`, drop) a stuff bit after `stuff` equal bits (`ones`: 1s)
+        in a row, NRZI, and after the last word send `tail` bits from the
+        CRC tile (inverted with `tail_invert`). `sof` waits for the first
+        0; `gate` (a level) enables stuffing; the CRC link skips the first
+        `skip` frame bits; `strobe` makes the word line pulse per bit."""
+        assert 0 <= stuff < 8 and 0 <= tail < 64 and 0 <= skip < 32
+        self.cfg(0x36 + k, stuff | (int(ones) << 3) | (int(nrzi) << 4) | (int(rx) << 5) |
+                 (int(sof) << 6) | (int(tail_invert) << 7) | (int(strobe) << 8) | (tail << 9))
+        self.cfg(0x38 + k, (0 if gate is None else _level(gate) | (1 << 5)) | (skip << 6))
+
     def shifter_abort(self, k: int, line: int) -> None:
         """No burst mode; while `line` is high the shifter drops the frame in
         progress and stays idle."""
@@ -315,19 +330,24 @@ class Px8:
         self.cfg(base + 2, _pulse(clear))
         self.cfg(base + 1, step | (level << 6) | (mode << 11))
 
-    def crc(self, *, width: int, poly: int, check: int, absorb: int, data: int,
-            emit: int = ZERO, init: int = ZERO, init_ones: bool = True,
-            absorb_gate: int | None = None, emit_gate: int | None = None) -> None:
+    def crc(self, *, width: int, poly: int, check: int, absorb: int = ZERO,
+            data: int | None = None, emit: int = ZERO, init: int = ZERO,
+            init_ones: bool = True, absorb_gate: int | None = None,
+            emit_gate: int | None = None, link: int | None = None) -> None:
         """The register holds its init value until the fabric is armed;
         `init` re-initializes it at runtime (e.g. between packets). A gate
-        level qualifies absorb or emit inside the tile, at no extra cycle."""
+        level qualifies absorb or emit inside the tile, at no extra cycle.
+        With `link` = k, shifter k's bit coder supplies absorb, data and
+        emit directly (no lines; see shifter_coder)."""
+        assert (link is None) == (data is not None), "a CRC takes its data from lines or a link"
         self.cfg(0x28, poly & 0xFFFF)
         self.cfg(0x29, poly >> 16)
         self.cfg(0x2A, check & 0xFFFF)
         self.cfg(0x2B, check >> 16)
-        self.cfg(0x2E, (width - 1) | (int(init_ones) << 5))
+        self.cfg(0x2E, (width - 1) | (int(init_ones) << 5) |
+                 (0 if link is None else (1 << 6) | (link << 7)))
         self.cfg(0x2D, emit | (_pulse(init) << 6))
-        self.cfg(0x2C, absorb | (_level(data) << 6))
+        self.cfg(0x2C, absorb | ((0 if data is None else _level(data)) << 6))
         gates = 0
         if absorb_gate is not None:
             gates |= _level(absorb_gate) | (1 << 5)

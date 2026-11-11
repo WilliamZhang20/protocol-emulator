@@ -35,10 +35,15 @@ What the chip cannot do yet, and what is not yet measured.
 - **CAN bus integration.** The receiver node takes the first edge after
   arming as a start of frame. Joining a bus in the middle of someone
   else's frame gives one bad packet; the CAN rule of waiting for 11
-  recessive bits needs a logic cell the node does not have left.
+  recessive bits needs a logic cell. The logic-cell node has none left;
+  the bit-coder node (`can_receive_coded`) frees one, but does not use it
+  for this yet.
 - **Resources.** The CAN receiver and the HDLC transmitter use all 8
   logic cells; the CAN receiver also all 4 timers, both shifters and
-  counters, and the CRC. Counters are 8-bit and only count up: the
+  counters, and the CRC. The shifters' bit coder takes stuffing, NRZI and
+  the CRC tail out of the logic cells: CAN transmit then needs none, USB
+  transmit 3 (see [protocols](protocols.md)). HDLC and 10BASE-T
+  (Manchester) do not use it yet. Counters are 8-bit and only count up: the
   quadrature decoder therefore sends each step to the host, which keeps
   the count, and VGA counts lines on the controller (the fabric still
   applies VSYNC on the line boundary).

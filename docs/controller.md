@@ -93,5 +93,6 @@ For `PULL`, `PUSH` and `TXP`, operand bit 4 picks the FIFO channel; for
 | `0x30` | controller flags `[1:0]` (lines 54, 55) |
 | `0x31` | arm the fabric |
 | `0x34`, `0x35` | [contexts](contexts.md): select line, which contexts writes go to |
+| `0x36`–`0x39` | shifter [bit coder](tiles.md#bit-coder) registers: `0x36 + k` (register 5), `0x38 + k` (register 6) |
 
 Next: [Host link](host-link.md).

@@ -40,6 +40,8 @@
 //   0x32-0x33 shifter k burst register (shifter reg 4)
 //   0x34      context select [5:0] line, [6] enable
 //   0x35      contexts written [1:0] (reset 01: context 0)
+//   0x36-0x37 shifter k bit coder register (shifter reg 5)
+//   0x38-0x39 shifter k bit coder gate/skip register (shifter reg 6)
 //   0x60-0x7F byte tile t = {channel, rx, stage} addr[4:2], reg addr[1:0];
 //             TX: TX FIFO -> stage 0 -> stage 1 -> shifter;
 //             RX: shifter -> stage 0 -> stage 1 -> RX FIFO
@@ -382,11 +384,17 @@ module protocol_emulator_core (
   endgenerate
 
   wire [15:0] s_rx_data_0, s_rx_data_1, s_status_0, s_status_1;
+  wire [1:0]  link_absorb, link_bit, link_emit;   // shifter -> CRC links
+  // Shifter k's registers: 0x10+4k..0x13+4k (regs 0-3), then 0x32+k,
+  // 0x36+k and 0x38+k (regs 4, 5, 6).
+  wire       sh_extra = cfg_addr == 8'h32 || cfg_addr == 8'h33 || cfg_addr == 8'h36 ||
+                        cfg_addr == 8'h37 || cfg_addr == 8'h38 || cfg_addr == 8'h39;
+  wire [2:0] sh_reg = cfg_addr[5] ? 3'd4 + {1'b0, cfg_addr[3:2]} : {1'b0, cfg_addr[1:0]};
 
   fabric_shifter shifter0 (
       .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || cfg_addr == 8'h32)),
-      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
+      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || (sh_extra && !cfg_addr[0]))),
+      .cfg_addr(sh_reg), .cfg_data(cfg_data),
       .cfg_bank(write_bank), .ctx_next(context_next),
       .lines(shifter_lines),
       .pulls(sh_pulls[0]),
@@ -394,15 +402,17 @@ module protocol_emulator_core (
       .tx_data(sh_tx_byte[7:0]), .tx_eop(sh_tx_eop[0]), .tx_err(sh_tx_err[0]),
       .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
       .rx_byte(sh_rx_byte[7:0]), .rx_eop(sh_rx_eop[0]), .rx_err(sh_rx_err[0]),
+      .crc_in(crc_out),
       .out(s_out[0]), .active(s_active[0]),
       .word_pulse(s_word[0]), .stop_pulse(s_stop[0]),
-      .rx_data(s_rx_data_0), .status(s_status_0)
+      .rx_data(s_rx_data_0), .status(s_status_0),
+      .crc_absorb(link_absorb[0]), .crc_bit(link_bit[0]), .crc_emit(link_emit[0])
   );
 
   fabric_shifter shifter1 (
       .clk(clk), .rst_n(rst_n), .enable(live),
-      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || cfg_addr == 8'h33)),
-      .cfg_addr(cfg_addr[5] ? 3'd4 : {1'b0, cfg_addr[1:0]}), .cfg_data(cfg_data),
+      .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || (sh_extra && cfg_addr[0]))),
+      .cfg_addr(sh_reg), .cfg_data(cfg_data),
       .cfg_bank(write_bank), .ctx_next(context_next),
       .lines(shifter_lines),
       .pulls(sh_pulls[1]),
@@ -410,9 +420,11 @@ module protocol_emulator_core (
       .tx_data(sh_tx_byte[15:8]), .tx_eop(sh_tx_eop[1]), .tx_err(sh_tx_err[1]),
       .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),
       .rx_byte(sh_rx_byte[15:8]), .rx_eop(sh_rx_eop[1]), .rx_err(sh_rx_err[1]),
+      .crc_in(crc_out),
       .out(s_out[1]), .active(s_active[1]),
       .word_pulse(s_word[1]), .stop_pulse(s_stop[1]),
-      .rx_data(s_rx_data_1), .status(s_status_1)
+      .rx_data(s_rx_data_1), .status(s_status_1),
+      .crc_absorb(link_absorb[1]), .crc_bit(link_bit[1]), .crc_emit(link_emit[1])
   );
 
   wire [31:0] crc_value;
@@ -421,6 +433,7 @@ module protocol_emulator_core (
       .cfg_we(cfg_we && cfg_addr[7:3] == 5'b00101),
       .cfg_addr(cfg_addr[2:0]), .cfg_data(cfg_data),
       .lines(lines),
+      .link_absorb(link_absorb), .link_bit(link_bit), .link_emit(link_emit),
       .out(crc_out), .ok(crc_ok), .value(crc_value)
   );
 

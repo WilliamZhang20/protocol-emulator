@@ -22,6 +22,40 @@
 //            [12:7] abort line: while it is high the tile is idle and a
 //            frame in progress is dropped without a word pulse or push
 //            (e.g. carrier loss in the middle of a word); 0 never aborts
+//   5 coder  [2:0] stuff run N (0: no stuffing)  [3] runs of ones (else
+//            of equal bits)  [4] NRZI  [5] code the received bits (else
+//            the transmitted ones)  [6] arm at the first 0
+//            [7] invert tail bits  [8] word line pulses every frame bit
+//            [14:9] tail length
+//   6 coder  [4:0] stuffing gate level (signal space 32-63)  [5] gated
+//            [10:6] frame bits not given to the CRC link
+//
+// Bit coder (registers 5 and 6; all zero: off). It codes the bit stream
+// between the frame and the pin, so the stuffing, NRZI and CRC-sequencing
+// glue of USB, CAN and HDLC needs no logic cells or counters:
+// - Stuffing. After N equal bits in a row (or N ones), a transmitter
+//   sends one complemented bit without advancing the frame; a receiver
+//   drops the sample after them, and flags the frame err (status bit 4) if
+//   that sample was not the complement. A stuff position restarts the run
+//   either way. Runs carry across words, bursts
+//   and back-to-back frames; they restart when the tile starts from idle.
+//   Stuffing waits for the first 0 if [6] is set (CAN's SOF ends an idle
+//   bus) and acts only while the gate level is high if [5] of register 6.
+// - NRZI. A transmitted 0 toggles the line and a 1 keeps it; the idle
+//   level is the line's starting state. A received bit is 1 when the line
+//   kept its level since the previous sample (the first compares with the
+//   idle level).
+// - Tail. After the frame's last bit (and after the last word of a burst)
+//   the transmitter sends `tail length` bits from the CRC tile, stuffed
+//   like the rest, then ends. A stuff bit due after the last tail bit is
+//   still sent.
+// - CRC link. The tile gives the CRC tile every frame bit it codes (sent or
+//   sampled, never a stuff or tail bit), from the arming 0 on and after
+//   the first `register 6 [10:6]` such bits, and steps it once per tail
+//   bit, over a direct registered link (the CRC tile selects it).
+// - Bit strobe. With [8] the word line pulses for every frame bit instead
+//   of every word (an RX bit counter for CAN); FIFO pushes stay per word.
+// A receiving coder needs the shift and sample lines to be the same.
 //
 // FIFO bytes carry tags. TX: a byte pulled tagged err is sent with its
 // parity bit inverted (error injection). RX: an auto-pushed byte is tagged
@@ -59,6 +93,7 @@ module fabric_shifter (
     input  wire        tx_err,
     output wire        rx_request,
     input  wire        rx_grant,
+    input  wire        crc_in,      // CRC tile's output bit (tail source)
     output wire [7:0]  rx_byte,
     output wire        rx_eop,
     output wire        rx_err,
@@ -67,7 +102,10 @@ module fabric_shifter (
     output wire        word_pulse,
     output wire        stop_pulse,
     output wire [15:0] rx_data,
-    output wire [15:0] status
+    output wire [15:0] status,
+    output wire        crc_absorb,  // CRC link, registered: absorb crc_bit
+    output wire        crc_bit,
+    output wire        crc_emit     //   ... or shift out one bit
 );
   reg [15:0] tx_word;
   // Each frame bit is read through one view only: the boundary fields and
@@ -79,6 +117,8 @@ module fabric_shifter (
   wire [11:0] step;
   wire [12:0] io;
   wire [12:0] burst;
+  wire [14:0] coder;
+  wire [10:0] coder2;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
   reg        par_cap, post_wrong;    // RX framing check (see below)
@@ -107,6 +147,28 @@ module fabric_shifter (
   wire       burst_mode = burst[5];
   wire       abort = lines[burst[12:7]];
   wire       run   = enable && !abort;
+  wire [2:0] stuff_n    = coder[2:0];
+  wire       ones_run   = coder[3];
+  wire       coder_rx   = coder[5];
+  wire       nrzi_tx    = coder[4] && !coder_rx;
+  wire       nrzi_rx    = coder[4] && coder_rx;
+  wire       sof_arm    = coder[6];
+  wire       tail_inv   = coder[7];
+  wire       bit_strobe = coder[8];
+  wire [5:0] tail_n     = coder[14:9];
+  wire [4:0] skip_n     = coder2[10:6];
+
+  // Coder state.
+  reg [2:0] run_len;     // equal bits (or ones) in a row, saturating
+  reg       cur_bit;     // last coded bit, before NRZI
+  reg       armed;       // stuffing and CRC link active
+  reg [4:0] skip_left;   // frame bits still kept from the CRC link
+  reg       stuffing;    // TX: the current bit is a stuff bit
+  reg       tailing;     // TX: the frame is sending its tail
+  reg [5:0] tail_left;   // tail bits after the current one
+  reg       prev_in;     // RX NRZI: line level at the previous sample
+  reg       stuff_err;   // RX: a stuff bit was not the complement
+  reg       crc_absorb_r, crc_bit_r, crc_emit_r;
 
   // Frame boundaries depend only on the frame register, so they are
   // registered alongside it (computed from the value active next cycle,
@@ -159,24 +221,39 @@ module fabric_shifter (
   wire [3:0] data_pos_raw = index[3:0] - pre_n[3:0];
   wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;
 
-  wire shift_evt  = active_r && lines[step[5:0]];
-  wire sample_now = active_r && lines[step[11:6]] && !lead_wait;
+  wire [31:0] levels = lines[63:32];
+  wire shift_raw  = active_r && lines[step[5:0]];
+  wire sample_raw = active_r && lines[step[11:6]] && !lead_wait;
+  // A stuff bit is due once the run is long enough; a transmitter sends
+  // it at this boundary instead of advancing, a receiver drops this
+  // sample. Neither moves the frame, so they mask the shift and sample.
+  wire stuff_due = stuff_n != 3'd0 && run_len >= stuff_n && armed &&
+                   (!coder2[5] || levels[coder2[4:0]]);
+  wire stuff_tx = !coder_rx && shift_raw && !lead_wait && stuff_due;
+  wire stuff_rx = coder_rx && sample_raw && stuff_due;
+  wire shift_evt  = shift_raw && !stuff_tx && !stuff_rx;
+  wire sample_now = sample_raw && !stuff_rx;
   wire end_evt = end_on_sample ? sample_now : (shift_evt && !lead_wait);
   // `>=` rather than `==`: if the framing changes under a frame in progress
   // (a context switch), the frame still ends at its next end event.
   wire at_last = index >= last_index;
-  wire [31:0] levels = lines[63:32];
   // A burst continues past this word's last data bit unless the end line
   // has been seen; with auto pull it also needs the next byte.
-  wire burst_want = run && burst_mode && index == data_last && end_evt &&
+  wire burst_want = run && burst_mode && !tailing && index == data_last && end_evt &&
                     !(burst_end_seen || levels[burst[4:0]] || (burst[6] && word_eop));
   wire burst_next = burst_want && (!auto_pull || tx_grant);
-  wire frame_end = run && at_last && end_evt;
+  wire frame_end_raw = run && at_last && end_evt;
+  // A frame with a tail ends only after its tail bits.
+  wire tail_pending = !coder_rx && tail_n != 6'd0 && (!tailing || tail_left != 6'd0);
+  wire frame_end = frame_end_raw && !tail_pending;
+  wire tail_step = frame_end_raw && tail_pending && !burst_next;
   wire done = frame_end && !burst_next;
   wire trigger = start_sel != 6'd0 ? lines[start_sel] : auto_pull;
   wire start = run && (!active_r || done) && trigger &&
                (!auto_pull || tx_grant);
-  wire in_bit = levels[io[10:6]];
+  wire in_line = levels[io[10:6]];
+  // The received bit: NRZI-decoded (1 when the line kept its level) or as is.
+  wire in_bit = nrzi_rx ? (in_line == prev_in) : in_line;
   wire [15:0] data_bit_mask = 16'd1 << data_pos;
   wire [15:0] rx_next = (sample_now && in_data) ?
       ((rx_word & ~data_bit_mask) | (in_bit ? data_bit_mask : 16'd0)) :
@@ -205,10 +282,13 @@ module fabric_shifter (
   assign out        = out_r;
   assign active     = active_r;
   assign pulls      = enable && auto_pull;
-  assign word_pulse = done || burst_next;
+
   assign stop_pulse = done && !start;
   assign rx_data    = rx_word;
-  assign status = {active_r, overrun, push_pending, 9'b0, post_cap};
+  assign status = {active_r, overrun, push_pending, 8'b0, stuff_err, post_cap};
+  assign crc_absorb = crc_absorb_r;
+  assign crc_bit    = crc_bit_r;
+  assign crc_emit   = crc_emit_r;
 
   config_bank #(.WIDTH(16)) frame_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd1), .write_bank(cfg_bank), .data(cfg_data),
@@ -222,6 +302,12 @@ module fabric_shifter (
   config_bank #(.WIDTH(13)) burst_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
       .ctx_next(ctx_next), .value(burst), .next());
+  config_bank #(.WIDTH(15)) coder_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd5), .write_bank(cfg_bank), .data(cfg_data[14:0]),
+      .ctx_next(ctx_next), .value(coder), .next());
+  config_bank #(.WIDTH(11)) coder2_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd6), .write_bank(cfg_bank), .data(cfg_data[10:0]),
+      .ctx_next(ctx_next), .value(coder2), .next());
 
   // The output is a register so downstream logic cells and tiles start their
   // paths at a flop. Each candidate (new frame, advance, hold) is
@@ -234,17 +320,111 @@ module fabric_shifter (
   wire bit_burst = frame_bit_at(pre_n, burst_word);
   wire bit_next  = frame_bit_at(index + 5'd1, tx_word);
   wire bit_hold  = frame_bit_at(index, tx_word);
+  wire bit_tail  = crc_in ^ tail_inv;
+  // NRZI: a 0 toggles the line, a 1 keeps it.
+  function automatic line_for(input b);
+    line_for = nrzi_tx ? (out_r ^ !b) : b;
+  endfunction
   always @(posedge clk) begin
     if (!rst_n)
       out_r <= 1'b0;
     else if (start)
-      out_r <= bit_start;
+      out_r <= line_for(bit_start);
     else if (burst_next)
-      out_r <= bit_burst;
+      out_r <= line_for(bit_burst);
     else if (!active_r || done || !run)
       out_r <= idle_next;
-    else
-      out_r <= advance ? bit_next : bit_hold;
+    else if (stuff_tx)
+      out_r <= line_for(!cur_bit);
+    else if (tail_step)
+      out_r <= line_for(bit_tail);
+    else if (advance)
+      out_r <= line_for(bit_next);
+    else if (!nrzi_tx && !stuffing && !tailing)
+      out_r <= bit_hold;
+  end
+
+  // ---------------------------------------------------------- bit coder
+  // One coded bit per event: a transmitted bit (new frame, next burst word,
+  // advance, stuff or tail bit) or a received sample (stuff or not).
+  wire fresh = start && !active_r;       // starting from idle: runs restart
+  wire present_data = start || burst_next || advance;
+  wire tx_evt = present_data || stuff_tx || tail_step;
+  wire coded_evt = coder_rx ? sample_raw : tx_evt;
+  wire coded_bit = coder_rx  ? in_bit :
+                   start      ? bit_start :
+                   burst_next ? bit_burst :
+                   stuff_tx   ? !cur_bit :
+                   tail_step  ? bit_tail : bit_next;
+  wire coded_stuff = stuff_tx || stuff_rx;
+  // A frame bit: neither a stuff bit nor a tail bit.
+  wire bit_taken = coder_rx ? sample_now : present_data;
+  wire word_end = done || burst_next;
+  assign word_pulse = bit_strobe ? bit_taken : word_end;
+  wire [2:0] run_b   = fresh ? 3'd0 : run_len;
+  wire       armed_b = fresh ? !sof_arm : armed;
+  wire [4:0] skip_b  = fresh ? skip_n : skip_left;
+  wire [2:0] run_inc = run_b == 3'd7 ? 3'd7 : run_b + 3'd1;
+  // A stuff position always restarts the run, as a correct stuff bit
+  // would (a wrong one is flagged, and the stream stays in step).
+  wire [2:0] run_new = (ones_run && (coded_stuff || !coded_bit)) ? 3'd0 :
+                       ones_run ? run_inc :
+                       (!coded_stuff && run_b != 3'd0 && coded_bit == cur_bit) ? run_inc : 3'd1;
+  wire       armed_new = armed_b || !coded_bit;
+  wire       stuff_bad = stuff_rx && (ones_run ? in_bit : in_bit == cur_bit);
+
+  always @(posedge clk) begin
+    if (!rst_n || !enable) begin
+      run_len      <= 3'd0;
+      cur_bit      <= 1'b0;
+      armed        <= 1'b0;
+      skip_left    <= 5'd0;
+      stuffing     <= 1'b0;
+      tailing      <= 1'b0;
+      tail_left    <= 6'd0;
+      prev_in      <= 1'b0;
+      stuff_err    <= 1'b0;
+      crc_absorb_r <= 1'b0;
+      crc_bit_r    <= 1'b0;
+      crc_emit_r   <= 1'b0;
+    end else begin
+      crc_absorb_r <= 1'b0;
+      crc_emit_r   <= 1'b0;
+      if (fresh) begin
+        run_len   <= 3'd0;
+        armed     <= !sof_arm;
+        skip_left <= skip_n;
+        stuff_err <= 1'b0;
+        prev_in   <= idle_next;
+      end
+      if (coded_evt && run) begin
+        run_len <= run_new;
+        cur_bit <= coded_bit;
+        armed   <= armed_new;
+        if (stuff_bad)
+          stuff_err <= 1'b1;
+        if (!coded_stuff && !tail_step && armed_new) begin
+          if (skip_b != 5'd0) begin
+            skip_left <= skip_b - 5'd1;
+          end else begin
+            crc_absorb_r <= 1'b1;
+            crc_bit_r    <= coded_bit;
+          end
+        end
+      end
+      if (sample_raw && nrzi_rx)
+        prev_in <= in_line;
+      // Transmit phase: a stuff bit or the tail is on the line.
+      if (tx_evt || !active_r || done || !run)
+        stuffing <= stuff_tx;
+      if (start || !active_r || done || !run)
+        tailing <= 1'b0;
+      else if (tail_step) begin
+        tailing   <= 1'b1;
+        tail_left <= (tailing ? tail_left : tail_n) - 6'd1;
+        crc_emit_r <= 1'b1;
+      end
+    end
   end
 
   always @(posedge clk) begin
@@ -277,14 +457,14 @@ module fabric_shifter (
     end else begin
       if (rx_grant)
         push_pending <= 1'b0;
-      if (word_pulse && auto_push) begin
+      if (word_end && auto_push) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;
         push_pending <= 1'b1;
         // Include a data bit captured on this same cycle.
         push_byte <= rx_next[7:0];
         push_eop  <= done && burst_mode;
-        push_err  <= done && (post_bad || par_bad);
+        push_err  <= done && (post_bad || par_bad || stuff_err || stuff_bad);
       end
 
       if (start || burst_next) begin

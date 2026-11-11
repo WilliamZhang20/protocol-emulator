@@ -11,6 +11,9 @@
 //   4   [5:0] absorb line  [10:6] data level (signal space 32-63)
 //   5   [5:0] emit line    [10:6] init pulse line (signal space 0-31)
 //   6   [4:0] width-1      [5] init to all ones
+//       [6] linked: absorb, data and emit come from shifter [7]'s bit coder
+//       over a direct registered link instead of signal-space lines (the
+//       gates still apply)
 //   7   [4:0] absorb gate level  [5] absorb gated
 //       [10:6] emit gate level   [11] emit gated
 //
@@ -31,6 +34,9 @@ module fabric_crc (
     input  wire [2:0]  cfg_addr,
     input  wire [15:0] cfg_data,
     input  wire [63:0] lines,
+    input  wire [1:0]  link_absorb,   // shifter k's CRC link
+    input  wire [1:0]  link_bit,
+    input  wire [1:0]  link_emit,
     output wire        out,
     output wire        ok,
     output wire [31:0] value
@@ -39,7 +45,7 @@ module fabric_crc (
   reg [31:0] check;
   reg [10:0] absorb_cfg;
   reg [10:0] emit_cfg;
-  reg [5:0]  shape;
+  reg [7:0]  shape;
   reg [11:0] gate_cfg;
   reg [31:0] crc;
   reg        ok_r;
@@ -60,12 +66,14 @@ module fabric_crc (
     end
   end
   wire msb = |(crc & top);
-  wire feedback = msb ^ lines[{1'b1, absorb_cfg[10:6]}];
+  wire linked = shape[6];
+  wire data_in  = linked ? link_bit[shape[7]] : lines[{1'b1, absorb_cfg[10:6]}];
+  wire feedback = msb ^ data_in;
   wire [31:0] shifted = crc << 1;
-  wire absorb_now = lines[absorb_cfg[5:0]] &&
-                    (!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);
-  wire emit_now   = lines[emit_cfg[5:0]] &&
-                    (!gate_cfg[11] || lines[{1'b1, gate_cfg[10:6]}]);
+  wire absorb_src = linked ? link_absorb[shape[7]] : lines[absorb_cfg[5:0]];
+  wire emit_src   = linked ? link_emit[shape[7]] : lines[emit_cfg[5:0]];
+  wire absorb_now = absorb_src && (!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);
+  wire emit_now   = emit_src && (!gate_cfg[11] || lines[{1'b1, gate_cfg[10:6]}]);
 
   assign out   = !msb;
   assign ok    = ok_r;
@@ -77,7 +85,7 @@ module fabric_crc (
       check      <= 32'd0;
       absorb_cfg <= 11'd0;
       emit_cfg   <= 11'd0;
-      shape      <= 6'd0;
+      shape      <= 8'd0;
       gate_cfg   <= 12'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
@@ -87,7 +95,7 @@ module fabric_crc (
         3'd3: check[31:16] <= cfg_data;
         3'd4: absorb_cfg <= cfg_data[10:0];
         3'd5: emit_cfg   <= cfg_data[10:0];
-        3'd6: shape      <= cfg_data[5:0];
+        3'd6: shape      <= cfg_data[7:0];
         default: gate_cfg   <= cfg_data[11:0];   // 3'd7
       endcase
     end

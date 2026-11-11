@@ -81,6 +81,15 @@ two-bit SE0, J, and every transition on the 33-cycle bit grid). It also
 receives packets from a sender running 3% slow (clock recovery) and checks
 the CRC16 residue verdict for good and corrupted packets.
 
+`test_usb.py`, `test_can.py` and `test_can_rx.py` run every case twice
+(`coded=False/True`): once with the logic-cell program and once with the
+shifter's bit coder doing the stuffing, NRZI and CRC tail
+(`*_coded` in `protocols.py`), against the same reference models.
+`test_can_receive_coded_flags_stuff_error` sends a frame whose first stuff
+bit repeats the five before it; the destuffed bytes and the CRC are still
+the frame's, so only the coder's stuff check can tag it err (and the next
+frame must come through clean).
+
 `test_ethernet.py` runs at 40 MHz and records a full 10BASE-T link session
 through edge triggers, so 1.5 M cycles stay fast. It checks three link pulses
 that are exactly 100 ns wide and exactly 16 ms apart, and between them a

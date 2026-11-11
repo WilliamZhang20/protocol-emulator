@@ -25,6 +25,7 @@ clock cycles, instead of a few chosen ones.
 | Each tile, the controller, the host link, FIFO, SRAM | A separate model of what that block should do |
 | Logic cell with both contexts | Writes to either or both contexts, switching at any time |
 | Byte tiles | Escape then unescape returns exactly the original bytes; a corrupted byte is always caught |
+| Shifter bit coder | The sent line never has more than N equal bits (or N ones) in a row, for any N, data, timing and CRC tail, across words and frames, counted by the harness from the line alone |
 | Whole core | No pin is driven before the arm write; no FIFO is ever overfilled or over-read |
 
 Some checks are full proofs (true for any length of time). Others are
@@ -109,7 +110,7 @@ must fail.
 
 How do we know the checks would catch a real bug? We plant one.
 
-`formal/mutation_check.py` makes **33 small deliberate bugs** in copies of
+`formal/mutation_check.py` makes **37 small deliberate bugs** in copies of
 the design, for example:
 
 - a parity bit flipped;

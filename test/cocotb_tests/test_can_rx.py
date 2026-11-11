@@ -10,7 +10,7 @@ from cocotb_tests.common import driven_level, reset_top, start_clock
 from cocotb_tests.fabric import (
     Bus, drain_rx_tagged, load_program, pop_rx_tagged, select_channel, start_engine,
 )
-from cocotb_tests.protocols import CAN_RX, CAN_TX, can_receive
+from cocotb_tests.protocols import CAN_RX, CAN_TX, can_receive, can_receive_coded
 from cocotb_tests.test_can import crc15, frame_bits, stuff
 
 BIT, SAMPLE = 40, 30         # 1 Mbit/s at 40 MHz, sample point 75%
@@ -64,7 +64,7 @@ def parse(stream: bytes) -> tuple[int, bytes, bool]:
     return ident, data, crc == crc15(head_data)
 
 
-async def receive_and_ack(dut, skew: int) -> None:
+async def receive_and_ack(dut, skew: int, coded: bool) -> None:
     await start_clock(dut, 25)
     await reset_top(dut)
     bus = Bus(dut)
@@ -74,7 +74,7 @@ async def receive_and_ack(dut, skew: int) -> None:
              (0x7FF, b"", False), (0x2A5, bytes(rng.randrange(256) for _ in range(8)), False),
              (0x155, bytes([0x55]), True)]
     frames = [wire_frame(i, d, c) for i, d, c in cases]
-    await load_program(dut, can_receive(BIT, SAMPLE))
+    await load_program(dut, (can_receive_coded if coded else can_receive)(BIT, SAMPLE))
     await select_channel(dut, 1)
     await start_engine(dut)
     for _ in range(1000):                  # the node configures and arms first
@@ -111,15 +111,74 @@ async def receive_and_ack(dut, skew: int) -> None:
 
 
 @cocotb.test()
-async def test_can_receive_and_ack(dut):
-    await receive_and_ack(dut, 0)
+@cocotb.parametrize(coded=[False, True])
+async def test_can_receive_and_ack(dut, coded):
+    await receive_and_ack(dut, 0, coded)
 
 
 @cocotb.test()
-async def test_can_receive_slow_transmitter(dut):
-    await receive_and_ack(dut, +1)
+@cocotb.parametrize(coded=[False, True])
+async def test_can_receive_slow_transmitter(dut, coded):
+    await receive_and_ack(dut, +1, coded)
 
 
 @cocotb.test()
-async def test_can_receive_fast_transmitter(dut):
-    await receive_and_ack(dut, -1)
+@cocotb.parametrize(coded=[False, True])
+async def test_can_receive_fast_transmitter(dut, coded):
+    await receive_and_ack(dut, -1, coded)
+
+
+def stuff_error_frame(ident: int, data: bytes) -> list[int]:
+    """A frame whose first stuff bit repeats the five bits before it (six
+    equal bits: a stuff error). Data and CRC are untouched, so a receiver
+    that only drops the stuff position still sees a good CRC."""
+    bits = frame_bits(ident, data)
+    crc = crc15(bits)
+    body, run, last, broken = [], 0, None, False
+    for bit in bits + [(crc >> (14 - i)) & 1 for i in range(15)]:
+        body.append(bit)
+        run = run + 1 if bit == last else 1
+        last = bit
+        if run == 5:
+            body.append(bit if not broken else 1 - bit)
+            broken = True
+            run, last = 1, body[-1]
+    assert broken
+    return body + [1, 1, 1] + [1] * 7 + [1] * 3
+
+
+@cocotb.test()
+async def test_can_receive_coded_flags_stuff_error(dut):
+    """The bit coder checks every dropped stuff bit: six equal bits tag the
+    frame err (the destuffed bytes and the CRC are still the frame's)."""
+    await start_clock(dut, 25)
+    await reset_top(dut)
+    bus = Bus(dut)
+    bus.drive[CAN_RX] = 1
+    ident, data = 0x000, bytes([0x0F])        # five dominant bits right after SOF
+    await load_program(dut, can_receive_coded(BIT, SAMPLE))
+    await select_channel(dut, 1)
+    await start_engine(dut)
+    for _ in range(1000):
+        await RisingEdge(dut.clk)
+    acks: list[list[int]] = []
+    frames = [stuff_error_frame(ident, data), wire_frame(ident, data)]
+    driver = cocotb.start_soon(run_bus(dut, bus, frames, acks))
+    entries = []
+    while not driver.done():
+        entry = await pop_rx_tagged(dut)
+        if entry is not None:
+            entries.append(entry)
+    await driver
+    entries += await drain_rx_tagged(dut)
+    packets, current = [], []
+    for byte, eop, err in entries:
+        current.append(byte)
+        if eop:
+            packets.append((bytes(current), err))
+            current = []
+    assert len(packets) == 2, [p[0].hex() for p in packets]
+    for stream, _ in packets:
+        assert parse(stream) == (ident, data, True), stream.hex()
+    assert packets[0][1], "a stuff error must tag the frame err"
+    assert not packets[1][1], "the stuff error must not leak into the next frame"

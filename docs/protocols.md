@@ -74,6 +74,26 @@ On the chip:
 5. **The controller** only says "now end the packet". A logic cell applies
    that at the next bit, never in place of a stuffed bit.
 
+The same packet on the shifter's [bit coder](tiles.md#bit-coder)
+(`usb_ls_transmit_coded`): the coder does the stuffing, the NRZI and the
+CRC tail, and feeds the CRC itself. What is left is three logic cells for
+the pins and SE0, and no counter.
+
+### The bit coder, protocol by protocol
+
+The tests run each of these protocols twice, once as logic cells and once
+on the bit coder, against the same reference models:
+
+| Protocol | Logic cells | Counters |
+| --- | --- | --- |
+| CAN transmit | 8 → 0 | 2 → 0 |
+| USB transmit | 8 → 3 | 2 → 0 |
+| USB receive | 6 → 2 | 1 → 0 |
+| CAN receive | 8 → 7 | 2 → 1 |
+
+The CAN receiver also reports stuff errors, which the logic-cell version
+cannot see.
+
 ### 10BASE-T receive
 
 10BASE-T uses Manchester code: every bit has a transition in its middle. A

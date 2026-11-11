@@ -1,24 +1,35 @@
 [tasks]
-bmc
-cover
+bmc tile
+cover tile
+coder_bmc coder
+coder_cover coder
 
 [options]
 bmc: mode bmc
 cover: mode cover
 bmc: depth 24
 cover: depth 48
+coder_bmc: mode bmc
+coder_bmc: depth 30
+coder_cover: mode cover
+coder_cover: depth 30
 
 [engines]
 bmc: smtbmc bitwuzla
 cover: btor btormc
+coder_bmc: smtbmc bitwuzla
+coder_cover: btor btormc
 
 [script]
 read -formal -sv config_bank.v
 read -formal -sv fabric_shifter.v
-read -formal -sv fabric_shifter_properties.sv
-prep -top fabric_shifter_properties
+tile: read -formal -sv fabric_shifter_properties.sv
+tile: prep -top fabric_shifter_properties
+coder: read -formal -sv fabric_shifter_coder_properties.sv
+coder: prep -top fabric_shifter_coder_properties
 
 [files]
 ../../src/config_bank.v
 ../../src/fabric_shifter.v
 fabric_shifter_properties.sv
+fabric_shifter_coder_properties.sv

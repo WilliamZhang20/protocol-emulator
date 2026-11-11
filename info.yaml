@@ -8,7 +8,7 @@ project:
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
   # How many tiles your design occupies? A single tile is about 167x108 uM.
-  tiles: "6x4"          # Jane Street protocol-emulator competition allocation
+  tiles: "8x4"          # 8x4 expansion (arch/spatial keeps the signed-off 6x4)
 
   # Your top module name must start with "tt_um_". Make it unique by including your github username:
   top_module:  "tt_um_protocol_emulator"

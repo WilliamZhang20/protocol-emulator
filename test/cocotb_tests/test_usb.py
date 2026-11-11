@@ -14,7 +14,10 @@ from cocotb_tests.fabric import (
 from cocotb_tests.line_codes import (
     J, K, SE0, USB_SYNC, crc16_usb, lsb_bits, usb_decode, usb_encode, usb_state,
 )
-from cocotb_tests.protocols import USB_DM, USB_DP, usb_ls_receive, usb_ls_transmit
+from cocotb_tests.protocols import (
+    USB_DM, USB_DP, usb_ls_receive, usb_ls_receive_coded, usb_ls_transmit,
+    usb_ls_transmit_coded,
+)
 
 BIT = 33            # 50 MHz / 1.5 Mb/s = 33.3 cycles (1% fast, inside spec)
 PID_DATA0 = 0xC3
@@ -57,8 +60,8 @@ TX_CASES = {
 
 
 @cocotb.test()
-@cocotb.parametrize(case=list(TX_CASES))
-async def test_usb_ls_transmit_packet(dut, case):
+@cocotb.parametrize(case=list(TX_CASES), coded=[False, True])
+async def test_usb_ls_transmit_packet(dut, case, coded):
     """Every transition on the bit grid; the decoded line equals SYNC, PID,
     payload and CRC16 with correct stuffing (data and CRC), then exactly
     two bits of SE0 and J. Cases cover an empty and a maximum (8-byte)
@@ -69,7 +72,7 @@ async def test_usb_ls_transmit_packet(dut, case):
     await reset_top(dut)
     bus = Bus(dut)
     stream = bytes([USB_SYNC, PID_DATA0]) + payload
-    await load_program(dut, usb_ls_transmit(BIT))
+    await load_program(dut, (usb_ls_transmit_coded if coded else usb_ls_transmit)(BIT))
     for byte in stream[:4]:
         await push_tx(dut, byte)
     await start_engine(dut)
@@ -118,12 +121,13 @@ async def drive_usb(dut, bus: Bus, states: list[str], bit: int, jitter: int = 0,
     bus.drive[USB_DP], bus.drive[USB_DM] = levels[J]
 
 
-async def run_receive(dut, packet: bytes, sender_bit: int, jitter: int = 0) -> list[int]:
+async def run_receive(dut, packet: bytes, sender_bit: int, jitter: int = 0,
+                      coded: bool = False) -> list[int]:
     await start_clock(dut)
     await reset_top(dut)
     bus = Bus(dut)
     bus.drive[USB_DP], bus.drive[USB_DM] = 0, 1      # idle J
-    await load_program(dut, usb_ls_receive(BIT))
+    await load_program(dut, (usb_ls_receive_coded if coded else usb_ls_receive)(BIT))
     await select_channel(dut, 1)                 # shifter 1's channel
     await start_engine(dut)
     await ClockCycles(dut.clk, 1500)
@@ -135,22 +139,24 @@ async def run_receive(dut, packet: bytes, sender_bit: int, jitter: int = 0) -> l
 
 
 @cocotb.test()
-async def test_usb_ls_receive_with_clock_recovery(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_usb_ls_receive_with_clock_recovery(dut, coded):
     """The sender runs 3% slow; resync on every transition keeps sampling
     mid-bit. Stuffed bits are dropped and the CRC16 residue checks."""
     payload = bytes([0xFF, 0xFF, 0x00, 0x5A, 0xFC])
     packet = data_packet(payload)
-    received = await run_receive(dut, packet, sender_bit=BIT + 1)
+    received = await run_receive(dut, packet, sender_bit=BIT + 1, coded=coded)
     assert bytes(received[:-1]) == packet, bytes(received).hex()
     assert received[-1] == 0xA5, "CRC16 residue should check"
 
 
 @cocotb.test()
-async def test_usb_ls_receive_detects_bad_crc(dut):
+@cocotb.parametrize(coded=[False, True])
+async def test_usb_ls_receive_detects_bad_crc(dut, coded):
     payload = bytes([0x12, 0x34])
     packet = bytearray(data_packet(payload))
     packet[-1] ^= 0x40
-    received = await run_receive(dut, bytes(packet), sender_bit=BIT)
+    received = await run_receive(dut, bytes(packet), sender_bit=BIT, coded=coded)
     assert bytes(received[:-1]) == bytes(packet)
     assert received[-1] == 0xEE, "corrupted CRC must be flagged"
 
@@ -165,14 +171,14 @@ RX_CASES = {
 
 
 @cocotb.test()
-@cocotb.parametrize(case=list(RX_CASES))
-async def test_usb_ls_receive_cases(dut, case):
+@cocotb.parametrize(case=list(RX_CASES), coded=[False, True])
+async def test_usb_ls_receive_cases(dut, case, coded):
     """Clock recovery and destuffing across sender rates (3% fast), random
     per-bit jitter of one cycle, maximum stuffing, an empty data packet and
     a stuffed bit right before EOP; the CRC16 verdict must be good."""
     payload, sender_bit, jitter = RX_CASES[case]
     packet = data_packet(payload)
-    received = await run_receive(dut, packet, sender_bit, jitter)
+    received = await run_receive(dut, packet, sender_bit, jitter, coded)
     assert bytes(received[:-1]) == packet, bytes(received).hex()
     assert received[-1] == 0xA5, "CRC16 residue should check"
 
