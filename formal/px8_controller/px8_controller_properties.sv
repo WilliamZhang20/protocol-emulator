@@ -59,8 +59,8 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
 
   // ---------------------------------------------------- reference model
   localparam M_FETCH = 3'd0, M_EXEC = 3'd1, M_LOAD = 3'd2, M_HALT = 3'd3,
-             M_CFG = 3'd4;
-  reg [2:0]  m_state = M_FETCH;
+             M_CFG = 3'd4, M_START = 3'd5;
+  reg [2:0]  m_state = M_START;
   reg [9:0]  m_pc = 10'd0, m_p = 10'd0;
   reg [15:0] m_a = 16'd0, m_c = 16'd0, m_o = 16'd0;   // O as a full word
   reg [15:0] m_waited = 16'd0;                        // EXEC cycles so far
@@ -81,9 +81,10 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   wire [3:0]  sub  = opnd[3:0];
   wire        exec = enable && m_state == M_EXEC;
 
-  // The SRAM reads the model expects: the fetch, a data read issued by LDM
-  // or by a CFG with words to load, and the block's next byte (none after
-  // its last byte has arrived).
+  // The SRAM reads the model expects: a data read issued by LDM or by a
+  // CFG with words to load, the block's next byte, and before every fetch
+  // a read of the instruction at the model's pc (issued the cycle before,
+  // so the fetch only latches the SRAM output).
   wire in_block    = enable && m_state == M_CFG;
   wire block_write = in_block && m_b == 2'd2;      // a triple completes
   wire block_last  = block_write && m_c == 16'd1;
@@ -108,10 +109,11 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
     if (reset_cycles != 2'd3)
       reset_cycles <= reset_cycles + 1'b1;
     if (!rst_n || !enable) begin
-      m_state <= M_FETCH; m_pc <= 10'd0; m_p <= 10'd0;
+      m_state <= M_START; m_pc <= 10'd0; m_p <= 10'd0;
       m_a <= 16'd0; m_c <= 16'd0; m_o <= 16'd0; m_waited <= 16'd0;
     end else begin
       case (m_state)
+        M_START: m_state <= M_FETCH;
         M_FETCH: begin m_state <= M_EXEC; m_waited <= 16'd0; end
         M_EXEC: if (!m_retire) m_waited <= m_waited + 16'd1; else begin
           m_state <= M_FETCH;
@@ -177,14 +179,20 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   // ------------------------------------------------------- assertions
   reg past_valid = 1'b0;
   always @(posedge clk) past_valid <= rst_n;
+  reg       last_read = 1'b0;
+  reg [9:0] last_addr = 10'd0;
+  always @(posedge clk) begin
+    last_read <= instruction_read;
+    last_addr <= instruction_address;
+  end
 
   always @(*) begin
     if (rst_n && past_valid && enable) begin
       assert(halted == (m_state == M_HALT));
-      assert(instruction_read == (m_state == M_FETCH || data_read || block_read));
-      if (m_state == M_FETCH) assert(instruction_address == m_pc);
-      if (data_read)          assert(instruction_address == m_p);
-      if (block_read)         assert(instruction_address == m_q + 10'd1);
+      if (m_state == M_FETCH) assert(last_read && last_addr == m_pc);
+      if (m_state == M_FETCH || m_state == M_HALT) assert(!instruction_read);
+      if (data_read)  assert(instruction_read && instruction_address == m_p);
+      if (block_read) assert(instruction_read && instruction_address == m_q + 10'd1);
       assert(cfg_we == ((exec && op == 4'h8) || block_write));
       if (exec && op == 4'h8) assert(cfg_addr == opnd[7:0] && cfg_data == m_a);
       if (block_write) assert(cfg_addr == m_ba && cfg_data == block_data);

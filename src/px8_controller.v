@@ -36,7 +36,14 @@
 // retires in its first execute cycle.
 //
 // Timing: every instruction takes 2 cycles (fetch + execute) plus stalls;
-// LDM takes 3, a level WEV at least 3, and CFG 1 + 3 per word.
+// LDM takes 3, a level WEV at least 3, and CFG 1 + 3 per word. Starting
+// the program costs one extra cycle (ST_START reads the first byte).
+//
+// The SRAM output only reaches flip-flops. The read of the next
+// instruction is issued in the last cycle of the current one (EXEC at
+// next_pc, or the last LOAD/CFG cycle at pc), and FETCH just latches the
+// byte into ir. Nothing decodes the SRAM's slow output (7.6 ns at the slow
+// corner) in the cycle it arrives.
 module px8_controller (
     input  wire        clk,
     input  wire        rst_n,
@@ -72,6 +79,7 @@ module px8_controller (
   localparam ST_HALT  = 3'd2;
   localparam ST_LOAD  = 3'd3;
   localparam ST_CFG   = 3'd4;
+  localparam ST_START = 3'd5;
 
   localparam OP_PFIX = 4'h0;
   localparam OP_LDC  = 4'h1;
@@ -97,9 +105,10 @@ module px8_controller (
   reg        waiting;   // the executing instruction has already stalled
   reg [7:0]  blk_addr;  // CFG: address byte of the word being loaded
   reg [1:0]  blk_byte;  // CFG: which byte of {addr, lo, hi} arrives now
+  reg [7:0]  ir;        // the executing instruction
 
-  wire [3:0]  op   = instruction_data[7:4];
-  wire [3:0]  n    = instruction_data[3:0];
+  wire [3:0]  op   = ir[7:4];
+  wire [3:0]  n    = ir[3:0];
   wire [15:0] opnd = {oreg, n};
   wire        exec = enable && state == ST_EXEC;
 
@@ -139,11 +148,14 @@ module px8_controller (
   end
 
   // LDM and CFG read SRAM at P while executing; LDM's byte arrives in
-  // ST_LOAD, CFG's bytes in ST_CFG.
+  // ST_LOAD, CFG's bytes in ST_CFG. Every other executing cycle reads the
+  // next instruction (a stalled one rereads it), as do ST_LOAD and the
+  // last ST_CFG cycle, whose pc is already the next one.
   wire data_read = exec && (is_ldm || (is_cfg && cnt != 16'd0));
-  assign instruction_address = (data_read || block) ? ptr : pc;
-  assign instruction_read    = enable && (state == ST_FETCH || data_read ||
-                                          (block && !block_last));
+  assign instruction_address = (data_read || (block && !block_last)) ? ptr :
+                               exec ? next_pc : pc;
+  assign instruction_read    = enable && (state == ST_START || exec ||
+                                          state == ST_LOAD || block);
   assign cfg_we        = (exec && op == OP_WCF) || block_word;
   assign cfg_addr      = block ? blk_addr : opnd[7:0];
   assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;
@@ -164,7 +176,7 @@ module px8_controller (
 
   always @(posedge clk) begin
     if (!rst_n || !enable) begin
-      state    <= ST_FETCH;
+      state    <= ST_START;
       pc       <= 10'd0;
       ptr      <= 10'd0;
       oreg     <= 12'd0;
@@ -173,9 +185,14 @@ module px8_controller (
       waiting  <= 1'b0;
       blk_addr <= 8'd0;
       blk_byte <= 2'd0;
+      ir       <= 8'd0;
     end else begin
       case (state)
-        ST_FETCH: state <= ST_EXEC;
+        ST_START: state <= ST_FETCH;
+        ST_FETCH: begin
+          ir    <= instruction_data;
+          state <= ST_EXEC;
+        end
         ST_EXEC: begin
           waiting <= !retire;
           if (retire) begin

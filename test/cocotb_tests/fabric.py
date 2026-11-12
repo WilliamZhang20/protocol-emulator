@@ -559,13 +559,18 @@ class Bus:
 
 
 async def drain_until_halted(dut, timeout_cycles: int = 60000) -> list[int]:
-    """The RX FIFO is 8 deep, so drain it while the program runs."""
+    """The RX FIFO is 8 deep, so drain it while the program runs.
+
+    One status read gives both rx_empty and running, so a byte pushed just
+    before HALT is never mistaken for an empty FIFO (separate reads could
+    see the FIFO empty, then the program halted after its last PUSH)."""
     received = []
     for _ in range(timeout_cycles // 8):
         await ClockCycles(dut.clk, 4)
-        if not await rx_empty(dut):
+        status = await read_status(dut)
+        if not status & 0x10:
             received.append(await pop_rx(dut))
             continue
-        if not status_running(await read_status(dut)):
+        if not status_running(status):
             return received
     raise AssertionError("program did not finish")

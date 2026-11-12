@@ -66,14 +66,25 @@ What the chip cannot do yet, and what is not yet measured.
 
 ## Measured
 
-- **Timing and area, 8x4 tile** (`2945e58`, the bit coder): +2.81 ns
-  setup slack at the slow corner (1.08 V, 125 °C), +9.18 ns typical,
-  +0.088 ns hold at the fast corner; 52.6 % utilization of the 1,208k µm²
-  core; DRC, LVS and antenna clean; 26 max-slew and 15 max-cap warnings,
-  which a post-route repair pass now targets (`src/config.json`). The
-  edge cells, second CRC and 8-byte FIFOs add about 10 % more cells
-  (local synthesis), about 58 %. Every protocol here is a program, so
-  none of them changes these numbers.
+- **Timing and area, 8x4 tile** (`68b8440`: bit coder, edge cells, two
+  CRCs, 8-byte FIFOs): +0.91 ns setup slack at the slow corner (1.08 V,
+  125 °C), +8.19 ns typical, +0.064 ns hold at the fast corner; 59.1 %
+  utilization of the 1,208k µm² core; DRC, LVS and antenna clean. The
+  post-route repair pass (`src/config.json`) leaves no max-slew or
+  max-cap violation in the standard cells; the last three are SRAM macro
+  pins (slow-corner input slew on `A_DIN[1]` and `A_ADDR[5]`, 0.09 pF on
+  `A_DOUT[3]` against 0.064). The slow-corner limit is the controller
+  executing straight from the SRAM output: 7.6 ns access, 2.6 ns of
+  buffered wire from the SRAM corner, then the `WEV` decode that clears a
+  sticky event bit. Before the edge cells and second CRC (`2945e58`) the
+  slow corner had +2.81 ns at 52.6 %. The controller now registers the
+  instruction byte (same cycle counts: the next read is issued a cycle
+  early), so the SRAM output only reaches flip-flops; that GDS run is
+  pending. The SRAM pin limits are the edges of the macro's timing tables
+  (0.064 pF, 0.595 ns), not drive limits: its clock-to-out moves only
+  0.14 ns across the whole load range. The 6x4 run and other public
+  designs using this macro report the same kind of pin warnings. Every
+  protocol here is a program, so none of them changes these numbers.
 - **On the 6x4 tile** (`016f736`, branch `arch/spatial`): +2.48 ns slow
   corner, 67.8 % utilization.
 

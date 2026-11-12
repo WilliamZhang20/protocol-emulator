@@ -66,7 +66,11 @@ For `PULL`, `PUSH` and `TXP`, operand bit 4 picks the FIFO channel; for
 
 ## Things worth knowing
 
-- **Speed:** most instructions take 2 cycles.
+- **Speed:** most instructions take 2 cycles, plus one cycle when the
+  program starts. The last cycle of each instruction already reads the
+  next one from SRAM, and the fetch cycle only stores it in a register,
+  so the SRAM's slow output (7.6 ns at the slow corner) never feeds
+  decode logic directly.
 - **Fast setup:** `CFG` loads one configuration word every 3 cycles from a
   table in SRAM. The assembler builds these tables automatically.
 - **Events are remembered:** a pulse line that fires while the program is
