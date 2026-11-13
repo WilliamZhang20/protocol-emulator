@@ -405,6 +405,7 @@ module protocol_emulator_core (
 
   wire [15:0] s_rx_data_0, s_rx_data_1, s_status_0, s_status_1;
   wire [1:0]  link_absorb, link_bit, link_emit;   // shifter -> CRC links
+  wire [1:0]  crc_tail_out;                       // CRC -> shifter lookahead
   // Shifter k's registers: 0x10+4k..0x13+4k (regs 0-3), then 0x32+k,
   // 0x36+k and 0x38+k (regs 4, 5, 6).
   wire       sh_extra = cfg_addr == 8'h32 || cfg_addr == 8'h33 || cfg_addr == 8'h36 ||
@@ -422,7 +423,7 @@ module protocol_emulator_core (
       .tx_data(sh_tx_byte[7:0]), .tx_eop(sh_tx_eop[0]), .tx_err(sh_tx_err[0]),
       .rx_request(sh_rx_request[0]), .rx_grant(sh_rx_grant[0]),
       .rx_byte(sh_rx_byte[7:0]), .rx_eop(sh_rx_eop[0]), .rx_err(sh_rx_err[0]),
-      .crc_in(crc_out[0]),
+      .crc_in(crc_tail_out[0]),
       .out(s_out[0]), .active(s_active[0]),
       .word_pulse(s_word[0]), .stop_pulse(s_stop[0]),
       .rx_data(s_rx_data_0), .status(s_status_0),
@@ -440,7 +441,7 @@ module protocol_emulator_core (
       .tx_data(sh_tx_byte[15:8]), .tx_eop(sh_tx_eop[1]), .tx_err(sh_tx_err[1]),
       .rx_request(sh_rx_request[1]), .rx_grant(sh_rx_grant[1]),
       .rx_byte(sh_rx_byte[15:8]), .rx_eop(sh_rx_eop[1]), .rx_err(sh_rx_err[1]),
-      .crc_in(crc_out[1]),
+      .crc_in(crc_tail_out[1]),
       .out(s_out[1]), .active(s_active[1]),
       .word_pulse(s_word[1]), .stop_pulse(s_stop[1]),
       .rx_data(s_rx_data_1), .status(s_status_1),
@@ -457,7 +458,8 @@ module protocol_emulator_core (
       .cfg_addr(cfg_addr[2:0]), .cfg_data(cfg_data),
       .lines(lines),
       .link_absorb(link_absorb), .link_bit(link_bit), .link_emit(link_emit),
-      .out(crc_out[0]), .ok(crc_ok[0]), .value(crc_value_0)
+      .out(crc_out[0]), .tail_out(crc_tail_out[0]),
+      .ok(crc_ok[0]), .value(crc_value_0)
   );
   fabric_crc crc_tile_1 (
       .clk(clk), .rst_n(rst_n), .enable(live),
@@ -465,7 +467,8 @@ module protocol_emulator_core (
       .cfg_addr(cfg_addr[2:0]), .cfg_data(cfg_data),
       .lines(lines),
       .link_absorb(link_absorb), .link_bit(link_bit), .link_emit(link_emit),
-      .out(crc_out[1]), .ok(crc_ok[1]), .value(crc_value_1)
+      .out(crc_out[1]), .tail_out(crc_tail_out[1]),
+      .ok(crc_ok[1]), .value(crc_value_1)
   );
 
   // ------------------------------------------------------------- pin cells

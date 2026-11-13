@@ -17,14 +17,15 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
   (* anyseq *) reg [63:0] lines_any;
   (* anyseq *) reg [1:0]  link_absorb, link_bit, link_emit;
   wire [63:0] lines = {lines_any[63:2], 1'b1, 1'b0};
-  wire out, ok;
+  wire out, tail_out, ok;
   wire [31:0] value;
 
   fabric_crc dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data),
       .lines(lines), .link_absorb(link_absorb), .link_bit(link_bit),
-      .link_emit(link_emit), .out(out), .ok(ok), .value(value)
+      .link_emit(link_emit), .out(out), .tail_out(tail_out),
+      .ok(ok), .value(value)
   );
 
   function automatic [31:0] reverse(input [31:0] v);
@@ -47,6 +48,12 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
   wire absorb_m = linked_s ? link_absorb[link_k_s] : lines[absorb_s[5:0]];
   wire data_m   = linked_s ? link_bit[link_k_s] : lines[{1'b1, absorb_s[10:6]}];
   wire emit_m   = linked_s ? link_emit[link_k_s] : lines[emit_s[5:0]];
+  wire init_m   = !enable || lines[{1'b0, emit_s[10:6]}];
+  wire take_m   = absorb_m && (!gate_s[5] || lines[{1'b1, gate_s[4:0]}]);
+  wire step_m   = emit_m && (!gate_s[11] || lines[{1'b1, gate_s[10:6]}]);
+  wire [31:0] r_after = init_m ? (ones_s ? 32'hffffffff : 32'd0) :
+                        take_m ? ((r >> 1) ^ ((r[0] ^ data_m) ? reverse(poly_s) : 32'd0)) :
+                        step_m ? (r >> 1) : r;
 
   always @(posedge clk) begin
     if (reset_cycles != 2'd3)
@@ -71,12 +78,7 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
           3'd7: gate_s <= cfg_data[11:0];
         endcase
       end
-      if (!enable || lines[{1'b0, emit_s[10:6]}])
-        r <= ones_s ? 32'hffffffff : 32'd0;
-      else if (absorb_m && (!gate_s[5] || lines[{1'b1, gate_s[4:0]}]))
-        r <= (r >> 1) ^ ((r[0] ^ data_m) ? reverse(poly_s) : 32'd0);
-      else if (emit_m && (!gate_s[11] || lines[{1'b1, gate_s[10:6]}]))
-        r <= r >> 1;
+      r <= r_after;
     end
   end
 
@@ -91,6 +93,7 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
     if (rst_n && past_valid) begin
       assert(value == reverse(r));
       assert(out == !r[0]);
+      assert(tail_out == (linked_s ? !r_after[0] : !r[0]));
       assert(ok == past_match);     // registered compare
       cover(ok && enable && poly_s == 32'h04c11db7);
     end

@@ -288,6 +288,12 @@ MUTATIONS = (
         "wire feedback = msb;",
         ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
     ),
+    Mutation(
+        "crc_tail_lookahead_stale", "fabric_crc", "fabric_crc.v",
+        "assign tail_out = linked ? !next_msb : out;",
+        "assign tail_out = out;",
+        ("fabric_crc.v",), "fabric_crc_properties.sv", "fabric_crc_properties",
+    ),
 )
 
 

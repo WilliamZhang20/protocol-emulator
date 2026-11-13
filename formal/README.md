@@ -33,7 +33,7 @@ of N checks every input sequence of N cycles from reset.
 | `fabric_counter` | BMC, proof, cover | Count, threshold level (registered, yet equal to the live compare on every cycle) and hit pulse against a per-mode reference (event count, run of ones/zeros/equal bits) with clear priority, including saturation at 255. |
 | `fabric_shifter` (manch) | BMC (30 cycles), cover | Bit coder, Manchester sending: counting ticks from the start from idle (no access to the tile's half-bit state), every odd tick is mid-bit and flips the line, for any word length, bit order, idle level, FIFO data and timing, 0-3 bit CRC tail and stuffing, across burst words and back-to-back frames. |
 | `fabric_edge` | BMC, proof, cover | The edge cell's pulse against the harness's own previous-pin copy and shadow configuration: exactly the configured pin's configured rises and/or falls, while the qualifying level has the configured value. |
-| `fabric_crc` | BMC, proof, cover | The 32-bit configuration against the mirror-image reflected LFSR used by software on every absorb and emit (each with or without its gate level), init, output bit and (registered) residue match. |
+| `fabric_crc` | BMC, proof, cover | The 32-bit configuration against the mirror-image reflected LFSR used by software on every absorb and emit (each with or without its gate level), init, output bit, linked-tail lookahead bit and (registered) residue match. |
 | `byte_tile` | round trip (BMC, 32 cycles), checksum (BMC, 20 cycles), covers | Byte tiles end to end. ESCAPE → UNESCAPE: for any valid escape map (symbolic codes) and any packet stream, every byte and eop tag arrives exactly as sent, never tagged err, nothing invented. CHECK generate → verify (add or xor, any initial value): a packet arrives tagged err exactly when one of its bytes was corrupted on the link (any nonzero flip, symbolic place) or, in the other mode, when its sender asked for an injected error. Every tile output: a byte waiting to be taken never changes. |
 | `fabric_logic` | BMC, proof, cover | The logic cell's register loads the addressed truth-table entry exactly on enable-line cycles, holds otherwise, and holds its configured start value while disabled. Both configuration contexts are modelled: writes reach any set of contexts and the active one changes arbitrarily every cycle, and the cell always follows the active context. |
 | `px8_controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch and data-read addresses, every side-effect output (config writes, including each word of a block config load, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes, including level waits that never retire in their first cycle. |
@@ -117,7 +117,7 @@ target to reject every one (the repository RTL is never modified):
 | `fabric_edge` | qualifier polarity ignored |
 | `byte_tile` | escape map swapped; unescape restoring the wrong byte; checksum not negated; error injection ignored; output dropped before it is taken |
 | `fabric_counter` | wrong run-of-equal restart value; threshold level one cycle late |
-| `fabric_crc` | feedback ignoring data; absorb gate ignored |
+| `fabric_crc` | feedback ignoring data; absorb gate ignored; tail lookahead reading stale state |
 
 ## Adding a block
 

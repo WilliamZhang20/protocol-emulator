@@ -23,6 +23,8 @@
 // would cost that cell's register cycle.
 // `ok` is registered (it reflects the register one cycle earlier) so the
 // 32-bit compare never sits in front of a signal-space select.
+// `tail_out` predicts the CRC output after the current edge's update for a
+// linked shifter tail. The signal-space `out` keeps its current-state timing.
 //
 // Priority per cycle: init, absorb, emit. While the fabric is disarmed the
 // register holds its init value, so a frame needs no explicit init pulse.
@@ -38,6 +40,7 @@ module fabric_crc (
     input  wire [1:0]  link_bit,
     input  wire [1:0]  link_emit,
     output wire        out,
+    output wire        tail_out,  // bit after this cycle's pending CRC update
     output wire        ok,
     output wire [31:0] value
 );
@@ -74,8 +77,19 @@ module fabric_crc (
   wire emit_src   = linked ? link_emit[shape[7]] : lines[emit_cfg[5:0]];
   wire absorb_now = absorb_src && (!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}]);
   wire emit_now   = emit_src && (!gate_cfg[11] || lines[{1'b1, gate_cfg[10:6]}]);
+  // The shifter's link events are registered. At a one-clock bit period it
+  // needs the CRC bit after the update at this edge: the final frame absorb
+  // or the previous tail emit. Only the selected top bit is predicted, so
+  // the shifter does not need a second 32-bit CRC datapath.
+  wire shifted_msb = |(shifted & top);
+  wire poly_msb    = |(poly & top);
+  wire next_msb = !rst_n ? 1'b0 :
+                  (!enable || lines[{1'b0, emit_cfg[10:6]}]) ? shape[5] :
+                  absorb_now ? shifted_msb ^ (feedback && poly_msb) :
+                  emit_now ? shifted_msb : msb;
 
   assign out   = !msb;
+  assign tail_out = linked ? !next_msb : out;
   assign ok    = ok_r;
   assign value = crc;
 

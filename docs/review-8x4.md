@@ -33,6 +33,16 @@ skip-count rewrite computes initial and live decrements separately. With
 from `skip_left` to `run_len` while its length stays 34 logic steps. Its routed
 slack also remains to be measured.
 
+A one-bit-per-clock black-box test found a CRC-tail error in the registered
+shifter-to-CRC link: with byte `0x01` and CRC-8 polynomial `0x07`, the pin sent
+`00000011` instead of `00000111`. The CRC tile now provides the shifter with
+the tail bit it will have after this cycle's pending absorb or emit. Its CRC
+state update remains registered. Both CRC/shifter pairs pass the new test,
+and a formal reference model checks that predicted bit. In matched full-core
+generic synthesis, the longest path changes from 46 to 45 logic steps while
+the cell count rises from 29,220 to 29,680. These figures are not routed
+timing or area results; the new build still needs a slow-corner route.
+
 ## Resource and latency observations
 
 - PX8 instructions take two clocks in the usual case; a CFG table loads one
