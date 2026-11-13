@@ -37,8 +37,18 @@ module config_bank #(
       shadow <= {WIDTH{1'b0}};
       cur    <= 1'b0;
     end else begin
-      active <= next;
-      shadow <= swap ? active_w : shadow_w;
+      // Keep the normal case local to each bank. A switch exchanges the
+      // post-write values, so a write and context change on the same clock
+      // still update the context selected by write_bank.
+      if (swap) begin
+        active <= shadow_w;
+        shadow <= active_w;
+      end else begin
+        if (we_active)
+          active <= data;
+        if (we_shadow)
+          shadow <= data;
+      end
       cur    <= ctx_next;
     end
   end

@@ -51,7 +51,7 @@
 //   still sent.
 // - CRC link. The tile gives the CRC tile every frame bit it codes (sent or
 //   sampled, never a stuff or tail bit), from the arming 0 on and after
-//   the first `register 6 [10:6]` such bits, and steps it once per tail
+//   the first `register 6 [12:6]` such bits, and steps it once per tail
 //   bit, over a direct registered link (the CRC tile selects it).
 // - Manchester (transmit, not with NRZI). The shift line ticks every half
 //   bit: each bit goes out as its complement, then (at the half-bit tick)

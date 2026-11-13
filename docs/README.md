@@ -29,6 +29,7 @@ Read these in order the first time. Each page is short.
 Other pages:
 
 - [External hardware, pins and clocks](hardware.md)
+- [8×4 architecture review and timing baseline](review-8x4.md)
 - [Formal verification details](../formal/README.md)
 - [Tiny Tapeout datasheet text](info.md)
 
