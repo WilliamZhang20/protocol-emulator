@@ -26,9 +26,10 @@
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
   "CLOCK_PERIOD": 20,
 
-  "//": "Hold slack margin - Increase them in case you are getting hold violations.",
+  "//": "Two routed runs at 0.1 ns post-GRT hold margin failed the fast-corner hold check.",
+  "//": "Use 0.25 ns to leave room for delay changes during detailed routing.",
   "PL_RESIZER_HOLD_SLACK_MARGIN": 0.1,
-  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.1,
+  "GRT_RESIZER_HOLD_SLACK_MARGIN": 0.25,
 
   "//": "Setup margin and a post-route repair pass. Signoff gates only the typical",
   "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
