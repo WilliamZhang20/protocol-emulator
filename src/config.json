@@ -36,7 +36,10 @@
   "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
   "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
   "RUN_POST_GRT_RESIZER_TIMING": 1,
-  "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.0,
+  "//": "The 72ffb64 route had +3.278 ns slow-corner setup slack, so the 1 ns",
+  "//": "post-GRT target left its long pin-to-shifter path untouched. Try 5 ns",
+  "//": "to make setup repair address that path before detailed routing.",
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 5.0,
 
   "//": "Slew and capacitance. The only design repair ran after placement, on",
   "//": "estimated wires, so nets that routed longer (1x gates on the CRC residue",
