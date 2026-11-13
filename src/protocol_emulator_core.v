@@ -84,22 +84,22 @@ module protocol_emulator_core (
   // ---------------------------------------------------------------- pins in
   (* async_reg = "true" *) reg [7:0] pin_meta;
   (* async_reg = "true" *) reg [7:0] pin_sync;
-  // The shifters read their own copy of the synchronized levels: the same
-  // value in the same cycle, but it halves the fanout of the pin-level
-  // lines, which sit on the fabric's longest paths. Kept so synthesis does
-  // not merge it back.
-  (* keep = "true", async_reg = "true" *) reg [7:0] pin_sync_sh;
+  // Shifter 1 reads an inverted copy of the synchronized pin levels. The
+  // inversion restores the same value in the same cycle, while the distinct
+  // register encoding keeps synthesis from merging its fanout tree with
+  // the general fabric and shifter 0.
+  (* async_reg = "true" *) reg [7:0] pin_sync_sh1_n;
   reg [7:0] pin_prev;
   always @(posedge clk) begin
     if (!rst_n) begin
       pin_meta <= 8'd0;
       pin_sync <= 8'd0;
-      pin_sync_sh <= 8'd0;
+      pin_sync_sh1_n <= 8'hff;
       pin_prev <= 8'd0;
     end else begin
       pin_meta <= gpio_in;
       pin_sync <= pin_meta;
-      pin_sync_sh <= pin_meta;
+      pin_sync_sh1_n <= ~pin_meta;
       pin_prev <= pin_sync;
     end
   end
@@ -240,8 +240,9 @@ module protocol_emulator_core (
       context_pre <= context_cfg[6] && lines[context_cfg[5:0]];
   end
 
-  // Shifters see the signal space with their own pin-level copy.
-  wire [63:0] shifter_lines = {lines[63:40], pin_sync_sh, lines[31:0]};
+  // Both shifters see the same signal values, including the same-cycle pins.
+  wire [63:0] shifter_lines0 = lines;
+  wire [63:0] shifter_lines1 = {lines[63:40], ~pin_sync_sh1_n, lines[31:0]};
   // Byte tiles are not cycle-critical, so they read the signal space a
   // cycle late through one shared register instead of loading every line
   // with 16 more selector inputs. Lines 0 and 1 are the constants.
@@ -417,7 +418,7 @@ module protocol_emulator_core (
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000100 || (sh_extra && !cfg_addr[0]))),
       .cfg_addr(sh_reg), .cfg_data(cfg_data),
       .cfg_bank(write_bank), .ctx_next(context_next),
-      .lines(shifter_lines),
+      .lines(shifter_lines0),
       .pulls(sh_pulls[0]),
       .tx_request(sh_tx_request[0]), .tx_grant(sh_tx_grant[0]),
       .tx_data(sh_tx_byte[7:0]), .tx_eop(sh_tx_eop[0]), .tx_err(sh_tx_err[0]),
@@ -435,7 +436,7 @@ module protocol_emulator_core (
       .cfg_we(cfg_we && (cfg_addr[7:2] == 6'b000101 || (sh_extra && cfg_addr[0]))),
       .cfg_addr(sh_reg), .cfg_data(cfg_data),
       .cfg_bank(write_bank), .ctx_next(context_next),
-      .lines(shifter_lines),
+      .lines(shifter_lines1),
       .pulls(sh_pulls[1]),
       .tx_request(sh_tx_request[1]), .tx_grant(sh_tx_grant[1]),
       .tx_data(sh_tx_byte[15:8]), .tx_eop(sh_tx_eop[1]), .tx_err(sh_tx_err[1]),

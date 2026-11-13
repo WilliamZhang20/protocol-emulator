@@ -27,11 +27,19 @@ margin do not establish a general speedup from the context-bank rewrite.
 A subsequent shifter cleanup separates the CRC frame-bit event from coder
 state updates. Shifter-only generic synthesis uses 1,793 cells versus 1,800
 before it, and Yosys's longest shifter logic path falls from 39 to 36 steps.
-Those are pre-route proxies; its routed slack has not been measured. A further
+Those are pre-route proxies. The [routed `414f4a7` run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43456932608)
+reports +4.363 ns slow-corner setup slack. Its worst path goes from logic
+cell 3's output (line 59) to shifter 0's registered CRC bit. A further
 skip-count rewrite computes initial and live decrements separately. With
 `synth -flatten; ltp -noff`, the longest shifter path endpoint moves
-from `skip_left` to `run_len` while its length stays 34 logic steps. Its routed
-slack also remains to be measured.
+from `skip_left` to `run_len` while its length stays 34 logic steps. The
+[routed `d6836bd` run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43482910940)
+reports +4.526 ns slow-corner setup slack; its worst path starts at a
+synchronized input pin and ends at `shifter0.skip_left[4]`. Both runs pass
+setup but fail fast-corner hold by 0.070 ns and 0.043 ns respectively. They
+do not establish a routed setup improvement over the +5.770 ns cleanup run.
+The post-GRT hold repair margin has been increased from 0.1 to 0.25 ns for
+the next route.
 
 A one-bit-per-clock black-box test found a CRC-tail error in the registered
 shifter-to-CRC link: with byte `0x01` and CRC-8 polynomial `0x07`, the pin sent
@@ -40,8 +48,19 @@ the tail bit it will have after this cycle's pending absorb or emit. Its CRC
 state update remains registered. Both CRC/shifter pairs pass the new test,
 and a formal reference model checks that predicted bit. In matched full-core
 generic synthesis, the longest path changes from 46 to 45 logic steps while
-the cell count rises from 29,220 to 29,680. These figures are not routed
-timing or area results; the new build still needs a slow-corner route.
+the cell count rises from 29,220 to 29,680. The
+[routed `72ffb64` run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43486932739)
+passes setup and hold, but slow-corner setup slack is +3.278 ns. Its worst
+path starts at synchronized pin 7 and ends at `shifter1.skip_left[1]`. The
+two shifters and general fabric share one synthesized pin-level register:
+Yosys merged the intended kept copy. The path spends much of its delay in
+that fanout tree. The route has nine slow-corner max-slew
+violations. Thus the generic path count did not predict a routed timing gain.
+The next experiment stores the second shifter's synchronized pin levels in
+inverted form and inverts them at its line input. This preserves their value
+and cycle timing while preventing Yosys from merging the two banks; generic
+synthesis confirms eight distinct extra flops. Its routed timing remains to
+be measured.
 
 ## Resource and latency observations
 
