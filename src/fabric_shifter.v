@@ -372,6 +372,10 @@ module fabric_shifter (
   wire coded_stuff = stuff_tx || stuff_rx;
   // A frame bit: neither a stuff bit nor a tail bit.
   wire bit_taken = coder_rx ? sample_now : present_data;
+  // Preserve the stuff/tail priority when a word boundary and a new start
+  // share a clock. The CRC link sees only an accepted frame bit.
+  wire crc_frame_bit = coder_rx ? sample_now :
+                       (present_data && !stuff_tx && !tail_step);
   wire word_end = done || burst_next;
   assign word_pulse = bit_strobe ? bit_taken : word_end;
   wire [2:0] run_b   = fresh ? 3'd0 : run_len;
@@ -417,13 +421,15 @@ module fabric_shifter (
         armed   <= armed_new;
         if (stuff_bad)
           stuff_err <= 1'b1;
-        if (!coded_stuff && !tail_step && armed_new) begin
-          if (skip_b != 7'd0) begin
-            skip_left <= skip_b - 7'd1;
-          end else begin
-            crc_absorb_r <= 1'b1;
-            crc_bit_r    <= coded_bit;
-          end
+      end
+      // crc_frame_bit implies coded_evt. Keeping this update separate from
+      // the coder-state update avoids the tx/stuff/tail event OR on its path.
+      if (crc_frame_bit && run && armed_new) begin
+        if (skip_b != 7'd0) begin
+          skip_left <= skip_b - 7'd1;
+        end else begin
+          crc_absorb_r <= 1'b1;
+          crc_bit_r    <= coded_bit;
         end
       end
       if (sample_raw && nrzi_rx)

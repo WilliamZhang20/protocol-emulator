@@ -4,7 +4,7 @@
 
 The completed [50 MHz GDS run for `97af92c`](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43270161978)
 reports +5.636 ns worst setup slack at `nom_slow_1p08V_125C` after routing,
-with zero setup violations. This is the baseline for any timing edit. The
+with zero setup violations. The
 worst register path starts at shifter 0's `out_r` (shown as
 `core.counter[0].tile.lines[44]` after netlist flattening) and ends at
 `shifter0.skip_left[4]`. The netlist mapping confirms the endpoint. The
@@ -16,11 +16,18 @@ fanout consume a substantial part of its budget.
 The active context registers keep context selection off this path. The
 registered CFG write bus keeps SRAM output off tile decode paths. Changes to
 either mechanism need a routed timing comparison, not just an RTL estimate.
-The local context-bank cleanup expresses writes and swaps as separate
-register updates while preserving `next` for tiles that precompute. The
-arbitrary-context logic-cell proof and timer and shifter formal checks pass;
-a new routed result is still needed before assigning any slack change to
-this edit.
+The context-bank cleanup expresses writes and swaps as separate register
+updates while preserving `next` for tiles that precompute. The
+[routed `4aa9c34` run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43379353470)
+reports +5.770 ns at the same slow corner, a +0.134 ns change; gate-level
+tests and precheck pass. Its worst path starts at logic cell 3's output
+(line 59) and ends at `shifter1.skip_left[3]`. The changed path and small
+margin do not establish a general speedup from the context-bank rewrite.
+
+A subsequent shifter cleanup separates the CRC frame-bit event from coder
+state updates. Shifter-only generic synthesis uses 1,793 cells versus 1,800
+before it, and Yosys's longest shifter logic path falls from 39 to 36 steps.
+Those are pre-route proxies; its routed slack has not been measured.
 
 ## Resource and latency observations
 
@@ -65,6 +72,10 @@ fabric is doing useful wire work.
 | UART loopback | 1,978 | 1,911 (96.6%) | 0 | 0 |
 | SPI device exchange | 604 | 386 (63.9%) | 372 | 31 |
 | I²C register read | 25,536 | 24,967 (97.8%) | 24,977 | 12 |
+| USB data packet | 3,152 | 2,247 (71.3%) | 2,841 | 22 |
+| JTAG IDCODE scan | 3,344 | 1,406 (42.0%) | 1,421 | 674 |
+| SWD register exchange | 13,920 | 9,614 (69.1%) | 9,653 | 1,691 |
+| PS/2 keyboard receive | 138,032 | 138,005 (100.0%) | 0 | 0 |
 | Coded Ethernet, one session, accelerated link gaps | 123,104 | 2,304 (1.9%) | 120,872 | 1,104 |
 
 The Ethernet result includes three intentional link pulses 40,960 clocks
@@ -78,5 +89,15 @@ small examples do not establish a universal protocol average, but they
 identify where reducing controller latency would affect the wire and where
 it would only remove deliberate wait time.
 
+Across the seven examples other than Ethernet, the unweighted mean of each
+example's shifter-active share is 77.2%; the range is 42.0% to 100.0%.
+The remaining clocks are not all idle fabric clocks: they include host setup,
+controller work and other tiles. JTAG's single-bit `step` calls and SWD's
+turnaround chunks account for much of their transaction overhead; both pause
+the clock between calls by design. PS/2 reception stays active while its
+external keyboard sends bits. An architecture change aimed at generic
+controller throughput should first show that the wire is starved during a
+frame, rather than counting protocol gaps as lost cycles.
+
 Any proposed RTL timing rewrite should rerun the routed flow and compare
-slow-corner path and slack against the baseline above.
+slow-corner path and slack against both measured runs above.

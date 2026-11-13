@@ -99,8 +99,8 @@ MUTATIONS = (
     ),
     Mutation(
         "context_select_inverted", "fabric_logic", "config_bank.v",
-        "assign next = swap ? shadow_w : active_w;",
-        "assign next = swap ? active_w : shadow_w;",
+        "        active <= shadow_w;",
+        "        active <= active_w;",
         ("config_bank.v", "fabric_logic.v"), "fabric_logic_properties.sv", "fabric_logic_properties",
     ),
     Mutation(

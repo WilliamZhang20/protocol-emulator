@@ -31,7 +31,7 @@ that gives an **integer** divider; fractional dividers add jitter.
 
 | Use | Clock | Why |
 | --- | --- | --- |
-| Default | 50 MHz | The design target. The routed 8×4 build at `97af92c` has +5.64 ns worst setup slack at the slow corner (see the [review](review-8x4.md)). |
+| Default | 50 MHz | The design target. The routed 8×4 build at `4aa9c34` has +5.77 ns worst setup slack at the slow corner (see the [review](review-8x4.md)). |
 | 10BASE-T | 40 MHz | A half bit is exactly 2 cycles. 802.3 asks for ±100 ppm, so derive it from the crystal-based system clock with an integer divider. |
 | USB low speed | 48 MHz (or 50 MHz) | 48 MHz gives exactly 32 cycles per bit. At 50 MHz the programs use 33 cycles (1% fast, inside the ±1.5% LS tolerance). |
 
