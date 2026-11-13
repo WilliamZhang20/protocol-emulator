@@ -27,7 +27,11 @@ margin do not establish a general speedup from the context-bank rewrite.
 A subsequent shifter cleanup separates the CRC frame-bit event from coder
 state updates. Shifter-only generic synthesis uses 1,793 cells versus 1,800
 before it, and Yosys's longest shifter logic path falls from 39 to 36 steps.
-Those are pre-route proxies; its routed slack has not been measured.
+Those are pre-route proxies; its routed slack has not been measured. A further
+skip-count rewrite computes initial and live decrements separately. With
+`synth -flatten; ltp -noff`, the longest shifter path endpoint moves
+from `skip_left` to `run_len` while its length stays 34 logic steps. Its routed
+slack also remains to be measured.
 
 ## Resource and latency observations
 
@@ -42,8 +46,8 @@ Those are pre-route proxies; its routed slack has not been measured.
   and both counters. The local compiler branch now exposes the coder and
   compiles a coded Ethernet variant using three logic cells, no counters and
   363 SRAM bytes, compared with eight logic cells, two counters and 433 bytes
-  in the original. The accelerated RTL peer test passes frame timing,
-  Manchester symbols, FCS, TP_IDL and repeated sessions at 40 MHz.
+  in the original. Both accelerated and real-time RTL peer tests pass frame
+  timing, Manchester symbols, FCS, TP_IDL and repeated sessions at 40 MHz.
 - The byte tiles accept one byte every two clocks. The fastest documented
   serial byte here takes 32 clocks, so this is not currently the serial
   throughput limit.
@@ -54,10 +58,10 @@ two contexts let a phase change switch their configuration together.
 Flexibility still has specific bounds: four timers, two shifters, two CRCs,
 eight logic and edge cells, and two contexts. Logic cells accept at most two
 pulse inputs. The RTL edge cell can qualify a pin edge by another level,
-but Spatial currently exposes only plain `.rise` and `.fall`; logic-cell
-context overrides and Manchester receive are also unavailable. These are
-compiler or hardware capabilities to decide explicitly for each new
-protocol, rather than assuming any protocol fits automatically.
+but Spatial currently exposes only plain `.rise` and `.fall`; Manchester
+receive is also unavailable. The local 8×4 compiler branch supports
+logic-cell context overrides, reusing the cell and inheriting its update
+settings. Each new protocol still needs a resource and timing check.
 
 ## Cycle occupancy from compiled examples
 

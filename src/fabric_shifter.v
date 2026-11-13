@@ -380,7 +380,6 @@ module fabric_shifter (
   assign word_pulse = bit_strobe ? bit_taken : word_end;
   wire [2:0] run_b   = fresh ? 3'd0 : run_len;
   wire       armed_b = fresh ? !sof_arm : armed;
-  wire [6:0] skip_b  = fresh ? skip_n : skip_left;
   wire [2:0] run_inc = run_b == 3'd7 ? 3'd7 : run_b + 3'd1;
   // A stuff position always restarts the run, as a correct stuff bit
   // would (a wrong one is flagged, and the stream stays in step).
@@ -425,9 +424,14 @@ module fabric_shifter (
       // crc_frame_bit implies coded_evt. Keeping this update separate from
       // the coder-state update avoids the tx/stuff/tail event OR on its path.
       if (crc_frame_bit && run && armed_new) begin
-        if (skip_b != 7'd0) begin
-          skip_left <= skip_b - 7'd1;
-        end else begin
+        // The first bit loads the configured count; later bits decrement the
+        // live count. Keep the two decrements separate so a new start only
+        // selects their results, instead of selecting before the subtractor.
+        if (fresh && skip_n != 7'd0)
+          skip_left <= skip_n - 7'd1;
+        else if (!fresh && skip_left != 7'd0)
+          skip_left <= skip_left - 7'd1;
+        else begin
           crc_absorb_r <= 1'b1;
           crc_bit_r    <= coded_bit;
         end
