@@ -31,7 +31,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -45,11 +45,18 @@ help:
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
+	@echo "make precommit    Run lint and the functional regression"
+	@echo "make install-hooks Install the local pre-commit hook"
+
+precommit: lint sim
+
+install-hooks:
+	git config core.hooksPath .githooks
 
 verify: lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
 
 lint:
-	$(VERILATOR) --lint-only --timing -Wno-fatal -DFUNCTIONAL \
+	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
 		--top-module tb test/tb.v $(RTL_SOURCES) $(SRAM_MODELS)
 
 dead-check:

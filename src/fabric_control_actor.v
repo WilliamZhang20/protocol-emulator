@@ -30,6 +30,7 @@ module fabric_control_actor #(
   reg [5:0] event_select;
   reg [1:0] state;
   reg [2:0] action_q;
+  localparam [7:0] EVENT_SELECT_ADDR = {4'ha, 3'b000, ACTOR[0]};
 
   wire [2:0] row = {state, lines[event_select]};
   wire [4:0] transition_data = transition[row];
@@ -42,7 +43,7 @@ module fabric_control_actor #(
       state <= 2'd0;
       action_q <= 3'd0;
     end else begin
-      if (cfg_we && cfg_addr == (8'ha0 + ACTOR))
+      if (cfg_we && cfg_addr == EVENT_SELECT_ADDR)
         event_select <= cfg_data[5:0];
 
       if (!enable) begin
@@ -58,10 +59,11 @@ module fabric_control_actor #(
   genvar row_index;
   generate
     for (row_index = 0; row_index < 8; row_index = row_index + 1) begin : rows
+      localparam [7:0] ROW_ADDR = {4'h9, ACTOR[0], row_index[2:0]};
       always @(posedge clk)
         if (!rst_n)
           transition[row_index] <= {3'b000, row_index[2:1]};
-        else if (cfg_we && cfg_addr == (8'h90 + ACTOR * 8 + row_index))
+        else if (cfg_we && cfg_addr == ROW_ADDR)
           transition[row_index] <= cfg_data[4:0];
     end
   endgenerate

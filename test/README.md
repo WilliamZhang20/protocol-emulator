@@ -10,6 +10,8 @@ From the repository root:
 
 ```sh
 make verify
+make precommit
+make install-hooks
 make sim
 make memory-test
 make lint
@@ -21,6 +23,10 @@ Or run the cocotb regression directly:
 make -C test clean
 make -C test
 ```
+
+`make precommit` runs warning-clean Verilator lint followed by the complete
+functional regression. Run `make install-hooks` once to configure Git to invoke
+that target before each commit. The hook is local to this checkout.
 
 Verilator is the default; set `SIM=icarus` to run the RTL regression with Icarus.
 Gate-level simulation remains available through `make -C test GATES=yes` after
