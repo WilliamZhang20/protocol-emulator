@@ -216,6 +216,24 @@ class Px8:
     def cfg(self, addr: int, value: int) -> None:
         self.pending.append((addr, value & 0xFFFF))
 
+    def control_actor(
+        self,
+        actor: int,
+        event_line: int,
+        transitions: list[tuple[int, int]],
+    ) -> None:
+        """Configure a local phase actor. Rows are ordered by
+        ``state * 2 + event_value`` and contain ``(next_state, action_mask)``;
+        action masks are 0, 1, 2 or 4 for that actor's three pulse outputs."""
+        assert actor in (0, 1)
+        assert 0 <= event_line < 64
+        assert len(transitions) == 8
+        self.cfg(0xA0 + actor, event_line)
+        for row, (next_state, action_mask) in enumerate(transitions):
+            assert 0 <= next_state < 4
+            assert action_mask in (0, 1, 2, 4)
+            self.cfg(0x90 + 8 * actor + row, (action_mask << 2) | next_state)
+
     def idle_forever(self) -> None:
         name = f"_idle{len(self.code)}"
         self.label(name)

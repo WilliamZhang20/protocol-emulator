@@ -1,8 +1,9 @@
 `default_nettype none
 
-// PX8 transaction controller. Bit timing lives in the spatial fabric; this
-// small CPU only configures tiles, sequences framing decisions, and joins on
-// fabric events. Every instruction is one byte {op[3:0], n[3:0]}; larger
+// Program/configuration controller. It loads tile configuration and legacy
+// instruction programs. New protocol-specific phase control can run in
+// fabric_control_actor tiles without an instruction stream. Every legacy
+// instruction is one byte {op[3:0], n[3:0]}; larger
 // operands are built with PFIX prefixes (Transputer style):
 //   opnd = O | n, and every non-prefix instruction clears O afterwards.
 //
@@ -44,7 +45,7 @@
 // next_pc, or the last LOAD/CFG cycle at pc), and FETCH just latches the
 // byte into ir. Nothing decodes the SRAM's slow output (7.6 ns at the slow
 // corner) in the cycle it arrives.
-module px8_controller (
+module controller (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        enable,

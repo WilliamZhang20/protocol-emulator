@@ -31,7 +31,7 @@ class Mutation:
 
 
 CORE_SOURCES = (
-    "protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_edge.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
+    "protocol_emulator_core.v", "controller.v", "fabric_control_actor.v", "fabric_timer.v", "fabric_shifter.v", "fabric_counter.v", "fabric_crc.v", "fabric_edge.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
 )
 
 MUTATIONS = (
@@ -48,48 +48,48 @@ MUTATIONS = (
         ("host_interface.v",), "host_interface_properties.sv", "host_interface_properties",
     ),
     Mutation(
-        "px8_prefix_dropped", "px8_controller", "px8_controller.v",
+        "controller_prefix_dropped", "controller", "controller.v",
         "oreg     <= op == OP_PFIX ? opnd[11:0] : 12'd0;",
         "oreg     <= op == OP_PFIX ? {8'd0, n} : 12'd0;",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_djnz_off_by_one", "px8_controller", "px8_controller.v",
+        "controller_djnz_off_by_one", "controller", "controller.v",
         "OP_DJNZ: if (cnt_dec != 16'd0) next_pc = opnd[9:0];",
         "OP_DJNZ: if (cnt != 16'd0) next_pc = opnd[9:0];",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_level_wait_same_cycle", "px8_controller", "px8_controller.v",
+        "controller_level_wait_same_cycle", "controller", "controller.v",
         "OP_WEV:  retire = event_ready && (waiting || !opnd[5]);",
         "OP_WEV:  retire = event_ready;",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_p_from_a_ignored", "px8_controller", "px8_controller.v",
+        "controller_p_from_a_ignored", "controller", "controller.v",
         "4'd10: ptr <= acc[9:0];",
         "4'd10: ptr <= ptr;",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_a_from_p_reads_pc", "px8_controller", "px8_controller.v",
+        "controller_a_from_p_reads_pc", "controller", "controller.v",
         "4'd11: acc <= {6'd0, ptr};",
         "4'd11: acc <= {6'd0, pc};",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_block_bytes_swapped", "px8_controller", "px8_controller.v",
+        "controller_block_bytes_swapped", "controller", "controller.v",
         "assign cfg_data      = block ? {instruction_data, acc[7:0]} : acc;",
         "assign cfg_data      = block ? {acc[7:0], instruction_data} : acc;",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
-        "px8_block_pointer_stuck", "px8_controller", "px8_controller.v",
+        "controller_block_pointer_stuck", "controller", "controller.v",
         """          if (!block_last)
             ptr <= ptr + 10'd1;""",
         """          if (!block_last)
             ptr <= ptr;""",
-        ("px8_controller.v",), "px8_controller_properties.sv", "px8_controller_properties",
+        ("controller.v",), "controller_properties.sv", "controller_properties",
     ),
     Mutation(
         "context_write_ignores_mask", "fabric_logic", "config_bank.v",

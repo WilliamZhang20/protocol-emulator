@@ -19,7 +19,8 @@ project:
   source_files:
     - "project.v"
     - "protocol_emulator_core.v"
-    - "px8_controller.v"
+    - "controller.v"
+    - "fabric_control_actor.v"
     - "fabric_timer.v"
     - "fabric_shifter.v"
     - "fabric_counter.v"

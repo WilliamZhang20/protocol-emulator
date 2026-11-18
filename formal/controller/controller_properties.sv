@@ -1,12 +1,12 @@
 `default_nettype none
 
-// PX8 controller against an independently written ISA reference model. The
+// Controller against an independently written ISA reference model. The
 // program is a symbolic 16-byte SRAM image (any instruction sequence,
 // addresses alias modulo 16), so every opcode, prefix chain, branch and
 // stall is explored. Each cycle the model's state predicts the fetch
 // address, every side-effect output, and when the instruction retires
 // under arbitrary event/FIFO handshakes.
-module px8_controller_properties (input wire clk);   // one solver step = one clock cycle
+module controller_properties (input wire clk);   // one solver step = one clock cycle
   reg [1:0] reset_cycles = 2'b0;
   wire rst_n = reset_cycles >= 2;
 
@@ -40,7 +40,7 @@ module px8_controller_properties (input wire clk);   // one solver step = one cl
   always @(posedge clk)
     if (instruction_read) instruction_data <= rom_at(instruction_address);
 
-  px8_controller dut (
+  controller dut (
       .clk(clk), .rst_n(rst_n), .enable(enable),
       .instruction_address(instruction_address),
       .instruction_read(instruction_read),

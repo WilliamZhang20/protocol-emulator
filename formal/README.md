@@ -13,7 +13,7 @@ Install the YosysHQ OSS CAD Suite, then run from the repository root:
 ```sh
 make formal                 # every target, then the mutation check
 make -C formal list         # target names
-make -C formal px8_controller
+make -C formal controller
 ```
 
 Results and counterexample traces are written beneath `build/formal/`.
@@ -36,7 +36,7 @@ of N checks every input sequence of N cycles from reset.
 | `fabric_crc` | BMC, proof, cover | The 32-bit configuration against the mirror-image reflected LFSR used by software on every absorb and emit (each with or without its gate level), init, output bit, linked-tail lookahead bit and (registered) residue match. |
 | `byte_tile` | round trip (BMC, 32 cycles), checksum (BMC, 20 cycles), covers | Byte tiles end to end. ESCAPE → UNESCAPE: for any valid escape map (symbolic codes) and any packet stream, every byte and eop tag arrives exactly as sent, never tagged err, nothing invented. CHECK generate → verify (add or xor, any initial value): a packet arrives tagged err exactly when one of its bytes was corrupted on the link (any nonzero flip, symbolic place) or, in the other mode, when its sender asked for an injected error. Every tile output: a byte waiting to be taken never changes. |
 | `fabric_logic` | BMC, proof, cover | The logic cell's register loads the addressed truth-table entry exactly on enable-line cycles, holds otherwise, and holds its configured start value while disabled. Both configuration contexts are modelled: writes reach any set of contexts and the active one changes arbitrarily every cycle, and the cell always follows the active context. |
-| `px8_controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch and data-read addresses, every side-effect output (config writes, including each word of a block config load, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes, including level waits that never retire in their first cycle. |
+| `controller` | BMC (16 cycles), cover | An independent ISA reference model runs a symbolic 16-byte legacy program (every opcode, prefix chain, branch and stall). Each cycle it predicts the fetch and data-read addresses, every side-effect output (config writes, including each word of a block config load, readback, events, FIRE, pins, FIFO requests and channel) and when the instruction retires under arbitrary handshakes, including level waits that never retire in their first cycle. |
 | `fabric_core` | BMC (24 cycles), cover | The whole spatial core running any program from a symbolic SRAM against arbitrary pins and FIFO states: no pin is ever driven before the SRAM has returned a byte every arm write needs (`WCF` n=1, 8'h81, or a block entry's address byte 8'h31); a stopped engine releases the pins; no pop from an empty FIFO channel, no push into a full one; the controller feeds one channel at a time. |
 
 The proofs are unbounded (`abc pdr`). PDR did not converge on the timer or
@@ -108,7 +108,7 @@ target to reject every one (the repository RTL is never modified):
 | Target | Mutations |
 | --- | --- |
 | `host_interface` | accept without the two-cycle stability check; no address post-increment |
-| `px8_controller` | prefix bits dropped; DJNZ testing `C` before the decrement; level wait retiring in its first cycle; block data bytes swapped; block pointer stuck |
+| `controller` | prefix bits dropped; DJNZ testing `C` before the decrement; level wait retiring in its first cycle; block data bytes swapped; block pointer stuck |
 | `fabric_logic` | cell ignoring its enable line; start value ignored; a context write ignoring its context mask; the context select inverted |
 | `fabric_core` | arm bit bypassed (pins live as soon as the engine runs) |
 | `byte_fifo` | count direction reversed |

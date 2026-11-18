@@ -17,7 +17,7 @@ from pathlib import Path
 
 FF = "$dff,$sdff,$dffe,$sdffe,$sdffce,$adff,$adffe,$aldff,$dlatch"
 TILES = ["fabric_timer", "fabric_shifter", "fabric_counter", "fabric_crc", "fabric_logic",
-         "config_bank"]
+         "fabric_control_actor", "config_bank"]
 # Tile outputs that the core places on the signal space directly.
 LINE_OUTPUTS = {
     "fabric_timer": ["out"],
@@ -25,6 +25,7 @@ LINE_OUTPUTS = {
     "fabric_counter": ["ge"],
     "fabric_crc": ["out", "ok"],
     "fabric_logic": ["q"],
+    "fabric_control_actor": ["action"],
 }
 
 yosys, sources = sys.argv[1], sys.argv[2:]

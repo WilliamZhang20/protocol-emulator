@@ -7,16 +7,17 @@
 // 64-line signal space. Between each shifter and its FIFO channel, a byte
 // layer of stream tiles (two per direction) works on tagged bytes
 // {err, eop, data}: escaping, packet delimiting, checksums, filtering. A
-// small PX8 controller configures both layers and makes transaction-level
-// decisions.
+// program controller configures both layers and runs legacy transaction
+// programs. Configured channel actors can advance protocol phases locally.
 //
-// Signal space (lines 2-25 are registered one-cycle pulses; 26-31 are
-// spare and read 0; the rest are levels):
+// Signal space (lines 2-31 are registered one-cycle pulses; the rest are
+// levels):
 //   0 zero   1 one   2-3 controller FIRE 0/1
 //   4+2k / 5+2k   timer k rise / fall          (k = 0..3)
 //   12+2k / 13+2k shifter k word / stop        (k = 0..1)
 //   16+e          edge cell e (a configured pin edge, synchronized)
 //   24+k          counter k hit
+//   26+3k..28+3k  protocol actor k action pulses (k = 0..1)
 //   32+p          pin p level (synchronized)
 //   40+k timer k out    44+k shifter k out    46+k shifter k active
 //   48+k counter k >= threshold    50 CRC 1 out bit   51 CRC 1 matches
@@ -45,6 +46,8 @@
 //   0x38-0x39 shifter k bit coder gate/skip register (shifter reg 6)
 //   0x80-0x87 edge cell e (see fabric_edge)
 //   0x88-0x8F CRC 1 reg addr[2:0] (CRC 0 is 0x28-0x2F)
+//   0x90-0x9F protocol actor transition rows (actor 0 then actor 1)
+//   0xA0-0xA1 protocol actor event-line selectors
 //   0x60-0x7F byte tile t = {channel, rx, stage} addr[4:2], reg addr[1:0];
 //             TX: TX FIFO -> stage 0 -> stage 1 -> shifter;
 //             RX: shifter -> stage 0 -> stage 1 -> RX FIFO
@@ -108,9 +111,9 @@ module protocol_emulator_core (
   // Configuration writes are registered once before they reach the tiles,
   // so a byte read from SRAM (CFG blocks) ends at a flip-flop instead of
   // running on into the tiles' logic. Every write lands one cycle later.
-  wire        cpu_cfg_we;
-  wire [7:0]  cpu_cfg_addr;
-  wire [15:0] cpu_cfg_data;
+  wire        controller_cfg_we;
+  wire [7:0]  controller_cfg_addr;
+  wire [15:0] controller_cfg_data;
   reg         cfg_we;
   reg  [7:0]  cfg_addr;
   reg  [15:0] cfg_data;
@@ -120,9 +123,9 @@ module protocol_emulator_core (
       cfg_addr <= 8'd0;
       cfg_data <= 16'd0;
     end else begin
-      cfg_we   <= cpu_cfg_we;
-      cfg_addr <= cpu_cfg_addr;
-      cfg_data <= cpu_cfg_data;
+      cfg_we   <= controller_cfg_we;
+      cfg_addr <= controller_cfg_addr;
+      cfg_data <= controller_cfg_data;
     end
   end
   wire [3:0]  rd_addr;
@@ -130,14 +133,16 @@ module protocol_emulator_core (
   wire        event_consume;
   wire [6:0]  event_index;
   wire        clear_events;
-  wire [1:0]  cpu_fire;
-  wire        cpu_channel;
-  wire        cpu_tx_request;
-  wire        cpu_rx_request;
-  wire        cpu_tx_push;
-  wire [7:0]  cpu_rx_data;
-  wire        cpu_push_eop, cpu_push_err;
-  wire [9:0]  cpu_entry = {cpu_push_err, cpu_push_eop, cpu_rx_data};
+  wire [1:0]  controller_fire;
+  wire        controller_channel;
+  wire        controller_tx_request;
+  wire        controller_rx_request;
+  wire        controller_tx_push;
+  wire [7:0]  controller_rx_data;
+  wire        controller_push_eop, controller_push_err;
+  wire [9:0]  controller_entry = {
+      controller_push_err, controller_push_eop, controller_rx_data
+  };
 
   // ------------------------------------------------------------ signal space
   wire [3:0]  t_out, t_rise, t_fall;
@@ -146,10 +151,12 @@ module protocol_emulator_core (
   wire [1:0]  crc_out, crc_ok;
   wire [7:0]  logic_q;
   wire [7:0]  edge_pulse;
+  wire [2:0]  actor_action_0, actor_action_1;
+  wire [5:0]  actor_actions = {actor_action_1, actor_action_0};
   reg  [25:2] pulse_reg;
   reg  [1:0]  flags;
   reg         armed;
-  reg  [25:2] sticky;
+  reg  [31:2] sticky;
   reg  [7:0]  byte_sticky;
   wire [7:0]  byte_events;
   wire        live = enable && armed;
@@ -161,7 +168,7 @@ module protocol_emulator_core (
       s_active, s_out,           // 47:44
       t_out,                     // 43:40
       pin_sync,                  // 39:32
-      6'd0, pulse_reg, 1'b1, 1'b0     // 31:0
+      actor_actions, pulse_reg, 1'b1, 1'b0 // 31:0; actor actions are 31:26
   };
   wire [25:2] pulse_next = {
       c_hit,                     // 25:24 counter hit
@@ -169,16 +176,16 @@ module protocol_emulator_core (
       s_stop[1], s_word[1], s_stop[0], s_word[0],
       t_fall[3], t_rise[3], t_fall[2], t_rise[2],
       t_fall[1], t_rise[1], t_fall[0], t_rise[0],
-      cpu_fire
+      controller_fire
   };
-  // Index 0/1 wraps to a shift of 30/31, and 26-31 to 24-29: past the
-  // mask, which correctly clears nothing.
-  wire [25:2] consume_mask = (event_consume && !event_index[6] && !event_index[5]) ?
-      (24'd1 << (event_index[4:0] - 5'd2)) : 24'd0;
+  // Pulse lines 2-31 map directly to sticky bits 0-29; constant lines 0/1
+  // wrap to out-of-range shifts and therefore consume nothing.
+  wire [31:2] consume_mask = (event_consume && !event_index[6] && !event_index[5]) ?
+      (30'd1 << (event_index[4:0] - 5'd2)) : 30'd0;
   wire [7:0]  byte_consume = (event_consume && event_index[6]) ?
       (8'd1 << event_index[2:0]) : 8'd0;
-  wire [31:0] sticky_view = {6'd0, sticky, 1'b1, 1'b0};
-  // The controller sees level lines one cycle late (see px8_controller),
+  wire [31:0] sticky_view = {sticky, 1'b1, 1'b0};
+  // The controller sees level lines one cycle late (see controller.v),
   // so no fabric path reaches its state in the same cycle.
   reg  event_level;
   wire event_ready = event_index[6] ? byte_sticky[event_index[2:0]] :
@@ -189,15 +196,15 @@ module protocol_emulator_core (
     if (!rst_n || !enable) begin
       pulse_reg <= 24'd0;
       event_level <= 1'b0;
-      sticky    <= 24'd0;
+      sticky    <= 30'd0;
       byte_sticky <= 8'd0;
       flags     <= 2'd0;
       armed     <= 1'b0;
     end else begin
       pulse_reg <= pulse_next;
       event_level <= lines[{1'b1, event_index[4:0]}];
-      sticky    <= clear_events ? 24'd0 :
-                   ((sticky & ~consume_mask) | pulse_reg);
+      sticky    <= clear_events ? 30'd0 :
+                   ((sticky & ~consume_mask) | {actor_actions, pulse_reg});
       byte_sticky <= clear_events ? 8'd0 :
                      ((byte_sticky & ~byte_consume) | byte_events);
       if (cfg_we && cfg_addr == 8'h30)
@@ -243,10 +250,10 @@ module protocol_emulator_core (
   // Both shifters see the same signal values, including the same-cycle pins.
   wire [63:0] shifter_lines0 = lines;
   wire [63:0] shifter_lines1 = {lines[63:40], ~pin_sync_sh1_n, lines[31:0]};
-  // Byte tiles are not cycle-critical, so they read the signal space a
-  // cycle late through one shared register instead of loading every line
-  // with 16 more selector inputs. Lines 0 and 1 are the constants.
-  // Lines 26-31 are spare (constant 0) and are not registered.
+  // Byte tiles are not cycle-critical, so they read most of the signal space
+  // a cycle late through one shared register instead of loading every line
+  // with 16 more selector inputs. Actor actions are already registered and
+  // pass through directly. Lines 0 and 1 are the constants.
   reg  [63:32] levels_q;
   reg  [25:2]  pulses_q;
   always @(posedge clk)
@@ -257,7 +264,7 @@ module protocol_emulator_core (
       levels_q <= lines[63:32];
       pulses_q <= lines[25:2];
     end
-  wire [63:0] tile_lines = {levels_q, 6'd0, pulses_q, 2'b10};
+  wire [63:0] tile_lines = {levels_q, actor_actions, pulses_q, 2'b10};
 
   // ---------------------------------------------------------- FIFO channels
   // Shifter k owns channel k through its byte tiles. The controller reaches
@@ -272,16 +279,18 @@ module protocol_emulator_core (
   wire [1:0]  sh_tx_eop, sh_tx_err, sh_rx_eop, sh_rx_err;
   wire [1:0]  tile_tx_pop, rx_stream_valid, rx_in_flight;
   wire [19:0] rx_stream;
-  wire [1:0]  cpu_select = cpu_channel ? 2'b10 : 2'b01;
-  wire cpu_tx_grant = cpu_tx_request && |(cpu_select & ~sh_pulls & ~tx_empty);
-  wire cpu_rx_grant = cpu_rx_request && |(cpu_select & ~rx_in_flight & ~rx_full);
+  wire [1:0]  controller_select = controller_channel ? 2'b10 : 2'b01;
+  wire controller_tx_grant = controller_tx_request &&
+      |(controller_select & ~sh_pulls & ~tx_empty);
+  wire controller_rx_grant = controller_rx_request &&
+      |(controller_select & ~rx_in_flight & ~rx_full);
   wire [1:0] rx_stream_push = rx_stream_valid & ~rx_full;
-  assign tx_pop  = tile_tx_pop | (cpu_tx_grant ? cpu_select : 2'b00);
-  assign rx_push = rx_stream_push | (cpu_rx_grant ? cpu_select : 2'b00);
-  assign tx_push = cpu_tx_push ? cpu_select : 2'b00;
-  assign tx_push_data = cpu_entry;
-  assign rx_data = {rx_stream_push[1] ? rx_stream[19:10] : cpu_entry,
-                    rx_stream_push[0] ? rx_stream[9:0]   : cpu_entry};
+  assign tx_pop  = tile_tx_pop | (controller_tx_grant ? controller_select : 2'b00);
+  assign rx_push = rx_stream_push | (controller_rx_grant ? controller_select : 2'b00);
+  assign tx_push = controller_tx_push ? controller_select : 2'b00;
+  assign tx_push_data = controller_entry;
+  assign rx_data = {rx_stream_push[1] ? rx_stream[19:10] : controller_entry,
+                    rx_stream_push[0] ? rx_stream[9:0]   : controller_entry};
 
   genvar c;
   generate
@@ -324,35 +333,50 @@ module protocol_emulator_core (
     end
   endgenerate
 
-  px8_controller cpu (
+  controller ctrl (
       .clk(clk),
       .rst_n(rst_n),
       .enable(enable),
       .instruction_address(instruction_address),
       .instruction_read(instruction_read),
       .instruction_data(instruction_data),
-      .cfg_we(cpu_cfg_we),
-      .cfg_addr(cpu_cfg_addr),
-      .cfg_data(cpu_cfg_data),
+      .cfg_we(controller_cfg_we),
+      .cfg_addr(controller_cfg_addr),
+      .cfg_data(controller_cfg_data),
       .rd_addr(rd_addr),
       .rd_data(rd_data),
       .event_ready(event_ready),
       .event_consume(event_consume),
       .event_index(event_index),
       .clear_events(clear_events),
-      .fire(cpu_fire),
-      .channel(cpu_channel),
-      .tx_request(cpu_tx_request),
-      .tx_grant(cpu_tx_grant),
-      .tx_data(cpu_channel ? tx_data[19:10] : tx_data[9:0]),
-      .tx_push(cpu_tx_push),
-      .tx_space(!(cpu_channel ? tx_full[1] : tx_full[0])),
-      .rx_request(cpu_rx_request),
-      .rx_grant(cpu_rx_grant),
-      .rx_data(cpu_rx_data),
-      .push_eop(cpu_push_eop),
-      .push_err(cpu_push_err),
+      .fire(controller_fire),
+      .channel(controller_channel),
+      .tx_request(controller_tx_request),
+      .tx_grant(controller_tx_grant),
+      .tx_data(controller_channel ? tx_data[19:10] : tx_data[9:0]),
+      .tx_push(controller_tx_push),
+      .tx_space(!(controller_channel ? tx_full[1] : tx_full[0])),
+      .rx_request(controller_rx_request),
+      .rx_grant(controller_rx_grant),
+      .rx_data(controller_rx_data),
+      .push_eop(controller_push_eop),
+      .push_err(controller_push_err),
       .halted(halted)
+  );
+
+  // Channel-local protocol control: actors advance from registered events
+  // and emit registered action pulses on lines 26-31. The program controller
+  // configures them through the ordinary CFG write path, then need not issue
+  // each phase transition itself.
+  fabric_control_actor #(.ACTOR(0)) protocol_actor_0 (
+      .clk(clk), .rst_n(rst_n), .enable(live), .cfg_we(cfg_we),
+      .cfg_addr(cfg_addr), .cfg_data(cfg_data), .lines(lines),
+      .action(actor_action_0)
+  );
+  fabric_control_actor #(.ACTOR(1)) protocol_actor_1 (
+      .clk(clk), .rst_n(rst_n), .enable(live), .cfg_we(cfg_we),
+      .cfg_addr(cfg_addr), .cfg_data(cfg_data), .lines(lines),
+      .action(actor_action_1)
   );
 
   // ------------------------------------------------------------------ tiles

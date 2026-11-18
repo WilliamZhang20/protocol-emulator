@@ -1,0 +1,22 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+bmc: depth 16
+cover: depth 28
+
+[engines]
+bmc: smtbmc boolector
+cover: btor btormc
+
+[script]
+read -formal -sv controller.v
+read -formal -sv controller_properties.sv
+prep -top controller_properties
+
+[files]
+../../src/controller.v
+controller_properties.sv

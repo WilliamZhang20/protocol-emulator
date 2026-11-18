@@ -11,7 +11,8 @@ SIM ?= verilator
 RTL_SOURCES := \
 	src/project.v \
 	src/protocol_emulator_core.v \
-	src/px8_controller.v \
+	src/controller.v \
+	src/fabric_control_actor.v \
 	src/fabric_timer.v \
 	src/fabric_shifter.v \
 	src/fabric_counter.v \

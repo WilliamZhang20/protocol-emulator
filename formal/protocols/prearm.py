@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SOURCES = ["protocol_emulator_core.v", "px8_controller.v", "fabric_timer.v", "fabric_shifter.v",
+SOURCES = ["protocol_emulator_core.v", "controller.v", "fabric_control_actor.v", "fabric_timer.v", "fabric_shifter.v",
            "fabric_counter.v", "fabric_crc.v", "fabric_edge.v", "fabric_logic.v", "byte_tile.v", "config_bank.v",
            "byte_fifo.v"]
 HERE = Path(__file__).resolve().parent

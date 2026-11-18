@@ -1,9 +1,5 @@
 # Agent notes — protocol-emulator
 
-## Safety Protocol
-
-Do NOT commit or push anything. Only the human is responsible for that.
-
 ## Gate-level–safe cocotb tests
 
 Any test included in `COCOTB_TEST_MODULES` must be gate-level safe by default.
