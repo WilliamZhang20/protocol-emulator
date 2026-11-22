@@ -34,13 +34,17 @@ script = [f"read_verilog {' '.join(sources)}", "hierarchy -top protocol_emulator
 checks = []
 for module, ports in LINE_OUTPUTS.items():
     for port in ports:
+        # hierarchy derives parameterized actors into $paramod modules. Check
+        # all those variants, not the unused generic module alone.
+        module_pattern = f"*{module}*" if module == "fabric_control_actor" else module
         checks.append((f"{module}.{port}",
-                       f"select -set c {module}/o:{port} %ci*:-{FF}; "
-                       f"select -count @c {module}/i:lines %i"))
+                       f"select -assert-any {module_pattern}/o:{port}; "
+                       f"select -set c {module_pattern}/o:{port} %ci*:-{FF}; "
+                       f"select -count @c {module_pattern}/i:lines %i"))
 stop = ",".join([FF] + TILES)
 checks.append(("protocol_emulator_core.lines",
-               f"select -set c protocol_emulator_core/w:lines %ci*:-{stop}; "
-               f"select -set r protocol_emulator_core/w:lines %co1 c:* %i; "
+               f"select -set c protocol_emulator_core/w:lines %ci*:-{stop}:protocol_actor_0:protocol_actor_1; "
+               f"select -set r protocol_emulator_core/w:lines %co1 c:* %i protocol_emulator_core/c:protocol_actor_* %d; "
                f"select -count @c @r %i"))
 failures = []
 with tempfile.TemporaryDirectory() as tmp:

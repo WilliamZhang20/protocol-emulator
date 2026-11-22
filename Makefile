@@ -31,7 +31,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim actor-test memory-test formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -42,18 +42,19 @@ help:
 	@echo "make dead-check   Fail on unused signals or constant/never-active flops"
 	@echo "make one-hop-check Fail if any signal-space line depends combinationally on a line"
 	@echo "make sim          Run the cocotb regression"
+	@echo "make actor-test   Check the configured two-input protocol actor"
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
-	@echo "make precommit    Run lint and the functional regression"
+	@echo "make precommit    Run lint, actor test and functional regression"
 	@echo "make install-hooks Install the local pre-commit hook"
 
-precommit: lint sim
+precommit: lint actor-test sim
 
 install-hooks:
 	git config core.hooksPath .githooks
 
-verify: lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
+verify: lint dead-check one-hop-check synth-check gds-config-check memory-test actor-test sim formal
 
 lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
@@ -83,6 +84,15 @@ pdn-extract-check:
 sim:
 	$(MAKE) -C test clean
 	$(MAKE) -C test SIM=$(SIM)
+
+actor-test:
+	mkdir -p $(BUILD_DIR)/verilator/fabric_control_actor_2input
+	$(VERILATOR) --binary --timing -Wno-fatal \
+		--top-module fabric_control_actor_2input_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_control_actor_2input) \
+		test/fabric_control_actor_2input_tb.sv src/fabric_control_actor.v \
+		-MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/fabric_control_actor_2input/Vfabric_control_actor_2input_tb
 
 memory-test:
 	mkdir -p $(BUILD_DIR)/verilator/program_memory

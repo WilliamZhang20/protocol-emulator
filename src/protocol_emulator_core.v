@@ -1,5 +1,9 @@
 `default_nettype none
 
+// Execution core instantiated by the Tiny Tapeout top in project.v. It owns
+// the controller and protocol fabric; the top owns the host interface, SRAM,
+// and TX/RX FIFOs connected to the ports below.
+//
 // Spatial protocol engine in two layers. Bit-level behavior comes from a
 // fabric of statically configured tiles that run every cycle without
 // instruction fetch: 4 timers, 2 shifters, 2 counters, 2 CRCs, 8 logic
@@ -47,7 +51,8 @@
 //   0x80-0x87 edge cell e (see fabric_edge)
 //   0x88-0x8F CRC 1 reg addr[2:0] (CRC 0 is 0x28-0x2F)
 //   0x90-0x9F protocol actor transition rows (actor 0 then actor 1)
-//   0xA0-0xA1 protocol actor event-line selectors
+//   0xA0-0xA1 protocol actor event-line selectors; selector bit 12 enables
+//              eight-state one-input mode (default: four-state/two-input)
 //   0x60-0x7F byte tile t = {channel, rx, stage} addr[4:2], reg addr[1:0];
 //             TX: TX FIFO -> stage 0 -> stage 1 -> shifter;
 //             RX: shifter -> stage 0 -> stage 1 -> RX FIFO
