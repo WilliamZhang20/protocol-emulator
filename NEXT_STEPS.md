@@ -1,3 +1,21 @@
+# Next steps and experiment status
+
+**Current direction:** The numbered notes below are historical planning notes;
+in particular, the later statement dropping CIRCT has been superseded by the
+decision to reuse the Rust frontend and experiment with CIRCT lowering.
+
+- Hardware experiment: `work/tile-routing-experiment`, described in
+  `experiments/tile_fabric/README.md`.
+- Compiler experiment: sibling `protocol-emulator-compiler` branch
+  `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
+- Next: expand typed lowering and resource/route modeling for real programs;
+  rerun the protocol corpus as coverage grows. Compare architectures only
+  after the mapper models the required resources and their actual RTL.
+- The control-only end-to-end example is deliberately small. Corpus export or
+  a component table is not evidence that an entire protocol fits.
+
+## Earlier planning notes
+
 0. Clean up the loose ends (one session).
 
 - Decide the uncommitted two-input actor RTL change: commit it or drop it.

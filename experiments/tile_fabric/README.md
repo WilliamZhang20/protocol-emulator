@@ -4,6 +4,24 @@ Run `make tile-spi-experiment` from the hardware repository root. This is an
 experimental standalone module, **not** a replacement for the chip and not a
 fair physical comparison with the baseline yet.
 
+The sibling compiler's `circt_lab` experiment can emit an image for this RTL.
+`make tile-circt-image-test IMAGE=/path/to/image.mem` loads the 18 configuration
+words and TX payload through the prototype ports and runs a pin-level transfer.
+For an actual `.spt` protocol declaration, the compiler can also emit only a
+control-tile table; `make tile-control-image-test IMAGE=/path/to/control.mem`
+checks that table with the corresponding external input sequence. This tests a
+component, not placement or binding of the full source program.
+The RTL and CIRCT work must be checked out together at matching revisions; this
+experimental image is not compatible with the current chip's ABI.
+
+`control_fabric.v` is a second, smaller target for a complete restricted source
+program: two synchronized inputs, one four-state controller, and three
+registered output paths. Its 17-word image is 16 control rows and an output
+enable mask. `make control-fabric-image-test IMAGE=/path/to/control-full.mem`
+tests a compiler-generated image at the pins. It is a standalone experiment,
+not a replacement for the SPI slice or a proposed final topology. See the
+sibling compiler's `circt_lab/README.md` for source restrictions and commands.
+
 ```text
                    timer --> [route] --> SCK pin
                      | rise/fall
@@ -11,28 +29,45 @@ trigger -> control -> [routes] -> shifter -> [route] -> MOSI pin
                |                    ^
                v                    |
             [route] -> CS pin    [route] <- MISO synchronizer
+                                    |
+                           local 4 x 16 register file
 ```
 
-The prototype has a timer, shift/capture tile, fixed SPI control, three
+The prototype has a timer, shift/capture tile, configured control, three
 registered output pins, a synchronized input, and eight configurable four-input
 registered routes. Each route has a finite hardwired set of sources; this is
-not an all-to-all network. Two 16-bit configuration words set the timer,
-width and route selections while disarmed. Both words must be written before
-arming; writes while armed are ignored. Configuration registers are included
-in synthesis. There is no host bitstream loader, queue, payload memory, general
-routing network, or independently configurable controller.
-The shifter supports 1–8 bits (MSB first), not the proposed 16-bit or arbitrary
-width design. It is a first executable slice of a possible fabric, not
+not an all-to-all network. Eighteen 16-bit configuration writes set the timer,
+width, route selections and 16 control-table rows while disarmed. All must be
+written before arming; writes while armed are ignored. Configuration storage
+is included in synthesis. A local four-word register file holds TX in slot 0
+and captures RX in slot 1; slots 2–3 have no assigned fabric function. Its
+validity flags are reset; the data bits need not be. The host can write only
+while disarmed, and a new start invalidates the old RX value. It has
+asynchronous host/TX reads, not the single-port synchronous behavior of a
+foundry SRAM. It is **not an SRAM macro** or streaming FIFO, and the host
+cannot refill it while running. A valid TX word is required to arm. There is
+no host bitstream loader, queue, or general routing network.
+
+The control tile has four states and two fixed inputs (`trigger` and shifter
+`done`). Its 16 rows each encode next state and registered `selected`,
+`shift_start`, and `done` outputs. The test loads SPI behavior, then rewrites
+two rows to make a trigger complete without an SPI transfer. This is a real
+reconfiguration but not yet a general control tile: its input and output
+ports remain specialized and its full table is expensive. The shifter supports
+1–16 bits (MSB first); TX values are left-aligned and RX values right-aligned.
+It is a first executable slice of a possible fabric, not
 evidence that the proposed architecture maps general protocols.
 
 The standalone Verilog peer exchanges `0xA5` for `0x5A` in SPI mode 0 with an
 8-cycle half-period. It checks 8 sampling edges, all 16 clock edges, half-period
 spacing, MOSI stability at rising edges, receive data, idle state, disarm pin
 release and that incomplete or invalid configuration does not drive pins. It
-then reconfigures the same fabric for a five-bit transfer, tests a different
-MOSI route, and checks that writes while armed are ignored. A separate junction
-test exercises all four selector choices with every possible set of inputs.
-The 8-bit and 5-bit transactions took 135 and 87 cycles, respectively, from
+then reconfigures the same fabric for 5-, 12- and 16-bit transfers, tests a
+different MOSI route and control table, and checks that configuration and
+payload writes while armed are ignored. It reads received words back from the
+local store. A separate junction test exercises all four selector choices with
+every possible set of inputs. The 8-bit, 5-bit and 12-bit transactions took
+135, 87 and 199 cycles, respectively; the 16-bit transfer took 263 cycles, from
 trigger release until `done` in this test. This measures a
 different interval than the compiler's wall-clock test report and is not a
 baseline speedup claim. The peer is independent of the prototype's internal
@@ -48,13 +83,18 @@ cycle for one zero-route transaction. With Yosys 0.67+111 (`4821ed17b-dirty`):
 
 | Candidate | Generic cells | Flops |
 | --- | ---: | ---: |
-| Fixed route selectors | 180 | 68 |
-| Programmable route selectors | 225 | 84 |
+| Fixed route selectors | 747 | 248 |
+| Programmable route selectors | 781 | 264 |
 
 These are generic mapped cell counts, **not** standard-cell area or timing.
-They include the configuration flops, but omit host loading, memory and the
-rest of a real chip. The fixed-route control preserves the same pipeline
-latency; a fixed design without routing pipeline stages could differ. This
+They include the configuration and register-file flops, but omit a host
+transport, SRAM macros and the rest of a real chip. The fixed-route control preserves the same pipeline
+latency; a fixed design without routing pipeline stages could differ. Both
+now include the configurable control table, 16-bit shifter and local register
+file, so they are not directly comparable with the previous 8-bit,
+fixed-controller results.
+Synthesis can restructure logic differently, and generic cell counts do not
+use a uniform area weight. This
 measures a narrow local cost of eight selectors; it is not a comparison to the
 current chip's full 64-line network or evidence for an architecture verdict.
 
@@ -84,15 +124,15 @@ Native Yosys can synthesize the slice with:
 ```
 
 The generic result is not comparable to the full baseline: the slice omits
-memory, configuration loading, additional protocols, host and other fabric
+the main SRAM, host configuration loading, additional protocols and other fabric
 resources. No OpenROAD or LibreLane executable was found on `PATH`, and no
 standard-cell PDK was located in the checked locations, so a placed/routed
 comparison has **not** been run.
 
 To answer the architecture question, the next work is to provide the same
 configuration and host contract, independently run the same multi-transaction
-peer against both, replace the hardwired SPI controller with a configurable
-control tile, expand the graph to useful routing choices, then route comparable
+peer against both, generalize and compare the cost of the configured control
+tile, expand the graph to useful routing choices, then route comparable
 full designs using the same library, floorplan and clock constraints. Also
 measure a 12+5-bit bidirectional transfer and a concurrent workload. Until then
 there is no evidence for claiming a system-level area or timing improvement.

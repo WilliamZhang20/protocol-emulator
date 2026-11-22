@@ -32,7 +32,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -46,6 +46,9 @@ help:
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make routing-experiment  Compare selector and registered local-route proxies"
 	@echo "make tile-spi-experiment  Simulate the experimental connected SPI tiles"
+	@echo "make tile-circt-image-test IMAGE=...  Exercise a compiler-produced image"
+	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
+	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
 	@echo "make precommit    Run lint and the functional regression"
@@ -107,6 +110,31 @@ tile-spi-experiment:
 		experiments/tile_fabric/equiv_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_spi_equivalence/Vequiv_tb
 	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/tile_fabric/compare.py
+
+tile-circt-image-test:
+	@test -n "$(IMAGE)" || (echo 'usage: make tile-circt-image-test IMAGE=path/to/image.mem' >&2; exit 1)
+	mkdir -p $(BUILD_DIR)/verilator/tile_circt_image
+	$(VERILATOR) --binary --timing --top-module circt_image_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_circt_image) \
+		experiments/tile_fabric/circt_image_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_circt_image/Vcirct_image_tb +IMAGE=$(abspath $(IMAGE))
+
+tile-control-image-test:
+	@test -n "$(IMAGE)" || (echo 'usage: make tile-control-image-test IMAGE=path/to/control.mem' >&2; exit 1)
+	mkdir -p $(BUILD_DIR)/verilator/tile_control_image
+	$(VERILATOR) --binary --timing --top-module control_image_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_control_image) \
+		experiments/tile_fabric/control_image_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_control_image/Vcontrol_image_tb +IMAGE=$(abspath $(IMAGE))
+
+control-fabric-image-test:
+	@test -n "$(IMAGE)" || (echo 'usage: make control-fabric-image-test IMAGE=path/to/image.mem' >&2; exit 1)
+	mkdir -p $(BUILD_DIR)/verilator/control_fabric_image
+	$(VERILATOR) --binary --timing --top-module control_fabric_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/control_fabric_image) \
+		experiments/tile_fabric/control_fabric_tb.v experiments/tile_fabric/control_fabric.v \
+		experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/control_fabric_image/Vcontrol_fabric_tb +IMAGE=$(abspath $(IMAGE))
 
 memory-test:
 	mkdir -p $(BUILD_DIR)/verilator/program_memory

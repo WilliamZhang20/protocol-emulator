@@ -15,8 +15,11 @@ the IHP CMOS5L pads.
 
 - **I/O voltage:** 3.3 V on the demo board. Inputs are **not 5 V tolerant**.
 - **Drive strength:** 4 mA source/sink per output.
-- **Output speed:** rated 33 MHz. The fastest protocol output here
-  (10BASE-T Manchester) toggles at most at 10 MHz.
+- **Output speed:** the earlier-shuttle GPIO figure is 33 MHz. The current
+  Tiny Tapeout estimate for CMOS5L is around 66 MHz maximum output frequency,
+  with approximately 10 ns round trip through pads and mux. Those latter
+  figures are provisional estimates, not CMOS5L silicon measurements. Do not
+  treat either estimate as timing closure for a particular design.
 - **Input speed:** rated 66 MHz.
 - **Pin state when stopped:** every `uio` pin is an input (output enable low)
   after reset, while the engine is stopped, and until a program arms the
