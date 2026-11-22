@@ -30,6 +30,8 @@ Other pages:
 
 - [External hardware, pins and clocks](hardware.md)
 - [8×4 architecture review and timing baseline](review-8x4.md)
+- [Protocol-oriented tile fabric redesign candidate](tile-fabric-redesign-sketch.md) (proposed, not implemented)
+- [Earlier fixed-cluster candidate](cluster-redesign-sketch.md) (superseded design alternative)
 - [Formal verification details](../formal/README.md)
 - [Tiny Tapeout datasheet text](info.md)
 

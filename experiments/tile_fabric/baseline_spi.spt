@@ -1,0 +1,50 @@
+// SPI controller, mode 0 (SCK idles low, both sides sample on its rising edge), MSB first.
+
+clock 50 MHz
+const HALF = 8 cycles   // half an SCK period: 3.125 MHz
+
+pin cs: out = cs_n
+pin sck: out = sck_clock.out
+pin mosi: out = bits.out
+pin miso: in
+
+event begin, finish
+
+// CS is low from `begin` until `cs_off` ticks, half a period after the last edge.
+reg selected = begin || (selected && !cs_off.tick)
+reg cs_n init 1 = !selected
+
+// Words may start until the transaction's last word has begun, so the fabric
+// itself ends the transaction; bytes the host sends early for the next one wait.
+counter sent { count: bits.word, clear: begin }
+reg open = begin || (open && !(sent.at_least && bits.busy))
+
+timer sck_clock { every: HALF, idle: 0, run: bits.busy until bits.done }
+timer cs_off { every: HALF, pulse, run: finish until cs_off.tick }
+timer gap { every: 4 cycles, pulse, run: cs_off.tick until gap.tick }
+
+shifter bits {
+    frame: [data(8, msb_first)],
+    start: open,
+    shift: sck_clock.fall,
+    sample: miso at sck_clock.rise,
+}
+
+// One transaction: CS falls, `data` goes out while the reply comes in, CS rises.
+export fn transfer(data: bytes via bits) -> bytes via bits {
+    sent.limit = data.len - 1
+    fire begin
+    repeat data.len { wait bits.word }
+    fire finish
+    wait cs_off.tick
+    wait gap.tick
+}
+
+always "SCK only moves while CS is low" { sck.changed implies cs == 0 }
+
+
+test "one byte" {
+    attach spi_device(cs: cs, sck: sck, mosi: mosi, miso: miso, mode: 0, replies: [0x5A]) as device
+    expect transfer([0xA5]) == [0x5A]
+    expect device.read(1) == [0xA5]
+}

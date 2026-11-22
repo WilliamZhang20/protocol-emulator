@@ -5,6 +5,7 @@ export PATH := $(VENV_BIN):$(EDA_BIN):$(PATH)
 VERILATOR ?= verilator
 PYTHON ?= python3
 YOSYS ?= yosys
+ROUTING_YOSYS ?= $(EDA_BIN)/yosys
 unexport VERILATOR_ROOT
 SIM ?= verilator
 
@@ -31,7 +32,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -43,6 +44,8 @@ help:
 	@echo "make one-hop-check Fail if any signal-space line depends combinationally on a line"
 	@echo "make sim          Run the cocotb regression"
 	@echo "make memory-test  Exercise the foundry SRAM model"
+	@echo "make routing-experiment  Compare selector and registered local-route proxies"
+	@echo "make tile-spi-experiment  Simulate the experimental connected SPI tiles"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
 	@echo "make precommit    Run lint and the functional regression"
@@ -83,6 +86,27 @@ pdn-extract-check:
 sim:
 	$(MAKE) -C test clean
 	$(MAKE) -C test SIM=$(SIM)
+
+routing-experiment:
+	mkdir -p $(BUILD_DIR)/verilator/routing_experiment
+	$(VERILATOR) --binary --timing --top-module selector_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/routing_experiment) \
+		experiments/routing/selector_tb.v experiments/routing/selector_candidates.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/routing_experiment/Vselector_tb
+	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/routing/compare.py
+
+tile-spi-experiment:
+	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
+	$(VERILATOR) --binary --timing --top-module spi_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_spi_experiment) \
+		experiments/tile_fabric/spi_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_spi_experiment/Vspi_tb
+	mkdir -p $(BUILD_DIR)/verilator/tile_spi_equivalence
+	$(VERILATOR) --binary --timing --top-module equiv_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_spi_equivalence) \
+		experiments/tile_fabric/equiv_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_spi_equivalence/Vequiv_tb
+	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/tile_fabric/compare.py
 
 memory-test:
 	mkdir -p $(BUILD_DIR)/verilator/program_memory
