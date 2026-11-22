@@ -4,6 +4,8 @@
 
 `default_nettype none
 
+// Tiny Tapeout top level: connects the host interface, shared program SRAM,
+// and per-channel FIFOs to the protocol execution core and external pins.
 module tt_um_protocol_emulator (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,

@@ -66,25 +66,25 @@ What the chip cannot do yet, and what is not yet measured.
 
 ## Measured
 
-- **Timing and area, 8x4 tile** (`68b8440`: bit coder, edge cells, two
-  CRCs, 8-byte FIFOs): +0.91 ns setup slack at the slow corner (1.08 V,
-  125 °C), +8.19 ns typical, +0.064 ns hold at the fast corner; 59.1 %
-  utilization of the 1,208k µm² core; DRC, LVS and antenna clean. The
-  post-route repair pass (`src/config.json`) leaves no max-slew or
-  max-cap violation in the standard cells; the last three are SRAM macro
-  pins (slow-corner input slew on `A_DIN[1]` and `A_ADDR[5]`, 0.09 pF on
-  `A_DOUT[3]` against 0.064). The slow-corner limit is the controller
-  executing straight from the SRAM output: 7.6 ns access, 2.6 ns of
-  buffered wire from the SRAM corner, then the `WEV` decode that clears a
-  sticky event bit. Before the edge cells and second CRC (`2945e58`) the
-  slow corner had +2.81 ns at 52.6 %. The controller now registers the
-  instruction byte (same cycle counts: the next read is issued a cycle
-  early), so the SRAM output only reaches flip-flops; that GDS run is
-  pending. The SRAM pin limits are the edges of the macro's timing tables
-  (0.064 pF, 0.595 ns), not drive limits: its clock-to-out moves only
-  0.14 ns across the whole load range. The 6x4 run and other public
-  designs using this macro report the same kind of pin warnings. Every
-  protocol here is a program, so none of them changes these numbers.
+- **Timing and area, 8x4 tile.** Before SRAM prefetch, the `68b8440`
+  revision (bit coder, edge cells, two CRCs, 8-byte FIFOs) had +0.91 ns
+  setup slack at the slow corner (1.08 V, 125 °C), +8.19 ns typical,
+  +0.064 ns hold at the fast corner, and 59.1% utilization of the
+  1,208k µm² core. The post-route repair pass (`src/config.json`) removed
+  all standard-cell max-slew and max-cap violations; three warnings
+  remained at SRAM pins (`A_DIN[1]` and `A_ADDR[5]` input slew, and
+  `A_DOUT[3]` at 0.09 pF against a 0.064 pF limit). The controller's
+  critical path decoded the SRAM output after 7.6 ns access and 2.6 ns of
+  buffered wire, then cleared a sticky event bit. The controller now
+  prefetches the instruction byte one cycle early and captures it in a
+  register. The completed [GDS run for `97af92c`](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43270161978)
+  reports +5.636 ns slow-corner setup slack and zero setup violations;
+  the later [8x4 GDS run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/43523858557)
+  also completed successfully. The SRAM timing-library limits (0.064 pF,
+  0.595 ns) are the edges of its characterization tables; the macro's
+  clock-to-out changes only 0.14 ns across the characterized load range.
+  Similar SRAM-pin warnings appear in other public designs using this
+  macro. Every protocol here is a program, so none changes these numbers.
 - **On the 6x4 tile** (`016f736`, branch `arch/spatial`): +2.48 ns slow
   corner, 67.8 % utilization.
 
