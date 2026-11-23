@@ -31,6 +31,28 @@ The over-capacitance `A_DOUT[3]` net is reported with fanout 2 and load
 they do not establish whether resizing, buffering, placement or constraints
 are the right fix. All 18 listed fanout violations are clock leaf buffers.
 
+The final power-aware netlist identifies `_1751_` (`sg13cmos5l_a21oi_1`) as
+the only driver of `bank1.address[6]`, with the SRAM address pin as its load.
+The extracted nominal SPEF reports 0.0502407 pF total for that net. The
+slow-corner SRAM Liberty assigns its `A_ADDR[6]` input 0.0119653 pF, and
+their sum is 0.0622060 pF, matching the reported load at `_1751_`'s output.
+The SRAM `A_DOUT[3]` output drives `_1839_` (a mux) and `_2424_` (a logic gate);
+the SPEF reports 0.0680671 pF total for the net. STA's reported 0.074186 pF
+load also reflects its analysis and library assumptions, so these numbers are
+not interchangeable. This shows which final-netlist drivers and loads to probe;
+no counterfactual resizing or physical reroute has yet been run. The maximum
+fanout violations are 18 CTS leaf buffers with reported fanout 13–17 against
+the limit 8; why that constraint is not repaired or enforced needs checking.
+The checked-in slow-corner SRAM Liberty sets `A_ADDR` maximum transition to
+0.5952 ns and `A_DOUT` maximum capacitance to 0.064 pF, matching the STA
+limits. The SRAM address timing lookup tables shown in that Liberty stop at
+0.5952 ns input slew; the violating path is outside that characterized slew
+range. The post-route SDC sets a 20 ns clock and a design-wide maximum fanout
+of 10, while the reported leaf-buffer limit is 8; the source of the stricter
+limit needs confirmation from the standard-cell library. OpenROAD and the
+standard-cell libraries used by CI are not installed in this workspace, so
+no counterfactual resize/re-extraction has been run locally.
+
 Each of the two SRAM macros measures approximately 146.88 × 336.46 µm before
 spacing and routing. This is a single two-macro test vehicle, not a measured
 comparison with a one-macro, smaller-bank or alternative-fabric design. The
@@ -87,6 +109,24 @@ External PHY/line-driving requirements remain outside the digital graph.
    arrangement using explicit stream contention, frame capacity and host/pad
    constraints. Obtain matched synthesis/physical results before choosing bank
    counts or interpreting generic cell counts as area.
+
+Initial follow-up probes are in the sibling compiler's
+`circt_lab/investigations/README.md`. Source connectivity shows JTAG's two
+shifters share the declared start and shift events; I2C's two shifters do not
+share a direct shift source, though function and context semantics remain to
+be lowered. A hypothetical single shared selector cannot simultaneously route
+the two JTAG data sources; two selectors can. A micro-test of existing RTL
+route primitives preserves two-cycle pulse spacing through three pipeline
+stages, but that does not prove an Ethernet feedback path or pin timing.
+
+An explicit synthetic contention trace found two chosen actor deadline misses
+with one 1 KiB bank, none with two 1 KiB banks, and none with
+one bank plus four-byte prefetch. Over 26 host arrival phases, the unbuffered
+one-bank case misses at least one actor deadline in 13 phases; the other cases
+have no misses in this finite model. Arbitration, phase, object
+placement and host behavior are assumptions; these figures do not decide the
+physical SRAM organization. They are useful cases for a future matched RTL
+experiment. No physical resize or reroute has been run.
 
 Prefer one controlled comparison where candidate alternatives implement the
 same workloads and report functional coverage, wiring/timing limits and

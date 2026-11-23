@@ -23,7 +23,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -37,6 +37,7 @@ help:
 	@echo "make memory-test  Exercise the foundry SRAM model"
 	@echo "make routing-experiment  Compare selector and registered local-route proxies"
 	@echo "make tile-spi-experiment  Simulate the experimental connected SPI tiles"
+	@echo "make tile-route-latency-probe  Test route pipeline and synchronized input latency"
 	@echo "make tile-circt-image-test IMAGE=...  Exercise a compiler-produced image"
 	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
 	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
@@ -93,6 +94,13 @@ routing-experiment:
 		experiments/routing/selector_tb.v experiments/routing/selector_candidates.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/routing_experiment/Vselector_tb
 	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/routing/compare.py
+
+tile-route-latency-probe:
+	mkdir -p $(BUILD_DIR)/verilator/tile_route_latency
+	$(VERILATOR) --binary --timing -Wno-TIMESCALEMOD --top-module route_latency_probe_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_route_latency) \
+		experiments/tile_fabric/route_latency_probe_tb.sv src/spi_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_route_latency/Vroute_latency_probe_tb
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
