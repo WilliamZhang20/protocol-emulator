@@ -2,6 +2,7 @@
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from pathlib import Path
 
 
 @cocotb.test()
@@ -48,6 +49,15 @@ async def two_banks_and_twelve_bit_transfer(dut):
         await FallingEdge(dut.clk)
         return int(dut.uo_out.value)
 
+    # The fixture comes from the sibling Rust frontend/CIRCT component path.
+    # Programming is through external pins; the same test runs after synthesis.
+    words = [int(x, 16) for x in (Path(__file__).parents[1] / 'data' / 'spi12.mem').read_text().splitlines()]
+    await command(4, 8)  # disarmed; enter configuration-write mode
+    for index, word in enumerate(words[:18]):
+        await command(0, index)
+        await command(6, word & 0xff)
+        await command(7, word >> 8)
+
     await select_bank(0)
     await write_byte(7, 0x31)
     assert await read_byte(7) == 0x31
@@ -59,6 +69,9 @@ async def two_banks_and_twelve_bit_transfer(dut):
     await command(6, 100)
     await command(7, 200)
     await command(5, 0)
+    # Selecting idle opcode 7 exposes CS on uo[0] without issuing a command.
+    await FallingEdge(dut.clk)
+    dut.uio_in.value = (7 << 2) | 1
     observed = 0
     samples = 0
     old_sck = 0
@@ -69,6 +82,7 @@ async def two_banks_and_twelve_bit_transfer(dut):
         pins = int(dut.uio_out.value)
         sck = (pins >> 5) & 1
         if sck and not old_sck:
+            assert int(dut.uo_out.value) == 0, "CS must be asserted while sampling"
             observed = (observed << 1) | ((pins >> 6) & 1)
             samples += 1
         old_sck = sck
@@ -77,6 +91,9 @@ async def two_banks_and_twelve_bit_transfer(dut):
             break
     assert done, "transfer did not complete"
     assert (samples, observed) == (12, 0xA5C)
+    await ClockCycles(dut.clk, 4)
+    await FallingEdge(dut.clk)
+    assert int(dut.uo_out.value) == 1, "CS must return high after transfer"
     assert await read_byte(200) == 0x0F
     assert await read_byte(201) == 0xFF
     await select_bank(0)

@@ -173,6 +173,10 @@ def main() -> None:
         require(placement.get("location") == location, f"{instance} has unexpected placement")
     positions = list(INSTANCES.values())
     require(positions[0][0] + 146.88 < positions[1][0], "the SRAM macro footprints overlap")
+    fp_obstructions = config.get("FP_OBSTRUCTIONS", [])
+    for needed in ([477.0, 78.5, 480.0, 417.5], [626.88, 78.5, 630.0, 417.5]):
+        require(any(r[0] <= needed[0] and r[1] <= needed[1] and r[2] >= needed[2] and r[3] >= needed[3]
+                    for r in fp_obstructions), f"missing bank-1 cell keepout {needed}")
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
     for x, y in INSTANCES.values():

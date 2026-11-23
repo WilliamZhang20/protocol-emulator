@@ -14,6 +14,7 @@ RTL_SOURCES := \
 	src/spi_tiles.v \
 	src/memory_tiles.v \
 	src/memory_shift.v \
+	src/memory_spi_fabric.v \
 	src/program_memory.v
 
 SRAM_MODELS := \
@@ -22,7 +23,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -40,6 +41,7 @@ help:
 	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
 	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
 	@echo "make tile-memory-experiment  Test distributed memory and a 12-bit transfer"
+	@echo "make tile-memory-spi-image-test  Test the routed memory/SPI fabric"
 	@echo "make tile-memory-lint        Lint both memory-bank implementations"
 	@echo "make tile-memory-assertion-mutation  Check fairness assertion catches a broken arbiter"
 	@echo "make tile-memory-synth       Synthesize with two SRAM macro black boxes"
@@ -53,7 +55,7 @@ precommit: lint sim
 install-hooks:
 	git config core.hooksPath .githooks
 
-verify: lint synth-check gds-config-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-assertion-mutation tile-memory-synth
+verify: lint synth-check gds-config-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-spi-image-test tile-memory-assertion-mutation tile-memory-synth
 
 lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
@@ -67,7 +69,7 @@ one-hop-check:
 	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank0.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank1.macro_bank.memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank0.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank1.macro_bank.memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py
@@ -148,6 +150,9 @@ tile-memory-lint:
 		--top-module memory_shift_fabric -GUSE_MACRO=1 experiments/tile_fabric/sram_lint.vlt \
 		src/memory_shift.v src/memory_tiles.v \
 		src/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
+	$(VERILATOR) --lint-only --timing -Wall -Wno-DECLFILENAME -DFUNCTIONAL \
+		--top-module memory_spi_fabric -GUSE_MACRO=1 experiments/tile_fabric/sram_lint.vlt \
+		src/memory_spi_fabric.v src/memory_tiles.v src/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
 
 tile-memory-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_memory $(BUILD_DIR)/verilator/tile_memory_shift $(BUILD_DIR)/verilator/tile_memory_random
@@ -172,6 +177,14 @@ tile-memory-experiment:
 
 tile-memory-synth:
 	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v; read_verilog src/program_memory.v src/memory_tiles.v src/memory_shift.v src/spi_tiles.v; hierarchy -top memory_shift_fabric -chparam USE_MACRO 1; flatten; synth -top memory_shift_fabric; stat'
+
+tile-memory-spi-image-test:
+	mkdir -p $(BUILD_DIR)/verilator/memory_spi
+	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_spi_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/memory_spi) \
+		experiments/tile_fabric/memory_spi_tb.sv src/memory_spi_fabric.v src/memory_tiles.v \
+		src/spi_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/memory_spi/Vmemory_spi_tb +IMAGE=$(abspath $(if $(IMAGE),$(IMAGE),test/data/spi12.mem))
 
 tile-memory-assertion-mutation:
 	VERILATOR=$(VERILATOR) experiments/tile_fabric/check_memory_assertions.sh

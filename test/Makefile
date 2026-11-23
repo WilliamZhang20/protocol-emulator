@@ -12,7 +12,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal
 endif
-PROJECT_SOURCES = project.v spi_tiles.v memory_tiles.v memory_shift.v program_memory.v
+PROJECT_SOURCES = project.v spi_tiles.v memory_tiles.v memory_shift.v memory_spi_fabric.v program_memory.v
 
 ifneq ($(GATES),yes)
 SIM_BUILD = sim_build/rtl
