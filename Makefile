@@ -32,7 +32,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -50,6 +50,7 @@ help:
 	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
 	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
 	@echo "make tile-memory-experiment  Test distributed memory and a 12-bit transfer"
+	@echo "make tile-memory-lint        Lint both memory-bank implementations"
 	@echo "make tile-memory-assertion-mutation  Check fairness assertion catches a broken arbiter"
 	@echo "make tile-memory-synth       Synthesize with two SRAM macro black boxes"
 	@echo "make formal       Run every SymbiYosys target"
@@ -147,6 +148,16 @@ memory-test:
 		test/program_memory_tb.sv src/program_memory.v $(SRAM_MODELS) \
 		-MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/program_memory/Vprogram_memory_tb
+
+tile-memory-lint:
+	$(VERILATOR) --lint-only --timing -Wall -Wno-DECLFILENAME -DFUNCTIONAL \
+		--top-module memory_shift_fabric -GUSE_MACRO=0 experiments/tile_fabric/sram_lint.vlt \
+		experiments/tile_fabric/memory_shift.v experiments/tile_fabric/memory_tiles.v \
+		experiments/tile_fabric/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
+	$(VERILATOR) --lint-only --timing -Wall -Wno-DECLFILENAME -DFUNCTIONAL \
+		--top-module memory_shift_fabric -GUSE_MACRO=1 experiments/tile_fabric/sram_lint.vlt \
+		experiments/tile_fabric/memory_shift.v experiments/tile_fabric/memory_tiles.v \
+		experiments/tile_fabric/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
 
 tile-memory-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_memory $(BUILD_DIR)/verilator/tile_memory_shift $(BUILD_DIR)/verilator/tile_memory_random

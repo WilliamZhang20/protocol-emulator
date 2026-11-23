@@ -1,0 +1,4 @@
+`verilator_config
+// The foundry's functional model accepts this timing-selection pin but does
+// not model analog delay. Keep unused-signal checks enabled everywhere else.
+lint_off -rule UNUSEDSIGNAL -file "*/RM_IHPSG13_1P_core_behavioral_bm_bist.v" -match "*A_DLY*"

@@ -29,6 +29,10 @@ in the adjacent README. No instruction memory is involved.
 
 ## Verification
 
+`make tile-memory-lint` checks both the behavioral and macro-backed RTL with
+warnings treated as errors. It waives grouped-module filename warnings and
+the vendor functional model's unused analog-delay selector only.
+
 `make tile-memory-experiment` runs directed macro/model comparisons, a 12-bit
 transfer and abort test, and three seeded 12,000-cycle randomized tests. The
 random test uses an independent bank-content scoreboard, checks reads and
@@ -44,3 +48,5 @@ corresponding fairness and response SVAs must reject them; the mutation bench
 contains no separate scoreboard.
 These are simulation checks, not an exhaustive formal proof. The macro is its
 functional model, not post-layout timing simulation.
+The `tile experiment` CI workflow runs these memory checks and synthesis. The
+separate GDS workflow still targets the existing chip, not this prototype.
