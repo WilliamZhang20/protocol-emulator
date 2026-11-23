@@ -66,9 +66,45 @@ synchronized inputs, 6–9 timer 0 tick/rise/fall/level, 10–13 timer 1
 falling-edge detectors are fixed resources. Output enable is gated off while
 disarmed or incomplete.
 
+## Independent UART streaming wrapper
+
+`fabric_v2_uart_stream` is a second wrapper around the same tile fabric and
+two-bank memory; it does not replace the finite SPI wrapper. UART RX starts
+from the configured input edge independently of TX, queues received bytes,
+and writes them sequentially to a configured SRAM region. TX fetches a
+host-specified finite source region through a separate queue and runs without
+waiting for RX. Each queue holds four bytes. One registered actor request is
+held stable until accepted, and local arbitration alternates between eligible
+TX reads and RX writes. Host and actor still contend through the existing
+two-bank round-robin arbiter. The host must keep `rx_base` and `rx_capacity`
+stable at arm and avoid modifying in-flight TX data; no coherence is provided.
+
+On arm, RX accepts at most `rx_capacity` bytes into the non-wrapping region
+`[rx_base, rx_base + rx_capacity)`. `rx_received` counts bytes accepted into
+the queue, and `rx_written` counts writes accepted by SRAM. If the region is
+invalid/full or the queue cannot accept a completed byte, that byte is dropped
+and `rx_overflow` remains set until disarm/reset. Zero capacity is invalid.
+TX accepts one nonzero, non-wrapping region on `tx_start` while idle; a request
+while busy is ignored. Invalid ranges set `tx_error` and pulse `tx_done`;
+valid `tx_done` pulses after the final transmitted frame. Disarm cancels
+pending activity and clears status; accepted SRAM writes remain. Framing
+errors, stop-bit validation, RX backpressure, runtime ring reclamation and
+continuous host streaming are not implemented.
+
+The standalone stream test runs five receive-only bytes and two successive
+transmit-only requests, then overlapping traffic while a host continuously accesses the same
+bank. It checks FIFO occupancy, host stalls, receive-region overflow and its
+sentinel, oversized TX and invalid RX ranges, sticky overflow and disarm.
+Interface-level SV assertions check queue bounds, write/receive counts,
+sticky overflow, stable stalled host requests and disarmed pin OE. RTL-only
+checks also verify that the actor request remains stable while stalled, and
+hierarchical coverage confirms that both host and actor actually stalled.
+This standalone bench is not part of the gate-level cocotb modules. It uses
+the functional SRAM model, not real-time physical timing or silicon.
+
 ## Verification and compiler boundary
 
-`make tile-fabric-v2-experiment` runs three standalone RTL tests and a Yosys
+`make tile-fabric-v2-experiment` runs four standalone RTL tests and Yosys
 synthesis/black-box count check. The tests cover timer first/repeat/hold and
 all 1–16-bit widths in both orders; one fabric configured first for 12-bit SPI,
 then a changed output route, then overlapping UART TX/RX; and the same SPI
@@ -82,14 +118,16 @@ not physical silicon.
 
 The sibling compiler can emit restricted 26-word source-derived images using
 `--compile-v2-spi` for `circt_lab/examples/memory_spi.spt` and
-`--compile-v2-uart` for `examples/uart.spt`. The compiler validates the
+`--compile-v2-uart` and `--compile-v2-uart-stream` for `examples/uart.spt`. The compiler validates the
 supported source patterns and uses source width/timing, but placement, routes,
 packing and the finite adapter are fixed. Control is implemented by the
-adapter and direct busy/done wiring, not generally lowered. UART frame and
-host-stream handling are only the tested one-byte case. Reports explicitly set
+adapter and direct busy/done wiring, not generally lowered. The original finite
+wrapper's UART handling is only the tested one-byte case; the stream wrapper
+uses host-supplied regions and lengths. Reports explicitly set
 `general_mapping` and `full_source_program_compiled` false. The source-driven
 CIRCT regression can run the SRAM RTL test with `V2_MEMORY_IMAGE_TB` set to
-its built executable. There is no complete source-language fit, configuration
+its built executable, and the stream test with `V2_UART_STREAM_IMAGE_TB`.
+There is no complete source-language fit, configuration
 loader on Tiny Tapeout pins, gate-level test, physical PPA result, or claim that
 this topology is the final fabric. Physical design must separately account for
 prior SRAM slew, capacitance and clock-fanout violations.

@@ -12,9 +12,10 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
 - The standalone `experiments/fabric_v2` now has two independently configured
   timers and shifters, configurable signal muxes, I/O enables, and a finite
   two-SRAM adapter. Restricted SPI and UART configuration images from the
-  compiler run on the same RTL in the standalone functional-macro test. This
-  is not the chip top, a general mapper, an autonomous UART receiver, a
-  gate-level test, or a physical result; see the experiment README.
+  compiler run on the same RTL in the standalone functional-macro test. A
+  separate experimental UART stream wrapper now receives autonomously with
+  bounded queues and SRAM regions. Neither wrapper is the chip top, a general
+  mapper, a gate-level test, or a physical result; see the experiment README.
 - Next: lower actual source transaction functions and byte streams onto the
   integrated timer, shifter, control, routing, and SRAM fabric. The current
   source-derived control/datapath image still uses a hand-written SRAM adapter
