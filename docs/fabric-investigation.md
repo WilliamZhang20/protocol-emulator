@@ -132,3 +132,16 @@ Prefer one controlled comparison where candidate alternatives implement the
 same workloads and report functional coverage, wiring/timing limits and
 physical cost. A successful GDS run for the present SPI test vehicle does not
 predict whether a larger proposed topology will fit.
+
+## Matched shifter block probe
+
+`make tile-shift-pair-experiment` compares separate lanes, a two-data-lane
+shared sequencer, and an independent-sequencer wrapper using the same external
+interface. Source-inspired JTAG scan and manually step-gated I2C-like byte
+stimuli passed; the shared sequencer rejects independently controlled lanes.
+A separate unequal-width/rate test exercises both independent lanes. This is a
+component-level probe, not full source lowering or a real stretched I2C bus.
+Generic flattened synthesis measured 238, 218 and 238 cells respectively,
+with 78, 71 and 78 flip-flops; these are not physical area or timing, and the
+shared design supports a narrower contract. Details and limits are in
+[the experiment README](../experiments/shift_pair/README.md).
