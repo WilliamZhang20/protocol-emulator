@@ -23,7 +23,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -39,6 +39,7 @@ help:
 	@echo "make tile-spi-experiment  Simulate the experimental connected SPI tiles"
 	@echo "make tile-route-latency-probe  Test route pipeline and synchronized input latency"
 	@echo "make tile-shift-pair-experiment  Compare separate and combined shift controls"
+	@echo "make tile-fabric-v2-experiment  Test configurable SPI/UART tiles and SRAM wrapper"
 	@echo "make tile-circt-image-test IMAGE=...  Exercise a compiler-produced image"
 	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
 	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
@@ -110,6 +111,23 @@ tile-shift-pair-experiment:
 		experiments/shift_pair/compare_tb.sv experiments/shift_pair/candidates.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_shift_pair/Vcompare_tb
 	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/shift_pair/compare.py
+
+tile-fabric-v2-experiment:
+	mkdir -p $(BUILD_DIR)/verilator/fabric_v2_tiles $(BUILD_DIR)/verilator/fabric_v2 $(BUILD_DIR)/verilator/fabric_v2_memory
+	$(VERILATOR) --binary --timing -Wno-fatal --top-module tiles_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_tiles) \
+		experiments/fabric_v2/tiles_tb.sv experiments/fabric_v2/tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/fabric_v2_tiles/Vtiles_tb
+	$(VERILATOR) --binary --timing -Wno-fatal --top-module fabric_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2) \
+		experiments/fabric_v2/fabric_tb.sv experiments/fabric_v2/fabric.v experiments/fabric_v2/tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/fabric_v2/Vfabric_tb
+	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_fabric_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_memory) \
+		experiments/fabric_v2/memory_fabric_tb.sv experiments/fabric_v2/memory_fabric.v \
+		experiments/fabric_v2/fabric.v experiments/fabric_v2/tiles.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/fabric_v2_memory/Vmemory_fabric_tb $(if $(V2_SPI_IMAGE),+SPI_IMAGE=$(abspath $(V2_SPI_IMAGE))) $(if $(V2_UART_IMAGE),+UART_IMAGE=$(abspath $(V2_UART_IMAGE)))
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog experiments/fabric_v2/tiles.v experiments/fabric_v2/fabric.v experiments/fabric_v2/memory_fabric.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_memory -chparam USE_MACRO 1; synth -top fabric_v2_memory -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
