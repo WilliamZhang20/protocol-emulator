@@ -9,13 +9,13 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   chip top and the standalone tile experiments.
 - Compiler experiment: sibling `protocol-emulator-compiler` branch
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
-- The standalone `experiments/fabric_v2` now has two independently configured
+- The current experimental Tiny Tapeout top uses `fabric_v2_unified`, with two independently configured
   timers and shifters, configurable signal muxes, I/O enables, and a finite
   two-SRAM adapter. Restricted SPI and UART configuration images from the
-  compiler run on the same RTL in the standalone functional-macro test. A
-  separate experimental UART stream wrapper now receives autonomously with
-  bounded queues and SRAM regions. Neither wrapper is the chip top, a general
-  mapper, a gate-level test, or a physical result; see the experiment README.
+  compiler run on the same RTL in local pin-level and functional-macro tests.
+  The unified UART path receives autonomously with bounded queues and SRAM
+  regions. It is not a general mapper; gate-level and physical CI for the new
+  top remain pending. See the experiment README.
 - Next: lower actual source transaction functions and byte streams onto the
   integrated timer, shifter, control, routing, and SRAM fabric. The current
   source-derived control/datapath image still uses a hand-written SRAM adapter

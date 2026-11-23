@@ -11,6 +11,9 @@ SIM ?= verilator
 
 RTL_SOURCES := \
 	src/project.v \
+	src/fabric_v2_tiles.v \
+	src/fabric_v2.v \
+	src/fabric_v2_unified.v \
 	src/spi_tiles.v \
 	src/memory_tiles.v \
 	src/memory_shift.v \
@@ -113,27 +116,33 @@ tile-shift-pair-experiment:
 	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/shift_pair/compare.py
 
 tile-fabric-v2-experiment:
-	mkdir -p $(BUILD_DIR)/verilator/fabric_v2_tiles $(BUILD_DIR)/verilator/fabric_v2 $(BUILD_DIR)/verilator/fabric_v2_memory $(BUILD_DIR)/verilator/fabric_v2_uart_stream
+	mkdir -p $(BUILD_DIR)/verilator/fabric_v2_tiles $(BUILD_DIR)/verilator/fabric_v2 $(BUILD_DIR)/verilator/fabric_v2_memory $(BUILD_DIR)/verilator/fabric_v2_uart_stream $(BUILD_DIR)/verilator/fabric_v2_unified
 	$(VERILATOR) --binary --timing -Wno-fatal --top-module tiles_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_tiles) \
-		experiments/fabric_v2/tiles_tb.sv experiments/fabric_v2/tiles.v -MAKEFLAGS -j1
+		experiments/fabric_v2/tiles_tb.sv src/fabric_v2_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/fabric_v2_tiles/Vtiles_tb
 	$(VERILATOR) --binary --timing -Wno-fatal --top-module fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2) \
-		experiments/fabric_v2/fabric_tb.sv experiments/fabric_v2/fabric.v experiments/fabric_v2/tiles.v -MAKEFLAGS -j1
+		experiments/fabric_v2/fabric_tb.sv src/fabric_v2.v src/fabric_v2_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/fabric_v2/Vfabric_tb
 	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_memory) \
 		experiments/fabric_v2/memory_fabric_tb.sv experiments/fabric_v2/memory_fabric.v \
-		experiments/fabric_v2/fabric.v experiments/fabric_v2/tiles.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+		src/fabric_v2.v src/fabric_v2_tiles.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/fabric_v2_memory/Vmemory_fabric_tb $(if $(V2_SPI_IMAGE),+SPI_IMAGE=$(abspath $(V2_SPI_IMAGE))) $(if $(V2_UART_IMAGE),+UART_IMAGE=$(abspath $(V2_UART_IMAGE)))
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DFABRIC_V2_ASSERT --top-module uart_stream_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_uart_stream) \
 		experiments/fabric_v2/uart_stream_tb.sv experiments/fabric_v2/uart_stream.v \
-		experiments/fabric_v2/fabric.v experiments/fabric_v2/tiles.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+		src/fabric_v2.v src/fabric_v2_tiles.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/fabric_v2_uart_stream/Vuart_stream_tb $(if $(V2_UART_IMAGE),+UART_IMAGE=$(abspath $(V2_UART_IMAGE)))
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog experiments/fabric_v2/tiles.v experiments/fabric_v2/fabric.v experiments/fabric_v2/memory_fabric.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_memory -chparam USE_MACRO 1; synth -top fabric_v2_memory -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog experiments/fabric_v2/tiles.v experiments/fabric_v2/fabric.v experiments/fabric_v2/uart_stream.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_uart_stream -chparam USE_MACRO 1; synth -top fabric_v2_uart_stream -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DFABRIC_V2_ASSERT --top-module unified_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_unified) \
+		experiments/fabric_v2/unified_tb.sv src/fabric_v2_unified.v src/fabric_v2.v src/fabric_v2_tiles.v \
+		src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/fabric_v2_unified/Vunified_tb +SPI_IMAGE=$(abspath $(if $(V2_UNIFIED_SPI_IMAGE),$(V2_UNIFIED_SPI_IMAGE),test/data/v2-unified-spi.mem)) +UART_IMAGE=$(abspath $(if $(V2_UNIFIED_UART_IMAGE),$(V2_UNIFIED_UART_IMAGE),test/data/v2-unified-uart.mem))
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/fabric_v2_tiles.v src/fabric_v2.v experiments/fabric_v2/memory_fabric.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_memory -chparam USE_MACRO 1; synth -top fabric_v2_memory -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/fabric_v2_tiles.v src/fabric_v2.v experiments/fabric_v2/uart_stream.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_uart_stream -chparam USE_MACRO 1; synth -top fabric_v2_uart_stream -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/fabric_v2_tiles.v src/fabric_v2.v src/fabric_v2_unified.v src/memory_tiles.v src/program_memory.v; hierarchy -top fabric_v2_unified -chparam USE_MACRO 1; synth -top fabric_v2_unified -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment

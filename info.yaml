@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "Two-SRAM Fabric Experiment"      # Project title
+  title:        "Configurable SPI and UART Fabric"      # Project title
   author:       "William Zhang"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Two-bank SRAM and 12-bit shifter placement experiment"      # One line description of what your project does
+  description:  "Configurable SPI and UART fabric with two SRAM banks"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
@@ -18,6 +18,9 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "project.v"
+    - "fabric_v2_tiles.v"
+    - "fabric_v2.v"
+    - "fabric_v2_unified.v"
     - "spi_tiles.v"
     - "memory_tiles.v"
     - "memory_shift.v"

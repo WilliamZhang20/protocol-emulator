@@ -1,8 +1,10 @@
 # Configurable serial fabric v2 experiment
 
-This standalone experiment is not the Tiny Tapeout top. The top-level physical
-CI and gate-level cocotb tests still target `memory_spi_fabric`. This module
-has not been placed, run through gate-level simulation, or physically compared.
+The Tiny Tapeout experiment now uses `fabric_v2_unified`, which combines the
+finite SPI path and independent UART streaming over one tile fabric and one
+two-bank SRAM subsystem. Standalone tests also retain the earlier wrappers for
+comparison. The new top has not yet passed physical or gate-level CI; prior
+results for the `memory_spi_fabric` top do not validate this new design.
 
 ```text
                    configurable Boolean selectors
@@ -44,7 +46,8 @@ host preloads payloads and reads results by explicit memory requests.
 All words must be written while disarmed; changes while armed are ignored.
 There are no version or checksum fields. Invalid width, zero timer values,
 invalid selector indices or reserved format bits keep outputs disabled.
-Addresses 0–25 form the image consumed by the testbench:
+Addresses 0–25 encode tile and adapter configuration. The unified image adds
+address 26 for the static mode (0 SPI, 1 UART):
 
 | Address | Meaning |
 | --- | --- |
@@ -55,6 +58,7 @@ Addresses 0–25 form the image consumed by the testbench:
 | 23 | Adapter TX OR mask |
 | 24 | Selector 16, third output pin |
 | 25 | Output-enable mask `[2:0]` |
+| 26 | Unified mode, bit 0; all other bits must be zero |
 
 Selector sinks 0–5 are timer 0 and 1 start/stop/hold; 6–9 and 10–13 are
 shifter 0 and 1 start/shift/sample/serial input; 14–16 are output pins 0–2.
@@ -127,7 +131,12 @@ uses host-supplied regions and lengths. Reports explicitly set
 `general_mapping` and `full_source_program_compiled` false. The source-driven
 CIRCT regression can run the SRAM RTL test with `V2_MEMORY_IMAGE_TB` set to
 its built executable, and the stream test with `V2_UART_STREAM_IMAGE_TB`.
-There is no complete source-language fit, configuration
-loader on Tiny Tapeout pins, gate-level test, physical PPA result, or claim that
+For the unified top, `--compile-v2-unified-spi` and
+`--compile-v2-unified-uart` emit 27 words including mode. The host loads those
+words through Tiny Tapeout pins, and additionally supplies TX length and RX
+capacity as words 27 and 28. The checked-in image fixtures are used by the
+pin-only RTL/GL cocotb test. General stream/function lowering and a physical
+timing proof remain absent. There is no complete source-language fit,
+completed gate-level or physical PPA result for this revision, or claim that
 this topology is the final fabric. Physical design must separately account for
 prior SRAM slew, capacitance and clock-fanout violations.

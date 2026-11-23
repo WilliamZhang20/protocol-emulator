@@ -1,7 +1,7 @@
 `default_nettype none
 // Two timer/shift tiles with independently configured event inputs and pin
-// outputs. This standalone candidate is not the Tiny Tapeout top or an SRAM
-// adapter. Routes are static while armed and select registered sources.
+// outputs. The unified SRAM wrapper instantiates this tile core. Routes are
+// static while armed and select registered sources.
 module fabric_v2(
     input wire clk, rst_n, arm, cfg_we,
     input wire [4:0] cfg_addr, input wire [15:0] cfg_data,
