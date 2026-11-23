@@ -42,11 +42,15 @@ adds sampled SystemVerilog assertions for response latency, no phantom grants,
 disarmed behavior, independent-bank progress, exclusive grants, bounded
 fairness, and the requester's stable-until-ready obligation.
 
-`make tile-memory-assertion-mutation` checks the correct arbiter, then builds a
+`make tile-memory-assertion-mutation` checks the correct arbiter, then builds
 temporary mutants that starve requester 1 or drop bank 0 read responses. The
 corresponding fairness and response SVAs must reject them; the mutation bench
 contains no separate scoreboard.
 These are simulation checks, not an exhaustive formal proof. The macro is its
 functional model, not post-layout timing simulation.
-The `tile experiment` CI workflow runs these memory checks and synthesis. The
-separate GDS workflow still targets the existing chip, not this prototype.
+The `tile experiment` CI workflow runs these memory checks and synthesis. On
+`experiment/two-sram-placement`, the separate GDS workflow targets the
+integrated SRAM/control/routing test vehicle; its
+[physical and gate-level run](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/45206782802)
+passed for commit `8af6a81`. That result does not validate the abstract
+compiler graph's schedules or establish a comparison with the earlier chip.

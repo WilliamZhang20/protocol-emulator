@@ -13,12 +13,23 @@ module memory_spi_tb;
   wire [2:0] oe;
   reg [15:0] image[0:18];
   reg [1023:0] path;
-  integer i,samples=0,edges=0,tick=0,last_edge=-1,expected_half=0,cycles=0;
+  integer i,samples=0,edges=0,tick=0,last_edge=-1,expected_half=0,cycles=0, memory_steps=0;
   reg old_sck=0,old_mosi=0;
   reg [15:0] observed=0;
   memory_spi_fabric #(.USE_MACRO(1)) dut(clk,rst_n,arm,cfg_we,cfg_addr,cfg_data,
       bank_cfg_we,bank_routes,trigger,10'd100,10'd200,host_req,host_we,host_addr,
       host_wdata,host_ready,host_valid,host_data,miso,cs,sck,mosi,oe,done,error,active);
+  // RTL-only observation: check the source graph's memory-request sequence.
+  // This standalone bench is not in COCOTB_TEST_MODULES or the gate test.
+  always @(posedge clk) if (rst_n && arm && dut.req && dut.ready[1]) begin
+    case (memory_steps % 4)
+      0: if (dut.we || dut.addr!=100) $fatal(1,"expected read of byte 100");
+      1: if (dut.we || dut.addr!=101) $fatal(1,"expected read of byte 101");
+      2: if (!dut.we || dut.addr!=200 || dut.wdata!=8'h0f) $fatal(1,"expected high-byte write");
+      3: if (!dut.we || dut.addr!=201 || dut.wdata!=8'hff) $fatal(1,"expected low-byte write");
+    endcase
+    memory_steps=memory_steps+1;
+  end
   always @(negedge clk) begin
     tick=tick+1;
     if (oe[0] && !active && !cs) $fatal(1,"CS asserted while fabric idle");
@@ -83,6 +94,7 @@ module memory_spi_tb;
     @(negedge clk);arm=0;repeat(3) @(negedge clk);
     configure(image[1] | 16'h0800);@(negedge clk);arm=1;repeat(6) @(negedge clk);
     transfer(16'h0000);
+    if (memory_steps!=8) $fatal(1,"expected four SRAM operations per transfer");
     $display("PASS: source-derived SPI component with two SRAM banks and reconfigured signal routes");
     $finish;
   end

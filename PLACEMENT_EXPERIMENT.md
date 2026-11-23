@@ -19,12 +19,16 @@ The coordinates are initial candidate locations in micrometers, not a claim
 of legal placement, correct power connectivity, or timing closure. The GDS CI
 job uses `src/config.json`, which lists both macro instances, individual power
 hooks, and a Metal3 keepout for each SRAM. It retains the existing multi-macro
-power-stripe plugin. CI must still establish actual placement, DRC, LVS and
-timing; these have not been checked locally. The two SRAMs are each 146.88 ×
+power-stripe plugin. Physical verification is supplied by CI, not the local
+static checks. The two SRAMs are each 146.88 ×
 336.46 µm. More or smaller distributed banks are a separate experiment.
 The first two-bank run passed LVS but reported 284 M1.b spacing violations at
-the second macro's left and right edges. Placement keepouts have been added at
-those edges; a new physical run must determine whether they fix the violations.
+the second macro's left and right edges. With placement keepouts at those
+edges, the [integrated-fabric run for `8af6a81`](https://github.com/WilliamZhang20/protocol-emulator/actions/runs/45206782802)
+passed GDS, Tiny Tapeout precheck, and the pin-level gate test. Its KLayout DRC
+report contained zero violations. The worst setup slack reported for the slow
+corner was about 8.91 ns against the 20 ns clock; this is one test vehicle,
+not an area/timing comparison against the old chip.
 
 `ui_in[7:0]` carries a command byte. `uio_in[4:2]` selects an opcode;
 `uio_in[1]` is the strobe and `uio_in[0]` is serial input. Hold the opcode and

@@ -13,8 +13,8 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   integrated timer, shifter, control, routing, and SRAM fabric. The current
   source-derived control/datapath image still uses a hand-written SRAM adapter
   and host preload. Rerun the protocol corpus as semantic coverage grows.
-  The first two-bank physical run passed LVS but failed M1 spacing; a revised
-  placement needs a fresh physical run before any fit claim.
+  The revised two-bank placement passed physical and gate-level CI for the
+  integrated test vehicle; it has not been compared against the earlier chip.
 - The control-only end-to-end example is deliberately small. Corpus export or
   a component table is not evidence that an entire protocol fits.
 
