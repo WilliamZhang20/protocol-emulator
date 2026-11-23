@@ -11,7 +11,7 @@ YOSYS = os.environ.get("YOSYS", "yosys")
 
 
 def synthesize(top, output):
-    script = (f"read_verilog {HERE / 'spi_tiles.v'}; hierarchy -check -top {top}; "
+    script = (f"read_verilog {HERE.parent.parent / 'src' / 'spi_tiles.v'}; hierarchy -check -top {top}; "
               f"flatten; synth -top {top}; tee -o {output} stat -json")
     subprocess.run([YOSYS, "-Q", "-T", "-p", script], check=True, stdout=subprocess.DEVNULL)
     stats = json.loads(output.read_text())["modules"][f"\\{top}"]["num_cells_by_type"]

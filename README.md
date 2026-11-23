@@ -2,6 +2,11 @@
 
 # Spatial Protocol Emulator
 
+**This branch is a two-SRAM placement experiment.** Its chip top and host
+interface differ from the previous protocol emulator described below. See
+[PLACEMENT_EXPERIMENT.md](PLACEMENT_EXPERIMENT.md) for the actual design and
+test commands. The earlier chip remains in the branch history.
+
 A Tiny Tapeout chip that speaks serial protocols on its pins (UART, SPI,
 I²C, PS/2, low-speed USB, 10BASE-T Ethernet, CAN, JTAG, SWD, 1-Wire, I²S,
 WS2812, DMX512, HDLC, VGA and more) without any of them being built into

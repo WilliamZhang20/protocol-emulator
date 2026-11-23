@@ -16,7 +16,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "src" / "config.json"
 MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
-INSTANCE_NAME = "program_memory.sram"
+INSTANCES = {
+    "fabric.memory.bank0.macro_bank.memory.sram": [42, 81],
+    "fabric.memory.bank1.macro_bank.memory.sram": [480, 81],
+}
 MACRO_DIR = ROOT / "macro" / MACRO_NAME
 PDN_CONFIG_PATH = ROOT / "src" / "pdn_cfg.tcl"
 PLUGIN_PATH = ROOT / "librelane_plugin_sram_pdn.py"
@@ -163,36 +166,20 @@ def main() -> None:
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     macro = config.get("MACROS", {}).get(MACRO_NAME)
     require(macro is not None, f"MACROS.{MACRO_NAME} is missing")
-    require(
-        INSTANCE_NAME in macro.get("instances", {}),
-        f"macro placement for {INSTANCE_NAME} is missing",
-    )
-
-    placement = macro["instances"][INSTANCE_NAME]
-    require(
-        placement.get("orientation") == "R0",
-        "SRAM must use R0 so Metal4 power columns keep die-frame X",
-    )
-    require(
-        placement.get("location") == [42, 81],
-        "SRAM location must stay at [42, 81]",
-    )
+    require(set(macro.get("instances", {})) == set(INSTANCES), "expected exactly the two memory bank macros")
+    for instance, location in INSTANCES.items():
+        placement = macro["instances"][instance]
+        require(placement.get("orientation") == "R0", f"{instance} must use R0")
+        require(placement.get("location") == location, f"{instance} has unexpected placement")
+    positions = list(INSTANCES.values())
+    require(positions[0][0] + 146.88 < positions[1][0], "the SRAM macro footprints overlap")
 
     routing_obs = config.get("ROUTING_OBSTRUCTIONS", [])
-    hotspot = (174.0, 80.4, 189.4, 81.0)
-    covered = any(
-        ob[0] == "Metal3"
-        and ob[1] <= hotspot[0]
-        and ob[2] <= hotspot[1]
-        and ob[3] >= hotspot[2]
-        and ob[4] >= hotspot[3]
-        for ob in routing_obs
-    )
-    require(
-        covered,
-        "Metal3 keepout must cover the SRAM M3.f hotspot "
-        f"(at least {hotspot})",
-    )
+    for x, y in INSTANCES.values():
+        hotspot = (x + 132.0, y - 0.6, x + 147.4, y)
+        covered = any(ob[0] == "Metal3" and ob[1] <= hotspot[0] and ob[2] <= hotspot[1]
+                      and ob[3] >= hotspot[2] and ob[4] >= hotspot[3] for ob in routing_obs)
+        require(covered, f"Metal3 keepout must cover SRAM hotspot {hotspot}")
 
     expected_views = {
         "gds": MACRO_DIR / f"{MACRO_NAME}.gds",
@@ -229,11 +216,9 @@ def main() -> None:
             )
 
     hooks = set(config.get("PDN_MACRO_CONNECTIONS", []))
-    for hook in (
-        f"{INSTANCE_NAME} VPWR VGND VDD! VSS!",
-        f"{INSTANCE_NAME} VPWR VGND VDDARRAY! VSS!",
-    ):
-        require(hook in hooks, f"missing supply hook: {hook}")
+    for instance in INSTANCES:
+        for hook in (f"{instance} VPWR VGND VDD! VSS!", f"{instance} VPWR VGND VDDARRAY! VSS!"):
+            require(hook in hooks, f"missing supply hook: {hook}")
 
     require(
         config.get("MAGIC_DRC_USE_GDS") in (0, False),

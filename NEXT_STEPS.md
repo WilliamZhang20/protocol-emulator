@@ -4,8 +4,9 @@
 in particular, the later statement dropping CIRCT has been superseded by the
 decision to reuse the Rust frontend and experiment with CIRCT lowering.
 
-- Hardware experiment: `work/tile-routing-experiment`, described in
-  `experiments/tile_fabric/README.md`.
+- Current hardware branch: `experiment/two-sram-placement`, described in
+  `PLACEMENT_EXPERIMENT.md`. `work/tile-routing-experiment` retains the prior
+  chip top and the standalone tile experiments.
 - Compiler experiment: sibling `protocol-emulator-compiler` branch
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
 - Next: model and map real protocol data streams and control onto the timer,

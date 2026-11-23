@@ -5,7 +5,7 @@ VERILATOR=${VERILATOR:-verilator}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 ulimit -c 0 || :
-python3 - "$ROOT/experiments/tile_fabric/memory_tiles.v" "$tmp/mutant.v" "$tmp/response_mutant.v" <<'PY'
+python3 - "$ROOT/src/memory_tiles.v" "$tmp/mutant.v" "$tmp/response_mutant.v" <<'PY'
 from pathlib import Path
 import sys
 source = Path(sys.argv[1]).read_text()
@@ -29,7 +29,7 @@ build_and_run() {
     -MAKEFLAGS -j1 > "$tmp/$variant-build.log" 2>&1
   "$tmp/$variant/Vmemory_assertion_mutation_tb" > "$tmp/$variant-run.log" 2>&1
 }
-build_and_run reference "$ROOT/experiments/tile_fabric/memory_tiles.v"
+build_and_run reference "$ROOT/src/memory_tiles.v"
 if build_and_run mutant "$tmp/mutant.v"; then
   echo 'FAIL: fairness mutation was not detected' >&2; exit 1
 fi

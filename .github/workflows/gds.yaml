@@ -13,6 +13,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Check two-bank placement and power configuration
+        run: python3 test/check_gds_config.py
+
       - name: Build GDS
         uses: TinyTapeout/tt-gds-action@ihp-cmos5l
         with:
@@ -36,12 +39,3 @@ jobs:
 
       - name: GL test
         uses: TinyTapeout/tt-gds-action/gl_test@ihp-cmos5l
-
-  viewer:
-    needs: gds
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write # to deploy to Pages
-      id-token: write # to verify the deployment originates from an appropriate source
-    steps:
-      - uses: TinyTapeout/tt-gds-action/viewer@ihp-cmos5l

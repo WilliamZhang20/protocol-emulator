@@ -1,167 +1,67 @@
-/*
- * SPDX-License-Identifier: Apache-2.0
- */
-
+/* SPDX-License-Identifier: Apache-2.0 */
 `default_nettype none
-
-// Tiny Tapeout top level: connects the host interface, shared program SRAM,
-// and per-channel FIFOs to the protocol execution core and external pins.
+// Two-SRAM physical experiment. This is a test vehicle, not the old chip ABI.
+// ui_in carries a command byte. Hold it and uio_in[4:2] stable while
+// strobing uio_in[1] high for at least four clocks, then low for four.
+// Opcodes: 0 address low, 1 address high, 2 write, 3 read, 4 route/arm,
+// 5 start, 6 source address low, 7 destination address low.
+// Route/arm byte: bits [1:0] requester bank routes; bit 2 arm. Write routes
+// with arm=0 before issuing a separate arm=1 command.
 module tt_um_protocol_emulator (
-    input  wire [7:0] ui_in,
-    output wire [7:0] uo_out,
-    input  wire [7:0] uio_in,
-    output wire [7:0] uio_out,
-    output wire [7:0] uio_oe,
-    input  wire       ena,
-    input  wire       clk,
-    input  wire       rst_n
+    input wire [7:0] ui_in, output wire [7:0] uo_out,
+    input wire [7:0] uio_in, output wire [7:0] uio_out,
+    output wire [7:0] uio_oe, input wire ena, input wire clk, input wire rst_n
 );
-  wire internal_rst_n = rst_n && ena;
-
-  wire engine_enable;
-  wire engine_halted;
-  wire host_program_enable;
-  wire host_program_write;
-  wire host_program_read;
-  wire [9:0] host_program_address;
-  wire [7:0] host_program_write_data;
-  wire [7:0] host_program_write_mask;
-  wire [7:0] program_read_data;
-
-  wire [9:0] instruction_address;
-  wire instruction_read;
-
-  // Two FIFO channels, one per shifter: channel k is TX FIFO k (host or
-  // program -> engine) and RX FIFO k (engine -> host). Entries are
-  // {err, eop, byte}. The host reaches the channel it last selected.
-  wire host_channel;
-  wire host_tx_push;
-  wire [9:0] host_tx_push_data;
-  wire host_rx_pop;
-  wire [1:0] core_tx_push;
-  wire [9:0] core_tx_push_data;
-  wire [1:0] host_select = host_channel ? 2'b10 : 2'b01;
-  // A running program may feed a TX FIFO itself (e.g. a frame stored in
-  // SRAM); it has priority, so the host must not push to that channel then.
-  wire [1:0] tx_push = (host_tx_push ? host_select : 2'b00) | core_tx_push;
-  wire [1:0] tx_pop;
-  wire [19:0] tx_pop_data;
-  wire [1:0] tx_empty;
-  wire [1:0] tx_full;
-  wire [7:0] tx_level;              // channel k: [4k +: 4], 0-8
-
-  wire [1:0] rx_push;
-  wire [19:0] rx_push_data;
-  wire [1:0] rx_pop = host_rx_pop ? host_select : 2'b00;
-  wire [19:0] rx_pop_data;
-  wire [9:0]  host_rx_entry = host_channel ? rx_pop_data[19:10] : rx_pop_data[9:0];
-  wire [1:0] rx_empty;
-  wire [1:0] rx_full;
-  wire [7:0] rx_level;
-  // The host's level command has 3 bits per FIFO: an 8-deep FIFO reads 7
-  // when it holds 7 or 8 (tx_full and rx_empty in the same reply are exact).
-  function automatic [2:0] level3(input [3:0] level);
-    level3 = level[3] ? 3'd7 : level[2:0];
-  endfunction
-
-  host_interface host (
-      .clk(clk),
-      .rst_n(internal_rst_n),
-      .host_in(ui_in),
-      .host_out(uo_out),
-      .engine_enable(engine_enable),
-      .program_enable(host_program_enable),
-      .program_write(host_program_write),
-      .program_read(host_program_read),
-      .program_address(host_program_address),
-      .program_write_data(host_program_write_data),
-      .program_write_mask(host_program_write_mask),
-      .program_read_data(program_read_data),
-      .channel(host_channel),
-      .tx_push(host_tx_push),
-      .tx_push_data(host_tx_push_data),
-      .tx_full(tx_full[host_channel]),
-      .tx_level(level3(host_channel ? tx_level[7:4] : tx_level[3:0])),
-      .rx_pop(host_rx_pop),
-      .rx_pop_data(host_rx_entry),
-      .rx_empty(rx_empty[host_channel]),
-      .rx_level(level3(host_channel ? rx_level[7:4] : rx_level[3:0])),
-      .engine_halted(engine_halted)
+  wire reset_n = rst_n && ena;
+  reg sync1, sync2, strobe_prev;
+  wire command = sync2 && !strobe_prev;
+  reg arm, host_req, host_we;
+  reg [1:0] routes;
+  reg [9:0] host_addr;
+  reg [7:0] host_wdata, read_data, source_addr, dest_addr;
+  reg start;
+  wire host_ready, host_rvalid, sck, mosi, done, error, waiting, active;
+  wire [7:0] host_rdata;
+  wire miso;
+  wire cfg_write = command && uio_in[4:2] == 3'd4 && !arm && !ui_in[2];
+  proto_pin_in input_sync(clk, reset_n, uio_in[0], miso);
+  memory_shift_fabric #(.USE_MACRO(1)) fabric (
+      .clk(clk), .rst_n(reset_n), .arm(arm), .cfg_we(cfg_write), .cfg_routes(ui_in[1:0]),
+      .host_req(host_req), .host_we(host_we), .host_addr(host_addr), .host_wdata(host_wdata),
+      .host_ready(host_ready), .host_rvalid(host_rvalid), .host_rdata(host_rdata),
+      .start(start), .width(5'd12), .half_period(8'd8),
+      .source_addr({2'b00,source_addr}), .dest_addr({2'b00,dest_addr}),
+      .serial_in(miso), .sck(sck), .serial_out(mosi), .done(done), .error(error),
+      .transfer_waiting(waiting), .transfer_active(active)
   );
-
-  wire memory_owned_by_engine = engine_enable;
-  wire memory_enable = memory_owned_by_engine ? instruction_read :
-                                               host_program_enable;
-  wire memory_write = memory_owned_by_engine ? 1'b0 : host_program_write;
-  wire memory_read = memory_owned_by_engine ? instruction_read :
-                                             host_program_read;
-  wire [9:0] memory_address = memory_owned_by_engine ? instruction_address :
-                                                      host_program_address;
-
-  program_memory program_memory (
-      .clk(clk),
-      .enable(memory_enable),
-      .write_enable(memory_write),
-      .read_enable(memory_read),
-      .address(memory_address),
-      .write_data(host_program_write_data),
-      .write_mask(host_program_write_mask),
-      .read_data(program_read_data)
-  );
-
-  genvar k;
-  generate
-    for (k = 0; k < 2; k = k + 1) begin : channel
-      // 8 entries a direction: two words of slack for 32-bit-word bursts
-      // and for a host that services the link every few bytes.
-      byte_fifo #(.DEPTH(8), .ADDRESS_WIDTH(3), .WIDTH(10)) tx_fifo (
-          .clk(clk),
-          .rst_n(internal_rst_n),
-          .push(tx_push[k]),
-          .push_data(core_tx_push[k] ? core_tx_push_data : host_tx_push_data),
-          .pop(tx_pop[k]),
-          .pop_data(tx_pop_data[10*k +: 10]),
-          .empty(tx_empty[k]),
-          .full(tx_full[k]),
-          .level(tx_level[4*k +: 4])
-      );
-
-      byte_fifo #(.DEPTH(8), .ADDRESS_WIDTH(3), .WIDTH(10)) rx_fifo (
-          .clk(clk),
-          .rst_n(internal_rst_n),
-          .push(rx_push[k]),
-          .push_data(rx_push_data[10*k +: 10]),
-          .pop(rx_pop[k]),
-          .pop_data(rx_pop_data[10*k +: 10]),
-          .empty(rx_empty[k]),
-          .full(rx_full[k]),
-          .level(rx_level[4*k +: 4])
-      );
+  assign uo_out = read_data;
+  assign uio_out = {done, mosi, sck, 5'b0};
+  assign uio_oe = {3{reset_n && arm}} << 5;
+  always @(posedge clk) begin
+    if (!reset_n) begin
+      sync1<=0; sync2<=0; strobe_prev<=0; arm<=0; routes<=0;
+      host_req<=0; host_we<=0; host_addr<=0; host_wdata<=0; read_data<=0;
+      source_addr<=0; dest_addr<=0; start<=0;
+    end else begin
+      sync1<=uio_in[1]; sync2<=sync1; strobe_prev<=sync2; start<=0;
+      if (host_req && host_ready) host_req<=0;
+      if (host_rvalid) read_data<=host_rdata;
+      if (command && !host_req) begin
+        case (uio_in[4:2])
+          3'd0: host_addr[7:0]<=ui_in;
+          3'd1: host_addr[9:8]<=ui_in[1:0];
+          3'd2: begin host_wdata<=ui_in; host_we<=1; host_req<=1; end
+          3'd3: begin host_we<=0; host_req<=1; end
+          3'd4: begin arm<=ui_in[2]; if (!arm && !ui_in[2]) routes<=ui_in[1:0]; end
+          3'd5: if (arm && !active) start<=1;
+          3'd6: source_addr<=ui_in;
+          3'd7: dest_addr<=ui_in;
+          default: begin end
+        endcase
+      end
     end
-  endgenerate
-
-  protocol_emulator_core core (
-      .clk(clk),
-      .rst_n(internal_rst_n),
-      .enable(engine_enable),
-      .instruction_address(instruction_address),
-      .instruction_read(instruction_read),
-      .instruction_data(program_read_data),
-      .tx_data(tx_pop_data),
-      .tx_empty(tx_empty),
-      .tx_pop(tx_pop),
-      .tx_full(tx_full),
-      .tx_push(core_tx_push),
-      .tx_push_data(core_tx_push_data),
-      .rx_data(rx_push_data),
-      .rx_push(rx_push),
-      .rx_full(rx_full),
-      .gpio_in(uio_in),
-      .gpio_out(uio_out),
-      .gpio_oe(uio_oe),
-      .halted(engine_halted)
-  );
-
+  end
+  // These signals are intentionally unobserved in this physical test vehicle.
+  wire unused = &{1'b0, routes, error, waiting, uio_in[7:5], ui_in[7:2]};
 endmodule
-
 `default_nettype wire

@@ -1,8 +1,8 @@
 name: formal
 
 on:
-  push:
-  pull_request:
+  # These proofs exercise the preserved legacy core, not this branch's
+  # two-SRAM chip top. Run them explicitly when working on that old core.
   workflow_dispatch:
 
 permissions:

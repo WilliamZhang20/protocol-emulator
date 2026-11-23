@@ -166,7 +166,7 @@ the pinned compiler's `spatial run --test` on the copied file.
 Native Yosys can synthesize the slice with:
 
 ```sh
-.tools/oss-cad-suite/bin/yosys -p 'read_verilog experiments/tile_fabric/spi_tiles.v; hierarchy -top spi_fabric; flatten; synth -top spi_fabric; stat'
+.tools/oss-cad-suite/bin/yosys -p 'read_verilog src/spi_tiles.v; hierarchy -top spi_fabric; flatten; synth -top spi_fabric; stat'
 ```
 
 The generic result is not comparable to the full baseline: the slice omits

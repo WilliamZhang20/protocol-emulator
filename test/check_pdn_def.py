@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 
-INSTANCE = "program_memory.sram"
+INSTANCE = "fabric.memory.bank0.macro_bank.memory.sram"
 MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 ROOT = Path(__file__).resolve().parents[1]
 LEF_PATH = ROOT / "macro" / MACRO_NAME / f"{MACRO_NAME}.lef"
@@ -375,4 +375,6 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    for INSTANCE in ("fabric.memory.bank0.macro_bank.memory.sram",
+                     "fabric.memory.bank1.macro_bank.memory.sram"):
+        main(sys.argv)

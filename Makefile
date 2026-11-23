@@ -11,20 +11,10 @@ SIM ?= verilator
 
 RTL_SOURCES := \
 	src/project.v \
-	src/protocol_emulator_core.v \
-	src/controller.v \
-	src/fabric_control_actor.v \
-	src/fabric_timer.v \
-	src/fabric_shifter.v \
-	src/fabric_counter.v \
-	src/fabric_crc.v \
-	src/fabric_edge.v \
-	src/fabric_logic.v \
-	src/byte_tile.v \
-	src/config_bank.v \
-	src/program_memory.v \
-	src/byte_fifo.v \
-	src/host_interface.v
+	src/spi_tiles.v \
+	src/memory_tiles.v \
+	src/memory_shift.v \
+	src/program_memory.v
 
 SRAM_MODELS := \
 	test/models/RM_IHPSG13_1P_core_behavioral_bm_bist.v \
@@ -63,7 +53,7 @@ precommit: lint sim
 install-hooks:
 	git config core.hooksPath .githooks
 
-verify: lint dead-check one-hop-check synth-check gds-config-check memory-test sim formal
+verify: lint synth-check gds-config-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-assertion-mutation tile-memory-synth
 
 lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
@@ -77,7 +67,7 @@ one-hop-check:
 	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 1 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/program_memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; proc; flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank0.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.bank1.macro_bank.memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py
@@ -106,12 +96,12 @@ tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
 	$(VERILATOR) --binary --timing --top-module spi_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_spi_experiment) \
-		experiments/tile_fabric/spi_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+		experiments/tile_fabric/spi_tb.v src/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_spi_experiment/Vspi_tb
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_equivalence
 	$(VERILATOR) --binary --timing --top-module equiv_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_spi_equivalence) \
-		experiments/tile_fabric/equiv_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+		experiments/tile_fabric/equiv_tb.v src/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_spi_equivalence/Vequiv_tb
 	YOSYS=$(ROUTING_YOSYS) $(PYTHON) experiments/tile_fabric/compare.py
 
@@ -120,7 +110,7 @@ tile-circt-image-test:
 	mkdir -p $(BUILD_DIR)/verilator/tile_circt_image
 	$(VERILATOR) --binary --timing --top-module circt_image_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_circt_image) \
-		experiments/tile_fabric/circt_image_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+		experiments/tile_fabric/circt_image_tb.v src/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_circt_image/Vcirct_image_tb +IMAGE=$(abspath $(IMAGE))
 
 tile-control-image-test:
@@ -128,7 +118,7 @@ tile-control-image-test:
 	mkdir -p $(BUILD_DIR)/verilator/tile_control_image
 	$(VERILATOR) --binary --timing --top-module control_image_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_control_image) \
-		experiments/tile_fabric/control_image_tb.v experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+		experiments/tile_fabric/control_image_tb.v src/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_control_image/Vcontrol_image_tb +IMAGE=$(abspath $(IMAGE))
 
 control-fabric-image-test:
@@ -137,7 +127,7 @@ control-fabric-image-test:
 	$(VERILATOR) --binary --timing --top-module control_fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/control_fabric_image) \
 		experiments/tile_fabric/control_fabric_tb.v experiments/tile_fabric/control_fabric.v \
-		experiments/tile_fabric/spi_tiles.v -MAKEFLAGS -j1
+		src/spi_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/control_fabric_image/Vcontrol_fabric_tb +IMAGE=$(abspath $(IMAGE))
 
 memory-test:
@@ -152,36 +142,36 @@ memory-test:
 tile-memory-lint:
 	$(VERILATOR) --lint-only --timing -Wall -Wno-DECLFILENAME -DFUNCTIONAL \
 		--top-module memory_shift_fabric -GUSE_MACRO=0 experiments/tile_fabric/sram_lint.vlt \
-		experiments/tile_fabric/memory_shift.v experiments/tile_fabric/memory_tiles.v \
-		experiments/tile_fabric/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
+		src/memory_shift.v src/memory_tiles.v \
+		src/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
 	$(VERILATOR) --lint-only --timing -Wall -Wno-DECLFILENAME -DFUNCTIONAL \
 		--top-module memory_shift_fabric -GUSE_MACRO=1 experiments/tile_fabric/sram_lint.vlt \
-		experiments/tile_fabric/memory_shift.v experiments/tile_fabric/memory_tiles.v \
-		experiments/tile_fabric/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
+		src/memory_shift.v src/memory_tiles.v \
+		src/spi_tiles.v src/program_memory.v $(SRAM_MODELS)
 
 tile-memory-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_memory $(BUILD_DIR)/verilator/tile_memory_shift $(BUILD_DIR)/verilator/tile_memory_random
 	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_tiles_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_memory) \
-		experiments/tile_fabric/memory_tiles_tb.sv experiments/tile_fabric/memory_tiles.v \
+		experiments/tile_fabric/memory_tiles_tb.sv src/memory_tiles.v \
 		src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_memory/Vmemory_tiles_tb
 	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_shift_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_memory_shift) \
-		experiments/tile_fabric/memory_shift_tb.sv experiments/tile_fabric/memory_shift.v \
-		experiments/tile_fabric/memory_tiles.v experiments/tile_fabric/spi_tiles.v \
+		experiments/tile_fabric/memory_shift_tb.sv src/memory_shift.v \
+		src/memory_tiles.v src/spi_tiles.v \
 		src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_memory_shift/Vmemory_shift_tb
 	$(VERILATOR) --binary --timing --assert -Wno-fatal -DFUNCTIONAL --top-module memory_random_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_memory_random) \
-		experiments/tile_fabric/memory_random_tb.sv experiments/tile_fabric/memory_contract_assertions.sv experiments/tile_fabric/memory_tiles.v \
+		experiments/tile_fabric/memory_random_tb.sv experiments/tile_fabric/memory_contract_assertions.sv src/memory_tiles.v \
 		src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=1
 	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=37
 	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=2026
 
 tile-memory-synth:
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v; read_verilog src/program_memory.v experiments/tile_fabric/memory_tiles.v experiments/tile_fabric/memory_shift.v experiments/tile_fabric/spi_tiles.v; hierarchy -top memory_shift_fabric -chparam USE_MACRO 1; flatten; synth -top memory_shift_fabric; stat'
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v; read_verilog src/program_memory.v src/memory_tiles.v src/memory_shift.v src/spi_tiles.v; hierarchy -top memory_shift_fabric -chparam USE_MACRO 1; flatten; synth -top memory_shift_fabric; stat'
 
 tile-memory-assertion-mutation:
 	VERILATOR=$(VERILATOR) experiments/tile_fabric/check_memory_assertions.sh

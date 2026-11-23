@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "SRAM-Programmed Protocol Emulator"      # Project title
+  title:        "Two-SRAM Fabric Experiment"      # Project title
   author:       "William Zhang"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "A spatial, reconfigurable tile fabric for bit-level hardware protocols"      # One line description of what your project does
+  description:  "Two-bank SRAM and 12-bit shifter placement experiment"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
@@ -18,53 +18,43 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "project.v"
-    - "protocol_emulator_core.v"
-    - "controller.v"
-    - "fabric_control_actor.v"
-    - "fabric_timer.v"
-    - "fabric_shifter.v"
-    - "fabric_counter.v"
-    - "fabric_crc.v"
-    - "fabric_edge.v"
-    - "fabric_logic.v"
-    - "byte_tile.v"
-    - "config_bank.v"
+    - "spi_tiles.v"
+    - "memory_tiles.v"
+    - "memory_shift.v"
     - "program_memory.v"
-    - "byte_fifo.v"
-    - "host_interface.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs
-  ui[0]: "host command[0]"
-  ui[1]: "host command[1]"
-  ui[2]: "host command[2]"
-  ui[3]: "host command[3]"
-  ui[4]: "host command[4]"
-  ui[5]: "host command[5]"
-  ui[6]: "host command[6]"
-  ui[7]: "host command[7]"
+  # Host command data (stable through strobe)
+  ui[0]: "command data[0]"
+  ui[1]: "command data[1]"
+  ui[2]: "command data[2]"
+  ui[3]: "command data[3]"
+  ui[4]: "command data[4]"
+  ui[5]: "command data[5]"
+  ui[6]: "command data[6]"
+  ui[7]: "command data[7]"
 
-  # Outputs
-  uo[0]: "host response[0]"
-  uo[1]: "host response[1]"
-  uo[2]: "host response[2]"
-  uo[3]: "host response[3]"
-  uo[4]: "host response[4]"
-  uo[5]: "host response[5]"
-  uo[6]: "host response[6]"
-  uo[7]: "host response[7]"
+  # Last SRAM read result
+  uo[0]: "read data[0]"
+  uo[1]: "read data[1]"
+  uo[2]: "read data[2]"
+  uo[3]: "read data[3]"
+  uo[4]: "read data[4]"
+  uo[5]: "read data[5]"
+  uo[6]: "read data[6]"
+  uo[7]: "read data[7]"
 
-  # Bidirectional pins (protocol defaults; programs may remap any pin)
-  uio[0]: "SPI CS"
-  uio[1]: "UART TXD / SPI MOSI"
-  uio[2]: "UART RXD / SPI MISO / I2C SCL"
-  uio[3]: "SPI SCK / I2C SDA"
-  uio[4]: "PS/2 CLK / USB D+"
-  uio[5]: "PS/2 DATA / USB D-"
-  uio[6]: "10BASE-T TD+"
-  uio[7]: "10BASE-T TD-"
+  # Protocol input and synchronous host command interface
+  uio[0]: "serial input"
+  uio[1]: "command strobe"
+  uio[2]: "command opcode[0]"
+  uio[3]: "command opcode[1]"
+  uio[4]: "command opcode[2]"
+  uio[5]: "serial clock output"
+  uio[6]: "serial data output"
+  uio[7]: "transfer done output"
 
 # Do not change!
 yaml_version: 6
