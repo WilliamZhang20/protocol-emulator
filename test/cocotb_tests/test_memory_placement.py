@@ -12,10 +12,10 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     dut.ena.value = 1
     dut.rst_n.value = 0
     dut.ui_in.value = 0
-    state = {'op': 0, 'strobe': 0, 'rx': 1}
+    state = {'op': 0, 'strobe': 0, 'rx': 1, 'pad': 1, 'clock_pad': 1}
 
     def drive():
-        dut.uio_in.value = (state['op'] << 2) | (state['strobe'] << 1) | state['rx']
+        dut.uio_in.value = (state['pad'] << 6) | (state['clock_pad'] << 5) | (state['op'] << 2) | (state['strobe'] << 1) | state['rx']
 
     drive()
     await ClockCycles(dut.clk, 8)
@@ -55,6 +55,7 @@ async def spi_and_independent_uart_on_same_fabric(dut):
             await config_word(index, word)
         await config_word(27, tx_length)
         await config_word(28, rx_capacity)
+        await config_word(29, 0)  # images use uio[0] for both logical inputs
         await command(4, 3)  # leave config mode while disarmed
         await command(6, 100)  # source address, latched while disarmed
         await command(7, 200)  # RX region / SPI destination
@@ -170,3 +171,47 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     assert int(dut.uo_out.value) & 0x80, 'RX overflow must be sticky'
     await command(4, 0)
     assert int(dut.uio_oe.value) == 0
+
+    # Open-drain data pad: input 0 controls drive/release, and the separately
+    # supplied physical pad level feeds input 1, observable on output 1.
+    # The external level can remain low after release (another bus master).
+    await command(4, 11)
+    await config_word(20, 4)  # output 0 <- synchronized input 0
+    await config_word(21, 5)  # output 1 <- synchronized physical pad input 1
+    await config_word(25, 0x1B)  # outputs 0/1 enabled, both open drain
+    await config_word(29, 1)  # physical uio[6] feeds input 1
+    state['rx'] = 0; state['pad'] = 0; drive()
+    await command(4, 3); await command(4, 7)
+    await ClockCycles(dut.clk, 5)
+    assert int(dut.uio_oe.value) & 0x40, 'open drain must drive a zero'
+    assert not (int(dut.uio_out.value) & 0x40)
+    assert not (int(dut.uio_out.value) & 0x20), 'pad-low feedback'
+    assert int(dut.uio_oe.value) & 0x20, 'second open-drain output drives low'
+    await FallingEdge(dut.clk); state['rx'] = 1; drive()
+    await ClockCycles(dut.clk, 5)
+    assert not (int(dut.uio_oe.value) & 0x40), 'open drain must release a one'
+    assert not (int(dut.uio_out.value) & 0x20), 'peer still holds bus low'
+    await FallingEdge(dut.clk); state['pad'] = 1; drive()
+    await ClockCycles(dut.clk, 5)
+    assert int(dut.uio_out.value) & 0x20, 'released pad feedback must go high'
+    assert not (int(dut.uio_oe.value) & 0x20), 'second open-drain output releases high'
+    await command(4, 0)
+    assert int(dut.uio_oe.value) == 0
+    await command(4, 11)
+    await config_word(29, 0)  # restore the original input-1 binding
+    await config_word(25, 0x03)  # restore push-pull outputs
+    state['rx'] = 0; drive()
+    await command(4, 3); await command(4, 7)
+    await ClockCycles(dut.clk, 5)
+    assert int(dut.uio_oe.value) & 0x40, 'push-pull output must be enabled'
+    assert not (int(dut.uio_out.value) & 0x20), 'input binding must be reconfigurable'
+    await command(4, 0)
+    await command(4, 11); await config_word(29, 2)  # input 0 senses uio[5]
+    state['clock_pad'] = 0; drive()
+    await command(4, 3); await command(4, 7)
+    await ClockCycles(dut.clk, 5)
+    assert not (int(dut.uio_out.value) & 0x40), 'second pad low feedback'
+    await FallingEdge(dut.clk); state['clock_pad'] = 1; drive()
+    await ClockCycles(dut.clk, 5)
+    assert int(dut.uio_out.value) & 0x40, 'second pad high feedback'
+    await command(4, 0)

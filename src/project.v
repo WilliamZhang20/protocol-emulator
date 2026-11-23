@@ -11,6 +11,7 @@ module tt_um_protocol_emulator (
   reg sync1,sync2,strobe_prev;
   wire command=sync2 && !strobe_prev;
   reg arm,host_req,host_we,cfg_mode,uart_mode;
+  reg [1:0] pad_feedback;
   reg [9:0] host_addr;
   reg [7:0] host_wdata,read_data,source_addr,dest_addr,cfg_low;
   reg [10:0] tx_length,rx_capacity;
@@ -30,7 +31,8 @@ module tt_um_protocol_emulator (
       .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),
       .tx_start(start),.tx_base({2'b00,source_addr}),.tx_length(tx_length),
       .rx_base({2'b00,dest_addr}),.rx_capacity(rx_capacity),
-      .pin_in({uio_in[0],uio_in[0]}),.pin_out(pins),.pin_oe(pin_oe),.configured(configured),
+      .pin_in({pad_feedback[0] ? uio_in[6] : uio_in[0],pad_feedback[1] ? uio_in[5] : uio_in[0]}),
+      .pin_out(pins),.pin_oe(pin_oe),.configured(configured),
       .tx_done(tx_done),.tx_error(tx_error),.rx_overflow(rx_overflow),.tx_active(tx_active),
       .rx_received(rx_received),.rx_written(rx_written),.tx_queued(tx_queued),.rx_queued(rx_queued),
       .spi_start(start),.spi_source_addr({2'b00,source_addr}),.spi_dest_addr({2'b00,dest_addr}),
@@ -43,7 +45,7 @@ module tt_um_protocol_emulator (
   assign uio_oe={arm && configured,pin_oe[0],pin_oe[1],5'b0};
   always @(posedge clk) begin
     if(!reset_n) begin
-      sync1<=0;sync2<=0;strobe_prev<=0;arm<=0;cfg_mode<=0;uart_mode<=0;
+      sync1<=0;sync2<=0;strobe_prev<=0;arm<=0;cfg_mode<=0;uart_mode<=0;pad_feedback<=0;
       host_req<=0;host_we<=0;host_addr<=0;host_wdata<=0;read_data<=0;
       source_addr<=0;dest_addr<=0;cfg_low<=0;tx_length<=0;rx_capacity<=0;start<=0;
     end else begin
@@ -54,6 +56,7 @@ module tt_um_protocol_emulator (
         if(host_addr[4:0]==26) uart_mode<=image_word[0];
         if(host_addr[4:0]==27) tx_length<=image_word[10:0];
         if(host_addr[4:0]==28) rx_capacity<=image_word[10:0];
+        if(host_addr[4:0]==29) pad_feedback<=image_word[1:0];
       end
       if(command && !host_req) begin
         case(uio_in[4:2])
@@ -70,6 +73,6 @@ module tt_um_protocol_emulator (
       end
     end
   end
-  wire unused=&{1'b0,rx_received,rx_written,tx_queued,rx_queued,uio_in[7:5]};
+  wire unused=&{1'b0,rx_received,rx_written,tx_queued,rx_queued,uio_in[7]};
 endmodule
 `default_nettype wire

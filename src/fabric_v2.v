@@ -16,7 +16,7 @@ module fabric_v2(
   reg [4:0] route[0:16];
   reg [23:0] written;
   reg [16:0] route_valid;
-  reg [2:0] output_enable;
+  reg [2:0] output_enable, open_drain;
   reg enable_valid;
   reg [1:0] shift_valid;
   reg [1:0] pin_meta, pin_sync, pin_prev;
@@ -25,7 +25,8 @@ module fabric_v2(
   wire [31:0] sources;
   wire live = rst_n && arm && configured;
   assign configured=(&written) && (&route_valid) && (&shift_valid) && (&timer_valid) && enable_valid;
-  assign pin_oe=live ? output_enable : 3'b000;
+  // An open-drain output drives only zero; logical one releases the pad.
+  assign pin_oe=live ? (output_enable & ~(open_drain & pin_out)) : 3'b000;
   assign pin_out={sources[route[16]],sources[route[15]],sources[route[14]]};
   assign sources={7'b0,!shift_busy[0],
     pin_prev[1] && !pin_sync[1],pin_prev[0] && !pin_sync[0],
@@ -37,7 +38,7 @@ module fabric_v2(
   integer i;
   always @(posedge clk) begin
     if (!rst_n) begin
-      written<=0; route_valid<=0; shift_valid<=0;output_enable<=0;enable_valid<=0;
+      written<=0; route_valid<=0; shift_valid<=0;output_enable<=0;open_drain<=0;enable_valid<=0;
       pin_meta<=0;pin_sync<=0;pin_prev<=0;
       for(i=0;i<2;i=i+1) begin timer_first[i]<=0;timer_period[i]<=0;shift_cfg[i]<=0; end
       for(i=0;i<17;i=i+1) route[i]<=0;
@@ -65,7 +66,7 @@ module fabric_v2(
         route_valid[16]<=cfg_data[15:5]==0 && cfg_data[4:0]<=24;
       end
       if (!arm && cfg_we && cfg_addr==25) begin
-        written[23]<=1;output_enable<=cfg_data[2:0];enable_valid<=cfg_data[15:3]==0;
+        written[23]<=1;output_enable<=cfg_data[2:0];open_drain<=cfg_data[5:3];enable_valid<=cfg_data[15:6]==0;
       end
     end
   end

@@ -14,7 +14,7 @@ results for the `memory_spi_fabric` top do not validate this new design.
   timer/shift outputs ─>│             │──> 3 output pins + OE mask
                        └─────────────┘
                              │
-                finite 1/2-byte SRAM adapter
+              SPI finite / UART stream adapters
                    │                    │
              [1 KiB SRAM]          [1 KiB SRAM]
                        host request port
@@ -32,13 +32,14 @@ prove selector conflicts for a future topology. All muxes are combinational
 between registered tile outputs. There is no router pipeline, physical delay
 model, generalized logic tile or instruction fetch.
 
-The wrapper reuses `experiment_memory_fabric` with two single-port 1024x8 SRAM
-banks and host/actor bank selections. A hand-written finite adapter reads one
+The unified wrapper reuses `experiment_memory_fabric` with two single-port
+1024x8 SRAM banks and host/actor bank selections. Its hand-written SPI adapter reads one
 or two bytes from SRAM, applies a configured left shift and OR mask to form a
 TX word, starts lane 0, then waits for lane 0 and the selected RX lane before
 writing one or two bytes back, optionally shifted right. This is not a generic
-byte stream, DMA engine, source function lowering, or autonomous UART receiver:
-RX completion before the adapter enters its transfer phase can be lost. The
+byte stream, DMA engine, or source function lowering. RX completion before the
+finite adapter enters its transfer phase can be lost. The separate UART stream
+adapter receives autonomously, as described below. The
 host preloads payloads and reads results by explicit memory requests.
 
 ## Experimental configuration words
@@ -57,7 +58,7 @@ address 26 for the static mode (0 SPI, 1 UART):
 | 22 | Adapter: TX byte count `[1:0]`, RX byte count `[3:2]`, RX lane bit 4, TX left shift `[8:5]`, RX right shift `[12:9]`; counts must be 1 or 2 |
 | 23 | Adapter TX OR mask |
 | 24 | Selector 16, third output pin |
-| 25 | Output-enable mask `[2:0]` |
+| 25 | Output-enable mask `[2:0]`; open-drain mask `[5:3]` |
 | 26 | Unified mode, bit 0; all other bits must be zero |
 
 Selector sinks 0–5 are timer 0 and 1 start/stop/hold; 6–9 and 10–13 are
@@ -69,6 +70,19 @@ synchronized inputs, 6–9 timer 0 tick/rise/fall/level, 10–13 timer 1
 `!shift0.busy`. Indices 25–31 are invalid. The two input synchronizers and
 falling-edge detectors are fixed resources. Output enable is gated off while
 disarmed or incomplete.
+
+For each open-drain output, logical zero drives low and logical one releases
+the pad. At the chip interface, output 0 is `uio[6]`, output 1 is `uio[5]`,
+and both inputs default to `uio[0]`. Host configuration word 29 bit 0 selects
+whether input 1 senses `uio[6]`, and bit 1 selects whether input 0 senses
+`uio[5]`; a clear bit selects `uio[0]` (the reset default). Thus
+the fabric can sense a shared data line even while another device holds it
+low. Word 29 persists across disarm, so hosts loading existing SPI/UART images
+must explicitly restore it to zero. The external system must provide the
+pull-up. Output 2 is exposed on a
+dedicated output and has no physical output-enable; its open-drain mask does
+not make that pad bidirectional. This is a pad primitive, not an I2C controller
+or proof of I2C source compilation, arbitration, or timing.
 
 ## Independent UART streaming wrapper
 
@@ -134,7 +148,7 @@ its built executable, and the stream test with `V2_UART_STREAM_IMAGE_TB`.
 For the unified top, `--compile-v2-unified-spi` and
 `--compile-v2-unified-uart` emit 27 words including mode. The host loads those
 words through Tiny Tapeout pins, and additionally supplies TX length and RX
-capacity as words 27 and 28. The checked-in image fixtures are used by the
+capacity as words 27 and 28; word 29 controls optional pad feedback. The checked-in image fixtures are used by the
 pin-only RTL/GL cocotb test. General stream/function lowering and a physical
 timing proof remain absent. There is no complete source-language fit,
 completed gate-level or physical PPA result for this revision, or claim that
