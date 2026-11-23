@@ -22,6 +22,51 @@ tests a compiler-generated image at the pins. It is a standalone experiment,
 not a replacement for the SPI slice or a proposed final topology. See the
 sibling compiler's `circt_lab/README.md` for source restrictions and commands.
 
+## Distributed memory experiment
+
+`make tile-memory-experiment` tests `memory_tiles.v` and `memory_shift.v`.
+This is a separate integration prototype using the same timer and shifter
+primitives; it has not replaced the register file in `spi_fabric`, and its
+transfer sequencer is hand-written. There is no instruction fetch or compiler
+mapping in this experiment.
+
+```text
+ host request ──── route select ──┬── [bank 0: 1024 x 8, 1 port]
+                                  │       round-robin arbitration
+ shifter adapter ─ route select ──┴── [bank 1: 1024 x 8, 1 port]
+        │
+        └── fetch two bytes → [shifter + timer] → store two bytes
+```
+
+Each requester is assigned either bank through a two-bit route setting written
+while disarmed. Different banks accept requests concurrently; same-bank
+requests arbitrate round-robin. A requester holds request and payload until
+`ready`. A read returns `rvalid` and data for one cycle after its accepting
+edge; writes complete at acceptance and have no response. There is no response
+backpressure, queueing, address translation, coherency, or initialized-memory
+tracking. Data remains undefined until written. Changing routes while armed is
+ignored. This contract is an experiment, not a final memory ISA or topology.
+
+The test runs the same accesses against a synchronous behavioral bank and the
+functional model of the actual IHP `RM_IHPSG13_1P_1024x8_c2_bm_bist` macro.
+It checks concurrent access, same-bank arbitration, route changes, a stalled
+request, and a 12-bit `0xA5C` transmit crossing two bytes; it then stores and
+reads back the received `0xFFF`. The hand-written adapter currently supports
+9–16 bits, packs the low bits into two big-endian bytes, and serializes each
+16-bit memory word into two 8-bit single-port accesses. Other widths and
+streaming need more work. The test is a digital functional simulation, not a
+timing or physical silicon test.
+
+`make tile-memory-synth` preserves two SRAM macro black boxes and synthesizes
+the surrounding experimental adapter. A local run yielded 621 generic cells
+including those two macro cells; this is not standard-cell area or a comparison
+with the existing chip. The checked-in macro LEF specifies **146.88 × 336.46
+µm per macro**, roughly 49,418 µm² each before spacing and routing. Two such
+macros are therefore a substantial physical commitment. No placement, routing,
+or timing run has established that this two-macro arrangement fits. We should
+compare it with fewer macros and smaller register-based banks before choosing
+the final number and location of banks.
+
 ```text
                    timer --> [route] --> SCK pin
                      | rise/fall

@@ -8,9 +8,11 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   `experiments/tile_fabric/README.md`.
 - Compiler experiment: sibling `protocol-emulator-compiler` branch
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
-- Next: expand typed lowering and resource/route modeling for real programs;
-  rerun the protocol corpus as coverage grows. Compare architectures only
-  after the mapper models the required resources and their actual RTL.
+- Next: model and map real protocol data streams and control onto the timer,
+  shifter, and memory interfaces; rerun the protocol corpus as coverage grows.
+  The standalone two-bank memory experiment is in the tile-fabric README;
+  its macro count and physical fit remain open questions. Compare full
+  architectures only after modeling the required resources and actual RTL.
 - The control-only end-to-end example is deliberately small. Corpus export or
   a component table is not evidence that an entire protocol fits.
 
