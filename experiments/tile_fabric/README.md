@@ -46,6 +46,7 @@ edge; writes complete at acceptance and have no response. There is no response
 backpressure, queueing, address translation, coherency, or initialized-memory
 tracking. Data remains undefined until written. Changing routes while armed is
 ignored. This contract is an experiment, not a final memory ISA or topology.
+The precise handshake and reset behavior is in [MEMORY_CONTRACT.md](MEMORY_CONTRACT.md).
 
 The test runs the same accesses against a synchronous behavioral bank and the
 functional model of the actual IHP `RM_IHPSG13_1P_1024x8_c2_bm_bist` macro.
@@ -58,7 +59,7 @@ streaming need more work. The test is a digital functional simulation, not a
 timing or physical silicon test.
 
 `make tile-memory-synth` preserves two SRAM macro black boxes and synthesizes
-the surrounding experimental adapter. A local run yielded 621 generic cells
+the surrounding experimental adapter. A local run yielded 623 generic cells
 including those two macro cells; this is not standard-cell area or a comparison
 with the existing chip. The checked-in macro LEF specifies **146.88 × 336.46
 µm per macro**, roughly 49,418 µm² each before spacing and routing. Two such

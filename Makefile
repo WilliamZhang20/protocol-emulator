@@ -32,7 +32,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
@@ -50,6 +50,7 @@ help:
 	@echo "make tile-control-image-test IMAGE=...  Exercise a compiled protocol control table"
 	@echo "make control-fabric-image-test IMAGE=...  Exercise a complete restricted-program image"
 	@echo "make tile-memory-experiment  Test distributed memory and a 12-bit transfer"
+	@echo "make tile-memory-assertion-mutation  Check fairness assertion catches a broken arbiter"
 	@echo "make tile-memory-synth       Synthesize with two SRAM macro black boxes"
 	@echo "make formal       Run every SymbiYosys target"
 	@echo "make verify       Run all verification layers"
@@ -148,7 +149,7 @@ memory-test:
 	$(BUILD_DIR)/verilator/program_memory/Vprogram_memory_tb
 
 tile-memory-experiment:
-	mkdir -p $(BUILD_DIR)/verilator/tile_memory $(BUILD_DIR)/verilator/tile_memory_shift
+	mkdir -p $(BUILD_DIR)/verilator/tile_memory $(BUILD_DIR)/verilator/tile_memory_shift $(BUILD_DIR)/verilator/tile_memory_random
 	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module memory_tiles_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_memory) \
 		experiments/tile_fabric/memory_tiles_tb.sv experiments/tile_fabric/memory_tiles.v \
@@ -160,9 +161,19 @@ tile-memory-experiment:
 		experiments/tile_fabric/memory_tiles.v experiments/tile_fabric/spi_tiles.v \
 		src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/tile_memory_shift/Vmemory_shift_tb
+	$(VERILATOR) --binary --timing --assert -Wno-fatal -DFUNCTIONAL --top-module memory_random_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/tile_memory_random) \
+		experiments/tile_fabric/memory_random_tb.sv experiments/tile_fabric/memory_contract_assertions.sv experiments/tile_fabric/memory_tiles.v \
+		src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=1
+	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=37
+	$(BUILD_DIR)/verilator/tile_memory_random/Vmemory_random_tb +SEED=2026
 
 tile-memory-synth:
 	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v; read_verilog src/program_memory.v experiments/tile_fabric/memory_tiles.v experiments/tile_fabric/memory_shift.v experiments/tile_fabric/spi_tiles.v; hierarchy -top memory_shift_fabric -chparam USE_MACRO 1; flatten; synth -top memory_shift_fabric; stat'
+
+tile-memory-assertion-mutation:
+	VERILATOR=$(VERILATOR) experiments/tile_fabric/check_memory_assertions.sh
 
 formal:
 	$(MAKE) -C formal BUILD_DIR=$(abspath $(BUILD_DIR)/formal)

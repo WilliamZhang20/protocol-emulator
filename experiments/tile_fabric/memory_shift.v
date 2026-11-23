@@ -8,7 +8,8 @@ module memory_shift(input wire clk, input wire rst_n, input wire start,
     output reg req, output reg we, output reg [9:0] addr,
     output reg [7:0] wdata, input wire ready, input wire rvalid,
     input wire [7:0] rdata, input wire serial_in,
-    output wire sck, output wire serial_out, output reg done, output reg error);
+    output wire sck, output wire serial_out, output reg done, output reg error,
+    output wire active);
   localparam IDLE=0, READ0=1, WAIT0=2, READ1=3, WAIT1=4,
              START=5, TRANSFER=6, WRITE0=7, WRITE1=8;
   reg [3:0] state;
@@ -19,6 +20,7 @@ module memory_shift(input wire clk, input wire rst_n, input wire start,
   reg [9:0] src_latched, dst_latched;
   wire timer_rise, timer_fall, busy, shift_done;
   wire [15:0] receive;
+  assign active = state != IDLE;
   proto_timer timer(clk, rst_n, busy, period_latched, sck, timer_rise, timer_fall);
   proto_shift shift(clk, rst_n, state == START, timer_rise, timer_fall,
                     serial_in, transmit, width_latched, serial_out, busy, shift_done, receive);
@@ -73,7 +75,8 @@ module memory_shift_fabric #(parameter USE_MACRO=0)(
     input wire start, input wire [4:0] width, input wire [7:0] half_period,
     input wire [9:0] source_addr, input wire [9:0] dest_addr,
     input wire serial_in, output wire sck, output wire serial_out,
-    output wire done, output wire error, output wire transfer_waiting);
+    output wire done, output wire error, output wire transfer_waiting,
+    output wire transfer_active);
   wire actor_req, actor_we, actor_ready, actor_valid;
   wire [9:0] actor_addr;
   wire [7:0] actor_wdata, actor_rdata;
@@ -86,8 +89,10 @@ module memory_shift_fabric #(parameter USE_MACRO=0)(
   experiment_memory_fabric #(.USE_MACRO(USE_MACRO)) memory(
       clk,rst_n,arm,cfg_we,cfg_routes,{actor_req,host_req},{actor_we,host_we},
       {actor_addr,host_addr},{actor_wdata,host_wdata},ready,valid,data);
-  memory_shift actor(clk,rst_n,start,width,half_period,source_addr,dest_addr,
+  // Disarming cancels the adapter at the next edge; accepted writes are not
+  // rolled back. Gate start so an idle disarmed fabric cannot begin work.
+  memory_shift actor(clk,rst_n && arm,start && arm,width,half_period,source_addr,dest_addr,
       actor_req,actor_we,actor_addr,actor_wdata,actor_ready,actor_valid,actor_rdata,
-      serial_in,sck,serial_out,done,error);
+      serial_in,sck,serial_out,done,error,transfer_active);
 endmodule
 `default_nettype wire

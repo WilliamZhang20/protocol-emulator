@@ -6,13 +6,13 @@ module memory_shift_tb;
   reg [1:0] cfg_routes=0;
   reg [9:0] host_addr=0;
   reg [7:0] host_wdata=0;
-  wire [1:0] ready, valid, sck, mosi, done, error, waiting;
+  wire [1:0] ready, valid, sck, mosi, done, error, waiting, active;
   wire [7:0] rdata[0:1];
   genvar k;
   generate for (k=0; k<2; k=k+1) begin : implementations
     memory_shift_fabric #(.USE_MACRO(k)) dut(clk,rst_n,arm,cfg_we,cfg_routes,
         host_req,host_we,host_addr,host_wdata,ready[k],valid[k],rdata[k],
-        start,5'd12,8'd4,10'd100,10'd200,1'b1,sck[k],mosi[k],done[k],error[k],waiting[k]);
+        start,5'd12,8'd4,10'd100,10'd200,1'b1,sck[k],mosi[k],done[k],error[k],waiting[k],active[k]);
   end endgenerate
   reg old_sck=0;
   reg [11:0] sent=0;
@@ -20,7 +20,7 @@ module memory_shift_tb;
   reg completed=0;
   always @(negedge clk) begin
     if (ready[0]!==ready[1] || valid[0]!==valid[1] || sck[0]!==sck[1] ||
-        mosi[0]!==mosi[1] || done[0]!==done[1] || error[0]!==error[1] || waiting[0]!==waiting[1])
+        mosi[0]!==mosi[1] || done[0]!==done[1] || error[0]!==error[1] || waiting[0]!==waiting[1] || active[0]!==active[1])
       $fatal(1,"behavioral and macro-backed transfer differ");
     if (valid[0] && rdata[0]!==rdata[1]) $fatal(1,"macro read mismatch");
     if (!old_sck && sck[0]) begin sent={sent[10:0],mosi[0]}; bits_seen=bits_seen+1; end
@@ -51,7 +51,8 @@ module memory_shift_tb;
     write_byte(100,8'h0a); write_byte(101,8'h5c);
     @(negedge clk); start=1;
     @(negedge clk); start=0;
-    while (bits_seen<12) @(negedge clk);
+    i=0; while (bits_seen<12 && i<400) begin @(negedge clk); i=i+1; end
+    if (bits_seen<12) $fatal(1,"transfer did not emit 12 bits");
     host_req=1; host_we=1; host_addr=300; host_wdata=8'h77;
     repeat (12) @(negedge clk);
     host_req=0; host_we=0;
@@ -60,6 +61,18 @@ module memory_shift_tb;
     if (stalls==0) $fatal(1,"contention did not stall transfer requester");
     if (bits_seen!=12 || sent!==12'ha5c) $fatal(1,"12-bit TX mismatch %h (%0d)",sent,bits_seen);
     read_byte(200,8'h0f); read_byte(201,8'hff); read_byte(300,8'h77);
+    // An in-flight transfer is cancelled by disarm; it must not resume after
+    // routes can be rewritten. Accepted earlier writes are not rolled back.
+    @(negedge clk); start=1;
+    @(negedge clk); start=0;
+    i=0; while (!(active[0] && sck[0]) && i<200) begin @(negedge clk); i=i+1; end
+    if (!(active[0] && sck[0])) $fatal(1,"second transfer did not start");
+    @(negedge clk); arm=0;
+    repeat (3) @(negedge clk);
+    if (active[0] || done[0] || sck[0] || ready[0]) $fatal(1,"disarm did not abort transfer");
+    cfg_we=1; cfg_routes=0; @(negedge clk); cfg_we=0; arm=1;
+    repeat (8) @(negedge clk);
+    if (active[0] || done[0] || sck[0]) $fatal(1,"aborted transfer resumed");
     $display("PASS: 12-bit memory-to-shifter exchange with contention (stalls=%0d)",stalls);
     $finish;
   end

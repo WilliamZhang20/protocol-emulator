@@ -43,6 +43,20 @@ module memory_tiles_tb;
       $fatal(1,"same-bank read mismatch");
     @(negedge clk); req=0; arm=0; #1;
     if (ready!==0) $fatal(1,"disarmed fabric accepted request");
+    // A read accepted before disarm still produces its one-cycle response;
+    // reset clears the response token, not SRAM contents.
+    @(negedge clk); arm=1; req=2'b01; we=0; addr[9:0]=7;
+    @(posedge clk); #1; if (rvalid!==1 || rdata[7:0]!==8'ha1) $fatal(1,"read before disarm");
+    @(negedge clk); arm=0; req=0; #1;
+    if (rvalid!==1 || rdata[7:0]!==8'ha1) $fatal(1,"disarm lost accepted response");
+    @(posedge clk); #1; if (rvalid!==0) $fatal(1,"read response did not expire");
+    @(negedge clk); arm=1; req=1;
+    @(posedge clk); #1; if (rvalid!==1) $fatal(1,"read before reset");
+    @(negedge clk); rst_n=0; req=0;
+    @(posedge clk); #1; if (rvalid!==0 || ready!==0) $fatal(1,"reset did not clear response");
+    @(negedge clk); rst_n=1; arm=1; req=1;
+    @(posedge clk); #1;
+    if (rvalid!==1 || rdata[7:0]!==8'ha1) $fatal(1,"reset altered SRAM contents");
     $display("PASS: independent banks, arbitration, routing and macro/model equivalence");
     $finish;
   end
