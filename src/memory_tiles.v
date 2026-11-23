@@ -7,7 +7,7 @@ module experiment_memory_bank #(parameter USE_MACRO = 0)(
     input wire clk, input wire enable, input wire write_enable,
     input wire [9:0] address, input wire [7:0] write_data,
     output wire [7:0] read_data);
-  generate if (USE_MACRO) begin : macro_bank
+  generate if (USE_MACRO != 0) begin : macro_bank
     program_memory memory(clk, enable, write_enable, !write_enable,
                           address, write_data, 8'hff, read_data);
   end else begin : model_bank
