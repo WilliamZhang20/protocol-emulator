@@ -63,8 +63,10 @@ the surrounding experimental adapter. A local run yielded 623 generic cells
 including those two macro cells; this is not standard-cell area or a comparison
 with the existing chip. The checked-in macro LEF specifies **146.88 × 336.46
 µm per macro**, roughly 49,418 µm² each before spacing and routing. Two such
-macros are therefore a substantial physical commitment. No placement, routing,
-or timing run has established that this two-macro arrangement fits. We should
+macros are therefore a substantial physical commitment. The later integrated
+two-macro test vehicle passed GDS, precheck and gate-level CI, with electrical
+limit violations noted in [PLACEMENT_EXPERIMENT.md](../../PLACEMENT_EXPERIMENT.md).
+This standalone experiment was not itself placed and is not a fabric comparison. We should
 compare it with fewer macros and smaller register-based banks before choosing
 the final number and location of banks.
 

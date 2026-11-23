@@ -30,6 +30,15 @@ report contained zero violations. The worst setup slack reported for the slow
 corner was about 8.91 ns against the 20 ns clock; this is one test vehicle,
 not an area/timing comparison against the old chip.
 
+The post-route STA reports still contain **electrical-limit violations**, even
+though the CI jobs and setup/hold checks passed. At the slow corner, three
+bank-1 SRAM input pins exceed the slew limit, one bank-1 SRAM output exceeds
+its capacitance limit, and 18 clock leaf buffers exceed their fanout limits.
+These are reported electrical checks, not KLayout geometric DRC violations;
+their causes and significance need investigation. The worst reported hold
+slack across corners was approximately +0.234 ns. Do not treat the passing
+workflow as complete electrical signoff or as proof that a larger fabric fits.
+
 `ui_in[7:0]` carries a command byte. `uio_in[4:2]` selects an opcode;
 `uio_in[1]` is the strobe and `uio_in[0]` is serial input. Hold the opcode and
 data stable with strobe low for four clocks, high for five, then low for four.
