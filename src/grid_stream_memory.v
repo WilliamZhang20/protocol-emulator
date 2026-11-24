@@ -3,8 +3,10 @@ module grid_stream_link #(parameter WIDTH=20)(input wire [WIDTH-1:0] in,output w
   assign out=in;
 endmodule
 // Three clients (host, reader, writer), round-robin per single-port bank.
-// Each client is statically assigned to one bank while disarmed. Read returns
-// are tagged by grant, ordered per client and have no response backpressure.
+// The host bank is configured while disarmed. Stream requests select a bank
+// from their current address, allowing an ordered stream to cross banks. Read
+// returns are tagged by grant and have no response backpressure; the reader
+// drains outstanding reads before crossing to preserve ordering.
 module grid_stream_bank #(parameter USE_MACRO=0)(
   input wire clk,rst_n,enable,input wire [2:0] req,we,
   input wire [29:0] addr,input wire [23:0] wdata,

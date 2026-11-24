@@ -1,0 +1,61 @@
+{
+  "schema": "spatial.switch-proxy-area.v1",
+  "liberty_sha256": "7677a8918689f452e80405ad16a83e744709342574f2aedcc507c2758986b396",
+  "yosys_version": "Yosys 0.67+111 (git sha1 4821ed17b-dirty, Release, Clang /usr/bin/clang++ 21.1.8)",
+  "four_track_proxy_proved_equivalent_to_current_rtl": true,
+  "measurements": [
+    {
+      "tracks_per_direction": 2,
+      "registered_outputs": false,
+      "standard_cell_area_um2_per_four_port_switch": 682.0632,
+      "register_bits_per_switch": 0
+    },
+    {
+      "tracks_per_direction": 2,
+      "registered_outputs": true,
+      "standard_cell_area_um2_per_four_port_switch": 1044.9432,
+      "register_bits_per_switch": 8
+    },
+    {
+      "tracks_per_direction": 4,
+      "registered_outputs": false,
+      "standard_cell_area_um2_per_four_port_switch": 1364.1264,
+      "register_bits_per_switch": 0
+    },
+    {
+      "tracks_per_direction": 4,
+      "registered_outputs": true,
+      "standard_cell_area_um2_per_four_port_switch": 2104.4016,
+      "register_bits_per_switch": 16
+    },
+    {
+      "tracks_per_direction": 6,
+      "registered_outputs": false,
+      "standard_cell_area_um2_per_four_port_switch": 2046.1896,
+      "register_bits_per_switch": 0
+    },
+    {
+      "tracks_per_direction": 6,
+      "registered_outputs": true,
+      "standard_cell_area_um2_per_four_port_switch": 3142.0872,
+      "register_bits_per_switch": 24
+    },
+    {
+      "tracks_per_direction": 8,
+      "registered_outputs": false,
+      "standard_cell_area_um2_per_four_port_switch": 2728.2528,
+      "register_bits_per_switch": 0
+    },
+    {
+      "tracks_per_direction": 8,
+      "registered_outputs": true,
+      "standard_cell_area_um2_per_four_port_switch": 4187.0304,
+      "register_bits_per_switch": 32
+    }
+  ],
+  "limitations": [
+    "Single isolated four-port switch; all ports connected. Not a complete grid or routed layout.",
+    "No configuration storage, clock tree, interconnect wiring, bank macros or physical timing.",
+    "Changing track count requires corresponding RTL, encoding, and compiler changes."
+  ]
+}

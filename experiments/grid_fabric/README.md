@@ -5,6 +5,14 @@ shared-selector fabric. It has no instruction fetch. Configuration is static
 while armed; the grid is an architecture experiment, not a final floorplan or a
 complete protocol compiler.
 
+The machine-readable [grid contract](../../architecture/grid_3x3.json) records
+the current tile inventory, coordinates, ports, routing, memory, configuration,
+and fixed temporal scheduler. `make grid-contract-check` compares elaborated
+RTL instances and neighbor links against it and proves all switch selector
+combinations with Yosys SAT. This check does not yet prove every configuration
+word, tile behavior, SRAM arbitration rule, or physical timing against the
+contract; the functional and synthesis regressions cover additional behavior.
+
 ```text
               col 0          col 1            col 2
 row 0       [input IO] ---- [output IO] ---- [timer 0]

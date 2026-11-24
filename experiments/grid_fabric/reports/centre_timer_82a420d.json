@@ -1,0 +1,20 @@
+{
+  "source_run": "https://github.com/WilliamZhang20/protocol-emulator/actions/runs/45470796607",
+  "hardware_commit": "82a420d3fc741c8a4d2193df064358c865a5ae3b",
+  "flow": "Tiny Tapeout IHP SG13CMOS5L, post-route",
+  "metrics": {
+    "design__die__area": 1225260.0,
+    "design__core__area": 1208170.0,
+    "design__instance__area__stdcell": 236505.0,
+    "design__instance__area__macros": 98838.5,
+    "design__instance__utilization": 0.277563,
+    "design__instance__utilization__stdcell": 0.213196,
+    "timing__setup__ws": 2.4869653706995924,
+    "timing__hold__ws": 0.1014709456291573,
+    "design__max_slew_violation__count": 4.0,
+    "design__max_cap_violation__count": 0.0,
+    "design__max_fanout_violation__count": 128.0,
+    "klayout__drc_error__count": 0.0,
+    "route__drc_errors": 0.0
+  }
+}

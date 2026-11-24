@@ -441,11 +441,25 @@ stream changes are uncommitted work in progress, not a completed architecture.
    configuration, and temporal operations. First represent the actual RTL;
    generate hardware from the model when the contract is stable. The compiler
    reports placement, routes, schedule, memory use, and resource visualization.
+   **Local contract baseline:** [grid_3x3.json](architecture/grid_3x3.json)
+   and `make grid-contract-check`. The sibling CIRCT lab exports an abstract
+   grid target and checks SPI/UART images against this contract. The target
+   graph deliberately overapproximates routing and does not model word streams
+   or the fixed scheduler; its schedules and touched addresses are not verified
+   transaction timing or buffer allocations. Hardware generation and richer
+   mapper fidelity remain later work, not proof of protocol fit.
 3. **Compare topology and switch candidates.** Sweep a small set of layouts,
    track counts, switch connectivity, direct links, and selective registered
    paths against the same protocol corpus. Report routing success, latency,
    area, timing, and physical feasibility. Distinguish missing hardware from
-   compiler mapping limitations before choosing modifications.
+   compiler mapping limitations before choosing modifications. **Initial
+   experiment complete:** keep the current four-track placement as the
+   baseline. A center-timer RTL candidate passed physical and gate-level CI,
+   but used more cell area and had less setup/hold slack in the measured run.
+   [Results and limitations](../protocol-emulator-compiler/circt_lab/GRID_TOPOLOGY_EXPERIMENT.md).
+   The six routed cases are component/connection slices, not full USB/Ethernet
+   or general protocol compilation; source/control and memory lowering remain
+   open. Registered and direct-link candidates are model-only.
 4. **Implement and test programmable temporal control.** Start with an I2C
    source-driven transaction covering START, address, ACK/NACK, clock stretch,
    data, and STOP. Measure sequencer and context costs and response timing;

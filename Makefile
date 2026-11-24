@@ -34,11 +34,12 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check grid-contract-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
 	@echo "make grid-stream-test  Test credit-based reader/writer and shared-bank arbitration"
+	@echo "make grid-contract-check  Check grid contract against elaborated RTL and prove switch selectors"
 	@echo "make grid-coder-reuse-test  Validate the earlier packet coder against USB/Ethernet references"
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
 	@echo "make gds-config-check  Check SRAM macro and PDN configuration"
@@ -72,7 +73,11 @@ precommit: lint sim
 install-hooks:
 	git config core.hooksPath .githooks
 
-verify: lint synth-check gds-config-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-spi-image-test tile-memory-assertion-mutation tile-memory-synth
+verify: lint synth-check gds-config-check grid-contract-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-spi-image-test tile-memory-assertion-mutation tile-memory-synth
+
+grid-contract-check:
+	$(PYTHON) tools/check_grid_contract.py --yosys $(ROUTING_YOSYS)
+	$(PYTHON) tools/test_grid_contract.py $(ROUTING_YOSYS)
 
 lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
