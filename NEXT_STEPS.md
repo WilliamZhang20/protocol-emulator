@@ -11,7 +11,11 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
 - The experimental Tiny Tapeout top now uses the [structured 3 × 3 grid](experiments/grid_fabric/README.md).
   Two timers and shifters, a logic tile, I/O and two SRAM tiles communicate
-  through finite configurable neighbor links. Restricted source-derived SPI
+  through finite configurable neighbor links. A reused programmable CRC tile
+  handles USB CRC-16 and Ethernet CRC-32 reference data through those links.
+  An observed SCL hold primitive is verified for clock stretching; neither
+  a complete I2C transaction nor USB/Ethernet packets have been compiled for
+  the grid. Restricted source-derived SPI
   and UART images exercise the same grid. Its SRAM word paths are dedicated,
   placement is fixed, and adapters remain hand-written. Physical CI for the
   grid revision is required; prior passing results apply to the older top.

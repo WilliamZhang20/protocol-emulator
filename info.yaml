@@ -25,6 +25,7 @@ project:
     - "grid_core.v"
     - "grid_memory.v"
     - "grid_unified.v"
+    - "fabric_crc.v"
     - "spi_tiles.v"
     - "memory_tiles.v"
     - "memory_shift.v"

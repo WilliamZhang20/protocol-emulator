@@ -1,0 +1,39 @@
+{
+  "schema": "spatial.grid-crc-profile.v1",
+  "profiles": [
+    {
+      "program": "usb.spt",
+      "resource": "check",
+      "width": 16,
+      "polynomial": 32773,
+      "check": 32781,
+      "init_ones": true,
+      "grid_words": {
+        "69": 32773,
+        "70": 0,
+        "71": 32781,
+        "72": 0,
+        "75": 47
+      },
+      "connections_lowered": false,
+      "protocol_compiled": false
+    },
+    {
+      "program": "ethernet_tx.spt",
+      "resource": "fcs",
+      "width": 32,
+      "polynomial": 79764919,
+      "check": 3338984827,
+      "init_ones": true,
+      "grid_words": {
+        "69": 7607,
+        "70": 1217,
+        "71": 56699,
+        "72": 50948,
+        "75": 63
+      },
+      "connections_lowered": false,
+      "protocol_compiled": false
+    }
+  ]
+}

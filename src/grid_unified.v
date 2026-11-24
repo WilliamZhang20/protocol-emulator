@@ -66,7 +66,7 @@ module grid_unified #(parameter USE_MACRO=0)(
   wire [9:0] actor_addr=mode_uart ? req_addr : spi_addr;
   wire [7:0] actor_data=mode_uart ? req_data : spi_wdata;
   assign tx_active=tx_live;
-  grid_core grid(clk,rst_n,arm && adapter_valid,cfg_we && cfg_addr<63,cfg_addr[5:0],cfg_data,
+  grid_core grid(clk,rst_n,arm && adapter_valid,cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),cfg_addr,cfg_data,
       fabric_fire,pin_in,txword,16'd0,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,tile_configured);
   grid_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,bank_cfg_we,bank_routes,
       {actor_req,host_req},{actor_we,host_we},{actor_addr,host_addr},{actor_data,host_wdata},ready,rvalid,mem_data);

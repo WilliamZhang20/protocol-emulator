@@ -1,9 +1,13 @@
 """Black-box RTL/GL test of one configurable SPI and UART chip interface."""
+import json
 from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
+from cocotb_tests.line_codes import crc16_usb, ethernet_fcs
+from cocotb_tests.test_ethernet import test_frame as ethernet_test_frame
+from cocotb_tests.test_usb import TX_CASES as USB_TX_CASES
 
 
 @cocotb.test()
@@ -217,3 +221,159 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     await ClockCycles(dut.clk, 5)
     assert int(dut.uio_out.value) & 0x40, 'second pad high feedback'
     await command(4, 0)
+
+    # Input IO -> south to shifter cell -> east to LUT -> north to output IO.
+    # This vertical-then-horizontal path is essential for bus feedback logic;
+    # it was unreachable with only horizontal-then-vertical tracks.
+    await command(4, 11)
+    await config_word(68, 0)
+    await config_word(6, 1 << 6)       # IO south, track 2 <- input 0
+    await config_word(20, 6 << 6)      # shift east, track 2 <- north
+    await config_word(51, 16)          # LUT input 0 <- west track 2
+    await config_word(3, 5)            # LUT output = !input 0
+    await config_word(21, 1)           # LUT north, track 0 <- LUT output
+    await config_word(48, 10)          # output 0 <- south track 0
+    await config_word(4, 1)             # output 0 push-pull
+    state['rx'] = 0; drive()
+    await command(4, 3); await command(4, 7)
+    await ClockCycles(dut.clk, 5)
+    assert int(dut.uio_out.value) & 0x40, 'LUT must see input low through neighbor routes'
+    await FallingEdge(dut.clk); state['rx'] = 1; drive()
+    await ClockCycles(dut.clk, 5)
+    assert not (int(dut.uio_out.value) & 0x40), 'LUT must see input high through neighbor routes'
+    await command(4, 0)
+    await command(4, 11)
+    await config_word(6, 3 << 6)  # route input-0 edge event instead of level
+    await config_word(3, 10)      # LUT passes input 0
+    await config_word(4, 0x41)    # select rising edge for input 0
+    state['rx'] = 0; drive()
+    await command(4, 3); await command(4, 7)
+    await ClockCycles(dut.clk, 5)
+    await FallingEdge(dut.clk); state['rx'] = 1; drive()
+    rising_pulses = 0
+    for _ in range(8):
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        rising_pulses += bool(int(dut.uio_out.value) & 0x40)
+    assert rising_pulses == 1, 'observed rising edge must generate one event'
+    await FallingEdge(dut.clk); state['rx'] = 0; drive()
+    for _ in range(8):
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        assert not (int(dut.uio_out.value) & 0x40), 'falling edge must not trigger rising-event mode'
+    await command(4, 0)
+
+    # Route an observed SCL level and the intended timer level through the LUT
+    # into the timer hold input. When the peer holds SCL low during the high
+    # phase, the timer must wait; releasing SCL lets it resume. This tests a
+    # clock-stretch primitive, not an entire I2C transaction.
+    await load_image('grid-spi.mem')
+    await command(4, 0); await command(4, 11)
+    stretch_image = [int(x, 16) for x in (Path(__file__).parents[1] / 'data' / 'grid-spi.mem').read_text().splitlines()]
+
+    def set_track(word, lane, select):
+        return (word & ~(7 << (3 * lane))) | (select << (3 * lane))
+
+    changes = {
+        6: set_track(stretch_image[6], 2, 1),    # input IO south <- observed SCL
+        20: set_track(stretch_image[20], 2, 6),  # shift cell east <- north
+        15: set_track(set_track(stretch_image[15], 0, 4), 1, 4),  # timer level west
+        10: set_track(stretch_image[10], 1, 7),  # output IO south <- east
+        14: set_track(set_track(stretch_image[14], 2, 3), 3, 2),  # timer edges south
+        27: set_track(set_track(stretch_image[27], 2, 6), 3, 6),  # edges turn west
+        23: set_track(set_track(stretch_image[23], 2, 5), 3, 5),  # edges continue west
+        21: set_track(stretch_image[21], 3, 1),  # LUT north, track 3
+        12: set_track(stretch_image[12], 3, 7),  # output IO east <- south
+        3: 2,   # LUT: intended SCL high AND observed SCL low
+        4: 0x13,  # SDA push-pull, SCL open drain
+        43: 17,  # timer 0 hold <- west track 3
+        45: 20,  # shift <- timer fall, east track 2
+        46: 21,  # sample <- timer rise, east track 3
+        49: 18,  # SCL output <- timer level from east track 0
+        51: 7,   # LUT input 0 <- north track 1 (timer level)
+        52: 16,  # LUT input 1 <- west track 2 (observed SCL)
+        68: 2,   # input 0 senses uio[5]
+    }
+    for addr, word in changes.items():
+        await config_word(addr, word)
+    state['clock_pad'] = 0; state['rx'] = 1; drive()
+    await command(4, 3); await command(4, 7)
+    await write_byte(100, 0x0A); await write_byte(101, 0x5C)
+    await command(5, 0)
+    for _ in range(80):
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        if not (int(dut.uio_oe.value) & 0x20):
+            break
+    else:
+        assert False, 'SCL was never released for the high phase'
+    for _ in range(32):
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        assert not (int(dut.uio_oe.value) & 0x20), 'clock advanced despite SCL being held low'
+    state['clock_pad'] = 1; drive()
+    for _ in range(40):
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        if int(dut.uio_oe.value) & 0x20:
+            break
+    else:
+        assert False, 'clock did not resume after peer released SCL'
+    await command(4, 0)
+
+    # Exercise the reused CRC tile through actual grid tracks. Input 0 is a
+    # host-driven clock on uio[5], input 1 is data on uio[0], and CRC match
+    # returns on uio[6]. Known vectors cover USB CRC-16 and Ethernet CRC-32.
+    await command(4, 11)
+    await config_word(4, 0x141)
+    await command(4, 3); await command(4, 7)
+    assert int(dut.uio_oe.value) == 0, 'incomplete CRC configuration must disable outputs'
+    await command(4, 0); await command(4, 11)
+    crc_image = stretch_image.copy()
+    crc_changes = {
+        8: set_track(set_track(crc_image[8], 0, 3), 1, 2),
+        12: set_track(set_track(crc_image[12], 0, 5), 1, 5),
+        14: set_track(set_track(crc_image[14], 0, 6), 1, 6),
+        26: set_track(set_track(crc_image[26], 0, 5), 1, 5),
+        37: set_track(crc_image[37], 2, 2),  # CRC match north, track 2
+        25: set_track(crc_image[25], 2, 5),
+        15: set_track(crc_image[15], 2, 7),  # turn west from south
+        48: 20,  # output 0 <- CRC match, east track 2
+        68: 2,   # input 0 is uio[5], input 1 is uio[0]
+        73: 0, 74: 129, 76: 0,  # absorb line 0/data line 32; unused emit/init
+        77: 6, 78: 0, 79: 0, 80: 7,
+    }
+    for addr, word in crc_changes.items():
+        await config_word(addr, word)
+
+    async def crc_vector(poly, width, expected, corrupt=False, payload=b'123456789'):
+        await config_word(69, poly & 0xFFFF); await config_word(70, poly >> 16)
+        await config_word(71, expected & 0xFFFF); await config_word(72, expected >> 16)
+        await config_word(75, 0x20 | (width - 1))
+        await config_word(4, 0x141)  # output enabled, input-0 rising edge, CRC enabled
+        state['clock_pad'] = 0; state['rx'] = 0; drive()
+        await command(4, 3); await command(4, 7)
+        for byte in payload:
+            if corrupt and byte == ord('5'):
+                byte ^= 1
+            for bit in range(8):
+                await FallingEdge(dut.clk)
+                state['clock_pad'] = 0; state['rx'] = (byte >> bit) & 1; drive()
+                await ClockCycles(dut.clk, 5)
+                await FallingEdge(dut.clk); state['clock_pad'] = 1; drive()
+                await ClockCycles(dut.clk, 5)
+        await ClockCycles(dut.clk, 6)
+        assert bool(int(dut.uio_out.value) & 0x40) != corrupt, f'CRC-{width} match'
+        await command(4, 0); await command(4, 11)
+
+    profiles = json.loads((Path(__file__).parents[1] / 'data' / 'grid-crc-profiles.json').read_text())['profiles']
+    profiles = {p['program']: p for p in profiles}
+    usb_crc, ethernet_crc = profiles['usb.spt'], profiles['ethernet_tx.spt']
+    assert usb_crc['init_ones'] and ethernet_crc['init_ones']
+    await crc_vector(usb_crc['polynomial'], usb_crc['width'], 0xECD2)
+    await crc_vector(usb_crc['polynomial'], usb_crc['width'], 0xECD2, corrupt=True)
+    await crc_vector(ethernet_crc['polynomial'], ethernet_crc['width'], 0x9B63D02C)
+    usb_payload = USB_TX_CASES['stuffing_mix']
+    ethernet_frame = ethernet_test_frame()
+
+    def internal_crc(final_value, width):
+        uncomplemented = final_value ^ ((1 << width) - 1)
+        return int(f'{uncomplemented:0{width}b}'[::-1], 2)
+
+    await crc_vector(usb_crc['polynomial'], usb_crc['width'], internal_crc(crc16_usb(usb_payload), usb_crc['width']), payload=usb_payload)
+    await crc_vector(ethernet_crc['polynomial'], ethernet_crc['width'], internal_crc(int.from_bytes(ethernet_fcs(ethernet_frame), 'little'), ethernet_crc['width']), payload=ethernet_frame)

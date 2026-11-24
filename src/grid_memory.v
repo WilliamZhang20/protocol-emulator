@@ -32,7 +32,7 @@ module grid_memory #(parameter USE_MACRO=0)(
   reg [1:0] routes;
   wire [19:0] actor6,actor7,actor8;
   // Explicit point-to-point bus segments: shifter (1,0) -> SRAM (2,0)
-  // -> route (2,1) -> SRAM (2,2).
+  // -> shifter/word relay (2,1) -> SRAM (2,2).
   grid_word_link shift_to_sram0({req[1],we[1],addr[19:10],wdata[15:8]},actor6);
   grid_word_link sram0_to_route(actor6,actor7);
   grid_word_link route_to_sram1(actor7,actor8);
