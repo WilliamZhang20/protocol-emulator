@@ -8,6 +8,7 @@ from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from cocotb_tests.line_codes import crc16_usb, ethernet_fcs
 from cocotb_tests.test_ethernet import test_frame as ethernet_test_frame
 from cocotb_tests.test_usb import TX_CASES as USB_TX_CASES
+from cocotb_tests.center_contract.retarget import retarget
 
 
 @cocotb.test()
@@ -17,6 +18,8 @@ async def grid_protocol_primitives(dut):
     dut.rst_n.value = 0
     dut.ui_in.value = 0
     state = {'op': 0, 'strobe': 0, 'rx': 1, 'pad': 1, 'clock_pad': 1}
+    config_shadow = [0] * 128
+    control = {'arm': False, 'config': False, 'routes': 0, 'applying': False}
 
     def drive():
         dut.uio_in.value = (state['pad'] << 6) | (state['clock_pad'] << 5) | (state['op'] << 2) | (state['strobe'] << 1) | state['rx']
@@ -28,6 +31,14 @@ async def grid_protocol_primitives(dut):
     await ClockCycles(dut.clk, 8)
 
     async def command(op, data):
+        if op == 4 and data & 4 and not control['arm'] and not control['applying']:
+            await apply_center_routes()
+        if op == 4:
+            if not control['arm'] and not (data & 4) and (not control['config'] or data & 8):
+                control['routes'] = ((data >> 1 & 1) * 6) | (data & 1)
+            if not control['arm']:
+                control['config'] = bool(data & 8)
+            control['arm'] = bool(data & 4)
         await FallingEdge(dut.clk)
         dut.ui_in.value = data
         state['op'] = op; state['strobe'] = 0; drive()
@@ -45,9 +56,32 @@ async def grid_protocol_primitives(dut):
         await ClockCycles(dut.clk, 4)
 
     async def config_word(index, word):
+        if not control['applying']:
+            config_shadow[index] = word
+            if index == 88:
+                control['routes'] = word
         await command(0, index)
         await command(6, word & 255)
         await command(7, word >> 8)
+
+    async def apply_center_routes():
+        # The original fixture expresses routes for the baseline placement.
+        # Decode those bit connections and program equivalent routes for this
+        # branch's center-timer candidate; all DUT accesses remain pin-level.
+        translated = retarget(config_shadow)
+        saved_config, saved_routes = control['config'], control['routes']
+        control['applying'] = True
+        await command(4, 8)
+        await command(1, 0)  # configuration addresses require host_addr[9:7] == 0
+        for addr in list(range(5, 53)) + list(range(56, 63)):
+            await config_word(addr, translated[addr])
+        if config_shadow[4] & 0x100:
+            for addr in range(77, 81):
+                await config_word(addr, translated[addr])
+        await config_word(88, saved_routes)
+        if not saved_config:
+            await command(4, 0)
+        control['config'], control['routes'], control['applying'] = saved_config, saved_routes, False
 
     async def load_image(name, *, tx_length=None, rx_capacity=None):
         if tx_length is None:
