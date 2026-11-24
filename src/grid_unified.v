@@ -19,9 +19,9 @@ module grid_unified #(parameter USE_MACRO=0)(
   reg [15:0] format,ormask;
   reg [1:0] fmt_written;
   reg mode_uart,mode_written;
-  wire adapter_valid=fmt_written==2'b11 && mode_written && format[15:13]==0 &&
-       (mode_uart ? (format[1:0]==1 && format[3:2]==1 && format[4]) :
-        ((format[1:0]==1 || format[1:0]==2) && (format[3:2]==1 || format[3:2]==2)));
+  wire adapter_valid=fmt_written==2'b11 && mode_written && !format[15] &&
+       (mode_uart ? (format[14:13]==0 && format[1:0]==1 && format[3:2]==1 && format[4]) :
+        ((!format[14] || format[13]) && (format[1:0]==1 || format[1:0]==2) && (format[3:2]==1 || format[3:2]==2)));
   wire tile_configured;
   assign configured=adapter_valid && tile_configured;
   always @(posedge clk) begin
@@ -50,14 +50,15 @@ module grid_unified #(parameter USE_MACRO=0)(
   wire live=rst_n && arm && configured && armed_seen;
   wire tx_fire=live && mode_uart && tx_live && tx_count!=0 && !busy[0] && !finished[0] && !cooldown;
   wire [15:0] stream_txword=({8'd0,tx_fifo[tx_rd]} << format[8:5]) | ormask;
-  reg [15:0] spi_txword,spi_received;
+  reg [15:0] spi_txword,spi_txword1,spi_received;
   reg spi_fire,spi_req,spi_we;
   reg [9:0] spi_addr,spi_src,spi_dst;
   reg [7:0] spi_wdata,spi_first;
-  reg spi_tx_finished,spi_rx_finished;
+  reg spi_tx_finished,spi_tx1_finished,spi_rx_finished;
   reg [3:0] spi_state;
   localparam SPI_IDLE=0,SPI_READ0=1,SPI_WAIT0=2,SPI_READ1=3,SPI_WAIT1=4,
-             SPI_FIRE=5,SPI_TRANSFER=6,SPI_WRITE0=7,SPI_WRITE1=8;
+             SPI_FIRE=5,SPI_TRANSFER=6,SPI_WRITE0=7,SPI_WRITE1=8,
+             SPI_READ2=9,SPI_WAIT2=10,SPI_READ3=11,SPI_WAIT3=12;
   assign spi_active=spi_state!=SPI_IDLE;
   wire [15:0] txword=mode_uart ? stream_txword : spi_txword;
   wire fabric_fire=mode_uart ? tx_fire : spi_fire;
@@ -67,7 +68,7 @@ module grid_unified #(parameter USE_MACRO=0)(
   wire [7:0] actor_data=mode_uart ? req_data : spi_wdata;
   assign tx_active=tx_live;
   grid_core grid(clk,rst_n,arm && adapter_valid,cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),cfg_addr,cfg_data,
-      fabric_fire,pin_in,txword,16'd0,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,tile_configured);
+      fabric_fire,pin_in,txword,spi_txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,tile_configured);
   grid_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,bank_cfg_we,bank_routes,
       {actor_req,host_req},{actor_we,host_we},{actor_addr,host_addr},{actor_data,host_wdata},ready,rvalid,mem_data);
   assign host_ready=ready[0];assign host_rvalid=rvalid[0];assign host_rdata=mem_data[7:0];
@@ -82,6 +83,9 @@ module grid_unified #(parameter USE_MACRO=0)(
   wire [11:0] tx_end={2'b0,tx_base}+{1'b0,tx_length};
   wire [11:0] rx_end={2'b0,rx_base}+{1'b0,rx_capacity};
   wire [15:0] decoded_rx=rx1 >> format[12:9];
+  wire [11:0] spi_source_end={2'b0,spi_source_addr}+{10'b0,format[1:0]}+
+    (format[13] ? (format[14] ? 12'd2 : 12'd1) : 12'd0);
+  wire [11:0] spi_dest_end={2'b0,spi_dest_addr}+{10'b0,format[3:2]};
   always @(posedge clk) begin
     if(!rst_n || !arm || !configured || !mode_uart) begin
       tx_rd<=0;tx_wr<=0;rx_rd<=0;rx_wr<=0;tx_count<=0;rx_count<=0;
@@ -139,6 +143,8 @@ module grid_unified #(parameter USE_MACRO=0)(
     case(spi_state)
       SPI_READ0: begin spi_req=1;spi_addr=spi_src;end
       SPI_READ1: begin spi_req=1;spi_addr=spi_src+10'd1;end
+      SPI_READ2: begin spi_req=1;spi_addr=spi_src+{8'b0,format[1:0]};end
+      SPI_READ3: begin spi_req=1;spi_addr=spi_src+{8'b0,format[1:0]}+10'd1;end
       SPI_FIRE: spi_fire=1;
       SPI_WRITE0: begin spi_req=1;spi_we=1;spi_addr=spi_dst;
         spi_wdata=format[3:2]==2 ? spi_received[15:8] : spi_received[7:0];end
@@ -148,30 +154,40 @@ module grid_unified #(parameter USE_MACRO=0)(
   end
   always @(posedge clk) begin
     if(!rst_n || !arm || !configured || mode_uart) begin
-      spi_state<=SPI_IDLE;spi_src<=0;spi_dst<=0;spi_first<=0;spi_txword<=0;
-      spi_received<=0;spi_done<=0;spi_error<=0;spi_tx_finished<=0;spi_rx_finished<=0;
+      spi_state<=SPI_IDLE;spi_src<=0;spi_dst<=0;spi_first<=0;spi_txword<=0;spi_txword1<=0;
+      spi_received<=0;spi_done<=0;spi_error<=0;spi_tx_finished<=0;spi_tx1_finished<=0;spi_rx_finished<=0;
     end else begin
       spi_done<=0;
       case(spi_state)
         SPI_IDLE: if(spi_start) begin
-          spi_error<=0;spi_tx_finished<=0;spi_rx_finished<=0;
-          if((format[1:0]==2 && spi_source_addr==1023) || (format[3:2]==2 && spi_dest_addr==1023)) begin
+          spi_error<=0;spi_tx_finished<=0;spi_tx1_finished<=0;spi_rx_finished<=0;
+          if(spi_source_end>1024 || spi_dest_end>1024) begin
             spi_error<=1;spi_done<=1;
           end else begin spi_src<=spi_source_addr;spi_dst<=spi_dest_addr;spi_state<=SPI_READ0;end
         end
         SPI_READ0: if(ready[1]) spi_state<=SPI_WAIT0;
         SPI_WAIT0: if(rvalid[1]) begin
           spi_first<=mem_data[15:8];
-          if(format[1:0]==1) begin spi_txword<=({8'd0,mem_data[15:8]} << format[8:5]) | ormask;spi_state<=SPI_FIRE;end
+          if(format[1:0]==1) begin spi_txword<=({8'd0,mem_data[15:8]} << format[8:5]) | ormask;spi_state<=format[13] ? SPI_READ2 : SPI_FIRE;end
           else spi_state<=SPI_READ1;
         end
         SPI_READ1: if(ready[1]) spi_state<=SPI_WAIT1;
-        SPI_WAIT1: if(rvalid[1]) begin spi_txword<=({spi_first,mem_data[15:8]} << format[8:5]) | ormask;spi_state<=SPI_FIRE;end
+        SPI_WAIT1: if(rvalid[1]) begin spi_txword<=({spi_first,mem_data[15:8]} << format[8:5]) | ormask;spi_state<=format[13] ? SPI_READ2 : SPI_FIRE;end
+        SPI_READ2: if(ready[1]) spi_state<=SPI_WAIT2;
+        SPI_WAIT2: if(rvalid[1]) begin
+          spi_first<=mem_data[15:8];
+          if(format[14]) spi_state<=SPI_READ3;
+          else begin spi_txword1<={8'b0,mem_data[15:8]};spi_state<=SPI_FIRE;end
+        end
+        SPI_READ3: if(ready[1]) spi_state<=SPI_WAIT3;
+        SPI_WAIT3: if(rvalid[1]) begin spi_txword1<={spi_first,mem_data[15:8]};spi_state<=SPI_FIRE;end
         SPI_FIRE: spi_state<=SPI_TRANSFER;
         SPI_TRANSFER: begin
           if(finished[0]) spi_tx_finished<=1;
+          if(finished[1]) spi_tx1_finished<=1;
           if(finished[format[4]]) begin spi_received<=(format[4] ? rx1 : rx0) >> format[12:9];spi_rx_finished<=1;end
-          if((spi_tx_finished || finished[0]) && (spi_rx_finished || finished[format[4]])) spi_state<=SPI_WRITE0;
+          if((spi_tx_finished || finished[0]) && (!format[13] || spi_tx1_finished || finished[1]) &&
+             (spi_rx_finished || finished[format[4]])) spi_state<=SPI_WRITE0;
         end
         SPI_WRITE0: if(ready[1]) begin if(format[3:2]==1) begin spi_state<=SPI_IDLE;spi_done<=1;end else spi_state<=SPI_WRITE1;end
         SPI_WRITE1: if(ready[1]) begin spi_state<=SPI_IDLE;spi_done<=1;end

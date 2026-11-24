@@ -54,6 +54,10 @@ full source lowering or proof of timing. The 66 16-bit words are:
 * 53–55: timer 1 first/period and shift 1 width/order.
 * 56–62: timer 1 and shift 1 input selectors, using the same encoding.
 * 63–65: hand-written adapter format, OR mask and SPI/UART mode.
+  In finite mode, word 63 bit 13 enables a second independently loaded shift
+  lane; bit 14 selects two bytes for it instead of one. Its bytes immediately
+  follow lane 0's bytes in the selected SRAM bank. The adapter checks both
+  ranges and waits for both lanes to finish. UART requires both bits clear.
 * 69–76: optional CRC tile registers, reusing the legacy configurable 1–32 bit
   `fabric_crc` contract. Direct legacy shifter links are not present here.
   Words 77–80 select its absorb, emit, reset and data inputs from the SRAM 1
@@ -74,9 +78,20 @@ UART TX/RX on the same RTL, both SRAM banks, SRAM contention, bounded RX
 overflow and assertions, followed by synthesis and a two-macro count check.
 `make sim` checks the chip interface with only top-level pins, including a
 reconfigured signal route, bidirectional pads, observed input edges and a
-clock-stretch primitive. It also checks the reused CRC using USB and Ethernet
+clock-stretch primitive and a nine-bit I2C byte phase with ACK, NACK and a
+stretched clock. START, STOP and source transaction lowering are not covered.
+It checks a source-validated JTAG `scan8` component with distinct SRAM-loaded
+TDI and TMS lanes and TDO sampling. Full TAP transactions, dynamic `step` and
+the source function's exact cycle semantics remain open.
+It also checks the reused CRC using USB and Ethernet
 vectors and payloads from the earlier protocol tests. The sibling compiler
 can regenerate the images and extract a partial source-derived CRC profile;
 it does not yet lower packet control or CRC connections.
+`make grid-coder-reuse-test` separately tests the old coded-shifter and CRC
+blocks together against the existing USB NRZI/stuffing encoder and Ethernet
+Manchester/FCS reference. It verifies the encoded packet bitstreams in an
+isolated reuse harness; these coded blocks are not yet connected to the grid's
+SRAM stream or pin tiles, and link-pulse/USB end-of-packet control is not tested
+there.
 Physical placement, routed timing, pad timing, full-program compilation,
 I2C/JTAG/Ethernet/USB support and a broader topology comparison remain open.

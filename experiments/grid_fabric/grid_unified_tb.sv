@@ -137,6 +137,11 @@ module grid_unified_tb;
     cfg(48,22);@(negedge clk);arm=1;#1;
     if(configured || pin_oe!=0) $fatal(1,"invalid grid selector must disable outputs");
     @(negedge clk);arm=0;
+    cfg(48,image_words[48]);cfg(63,16'h2005);
+    spi_source_addr=1023;@(negedge clk);arm=1;
+    @(negedge clk);spi_start=1;@(negedge clk);spi_start=0;
+    if(!spi_done || !spi_error || spi_active) $fatal(1,"dual-lane source range not rejected");
+    @(negedge clk);arm=0;spi_source_addr=100;
     load_image();
     // Host preloads TX; receiver is enabled but receives no serial input.
     arm=1;repeat(3) @(negedge clk);

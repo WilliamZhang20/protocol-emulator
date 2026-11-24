@@ -1,4 +1,4 @@
-"""Black-box RTL/GL test of one configurable SPI and UART chip interface."""
+"""Black-box RTL/GL checks of the configurable grid and protocol primitives."""
 import json
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from cocotb_tests.test_usb import TX_CASES as USB_TX_CASES
 
 
 @cocotb.test()
-async def spi_and_independent_uart_on_same_fabric(dut):
+async def grid_protocol_primitives(dut):
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     dut.ena.value = 1
     dut.rst_n.value = 0
@@ -314,6 +314,92 @@ async def spi_and_independent_uart_on_same_fabric(dut):
             break
     else:
         assert False, 'clock did not resume after peer released SCL'
+    await command(4, 0)
+
+    # I2C byte phase: send 0xA6, release SDA for the ninth ACK bit, sample
+    # observed SCL edges, and have the peer stretch one high phase. START,
+    # STOP and source-function lowering are not part of this primitive.
+    await load_image('grid-spi.mem')
+    await command(4, 0); await command(4, 11)
+    byte_changes = dict(changes)
+    byte_changes.update({
+        2: 41,  # nine bits, MSB first
+        4: 0x5B,  # both pins open-drain, input-0 rising edge
+        6: set_track(set_track(stretch_image[6], 2, 1), 3, 3),
+        46: 9,   # shift sample <- observed SCL rising event, north track 3
+        47: 7,   # serial input <- observed SDA, north track 1
+        68: 3,   # observe both physical bus pins
+    })
+    byte_changes[6] = set_track(byte_changes[6], 1, 2)
+    for addr, word in byte_changes.items():
+        await config_word(addr, word)
+    state['clock_pad'] = 0; state['pad'] = 1; drive()
+    await command(4, 3); await command(4, 7)
+    await write_byte(100, 0x01); await write_byte(101, 0x4D)  # 0xA6 then released ACK
+
+    async def i2c_byte_peer(ack):
+        expected_word = 0x14D
+        for bit in range(9):
+            for _ in range(100):
+                await FallingEdge(dut.clk); await Timer(1, unit='ns')
+                if not (int(dut.uio_oe.value) & 0x20):
+                    break
+            else:
+                assert False, f'I2C clock did not release for bit {bit}'
+            transmitted = 0 if int(dut.uio_oe.value) & 0x40 else 1
+            assert transmitted == ((expected_word >> (8 - bit)) & 1), f'I2C SDA bit {bit}'
+            state['pad'] = 0 if bit == 8 and ack else transmitted
+            drive()
+            if bit == 2:
+                for _ in range(20):
+                    await FallingEdge(dut.clk); await Timer(1, unit='ns')
+                    assert not (int(dut.uio_oe.value) & 0x20), 'I2C stretch was not held'
+            state['clock_pad'] = 1; drive()
+            for _ in range(60):
+                await FallingEdge(dut.clk); await Timer(1, unit='ns')
+                if int(dut.uio_oe.value) & 0x20:
+                    break
+            else:
+                assert False, f'I2C clock did not return low for bit {bit}'
+            state['clock_pad'] = 0; drive()
+
+    peer = cocotb.start_soon(i2c_byte_peer(ack=True))
+    await command(5, 0)
+    await peer
+    await ClockCycles(dut.clk, 50)
+    assert await read_byte(200) == 0x01 and await read_byte(201) == 0x4C, 'I2C ACK sample'
+    state['pad'] = 1; drive()
+    peer = cocotb.start_soon(i2c_byte_peer(ack=False))
+    await command(5, 0)
+    await peer
+    await ClockCycles(dut.clk, 50)
+    assert await read_byte(200) == 0x01 and await read_byte(201) == 0x4D, 'I2C NACK sample'
+    await command(4, 0)
+
+    # The source-checked scan8 component loads independent TDI and TMS bytes.
+    await load_image('grid-jtag.mem')
+    state['rx'] = 1; drive()
+    await write_byte(100, 0xA5); await write_byte(101, 0x3C)
+
+    async def jtag_peer():
+        previous = 0; count = 0
+        for _ in range(1200):
+            await FallingEdge(dut.clk); await Timer(1, unit='ns')
+            pins = int(dut.uio_out.value); tck = (pins >> 5) & 1
+            if tck and not previous:
+                assert ((pins >> 6) & 1) == ((0xA5 >> count) & 1), f'TDI bit {count}'
+                assert state['op'] == 7 and not state['strobe'], 'TMS output must be selected'
+                assert (int(dut.uo_out.value) & 1) == ((0x3C >> count) & 1), f'TMS bit {count}'
+                count += 1
+            previous = tck
+            if pins & 0x80:
+                assert count == 8
+                return
+        assert False, 'two-lane JTAG-style transfer did not complete'
+
+    peer = cocotb.start_soon(jtag_peer())
+    await command(5, 0); await idle_opcode(7); await peer
+    assert await read_byte(200) == 0xFF, 'JTAG TDO capture'
     await command(4, 0)
 
     # Exercise the reused CRC tile through actual grid tracks. Input 0 is a

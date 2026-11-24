@@ -31,10 +31,11 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-coder-reuse-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
+	@echo "make grid-coder-reuse-test  Validate the earlier packet coder against USB/Ethernet references"
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
 	@echo "make gds-config-check  Check SRAM macro and PDN configuration"
 	@echo "make pdn-def-check DEF=...  Check SRAM power nets in a final DEF"
@@ -161,6 +162,9 @@ grid-fabric-experiment:
 		src/fabric_v2_tiles.v src/fabric_crc.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/grid_unified/Vgrid_unified_tb +SPI_IMAGE=$(abspath $(if $(GRID_SPI_IMAGE),$(GRID_SPI_IMAGE),test/data/grid-spi.mem)) +UART_IMAGE=$(abspath $(if $(GRID_UART_IMAGE),$(GRID_UART_IMAGE),test/data/grid-uart.mem))
 	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_unified.v src/grid_memory.v src/grid_core.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_unified -chparam USE_MACRO 1; synth -top grid_unified -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+
+grid-coder-reuse-test:
+	$(MAKE) -C experiments/grid_fabric/reuse SIM=verilator
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
