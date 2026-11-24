@@ -9,19 +9,17 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   chip top and the standalone tile experiments.
 - Compiler experiment: sibling `protocol-emulator-compiler` branch
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
-- The current experimental Tiny Tapeout top uses `fabric_v2_unified`, with two independently configured
-  timers and shifters, configurable signal muxes, I/O enables, and a finite
-  two-SRAM adapter. Restricted SPI and UART configuration images from the
-  compiler run on the same RTL in local pin-level and functional-macro tests.
-  The unified UART path receives autonomously with bounded queues and SRAM
-  regions. It is not a general mapper; gate-level and physical CI for the new
-  top remain pending. See the experiment README.
-- Next: lower actual source transaction functions and byte streams onto the
-  integrated timer, shifter, control, routing, and SRAM fabric. The current
-  source-derived control/datapath image still uses a hand-written SRAM adapter
-  and host preload. Rerun the protocol corpus as semantic coverage grows.
-  The revised two-bank placement passed physical and gate-level CI for the
-  integrated test vehicle; it has not been compared against the earlier chip.
+- The experimental Tiny Tapeout top now uses the [structured 3 × 3 grid](experiments/grid_fabric/README.md).
+  Two timers and shifters, a logic tile, I/O and two SRAM tiles communicate
+  through finite configurable neighbor links. Restricted source-derived SPI
+  and UART images exercise the same grid. Its SRAM word paths are dedicated,
+  placement is fixed, and adapters remain hand-written. Physical CI for the
+  grid revision is required; prior passing results apply to the older top.
+- Next: compare protocol workloads and alternative grid layouts, extending the
+  compiler's actual port/link model and source transaction/stream lowering.
+  Distinguish mapping limitations from missing hardware, then implement the
+  highest-impact gap. Track physical area/timing and electrical checks for each
+  candidate; the grid must also preserve UART concurrency and SRAM arbitration.
 - The control-only end-to-end example is deliberately small. Corpus export or
   a component table is not evidence that an entire protocol fits.
 

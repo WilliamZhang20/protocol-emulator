@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 `default_nettype none
-// Experimental unified SPI / UART fabric. The host command link uses ui_in as
+// Experimental spatial-grid SPI / UART fabric. The host command link uses ui_in as
 // data, uio[4:2] as opcode and uio[1] as strobe; uio[0] is serial input.
 module tt_um_protocol_emulator (
     input wire [7:0] ui_in, output wire [7:0] uo_out,
@@ -22,10 +22,10 @@ module tt_um_protocol_emulator (
   wire [2:0] pins,pin_oe,tx_queued,rx_queued;
   wire [7:0] host_rdata;
   wire cfg_write=command && uio_in[4:2]==3'd4 && !arm && !ui_in[2];
-  wire image_write=command && uio_in[4:2]==3'd7 && !arm && cfg_mode;
+  wire image_write=command && uio_in[4:2]==3'd7 && !arm && cfg_mode && host_addr[9:7]==0;
   wire [15:0] image_word={ui_in,cfg_low};
-  fabric_v2_unified #(.USE_MACRO(1)) fabric(
-      .clk(clk),.rst_n(reset_n),.arm(arm),.cfg_we(image_write),.cfg_addr(host_addr[4:0]),.cfg_data(image_word),
+  grid_unified #(.USE_MACRO(1)) fabric(
+      .clk(clk),.rst_n(reset_n),.arm(arm),.cfg_we(image_write),.cfg_addr(host_addr[6:0]),.cfg_data(image_word),
       .bank_cfg_we(cfg_write),.bank_routes(ui_in[1:0]),
       .host_req(host_req),.host_we(host_we),.host_addr(host_addr),.host_wdata(host_wdata),
       .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),
@@ -53,10 +53,10 @@ module tt_um_protocol_emulator (
       if(host_req && host_ready) host_req<=0;
       if(host_rvalid) read_data<=host_rdata;
       if(image_write) begin
-        if(host_addr[4:0]==26) uart_mode<=image_word[0];
-        if(host_addr[4:0]==27) tx_length<=image_word[10:0];
-        if(host_addr[4:0]==28) rx_capacity<=image_word[10:0];
-        if(host_addr[4:0]==29) pad_feedback<=image_word[1:0];
+        if(host_addr[6:0]==65) uart_mode<=image_word[0];
+        if(host_addr[6:0]==66) tx_length<=image_word[10:0];
+        if(host_addr[6:0]==67) rx_capacity<=image_word[10:0];
+        if(host_addr[6:0]==68) pad_feedback<=image_word[1:0];
       end
       if(command && !host_req) begin
         case(uio_in[4:2])

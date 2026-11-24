@@ -47,15 +47,15 @@ async def spi_and_independent_uart_on_same_fabric(dut):
 
     async def load_image(name, *, tx_length=3, rx_capacity=5):
         words = [int(x, 16) for x in (Path(__file__).parents[1] / 'data' / name).read_text().splitlines()]
-        assert len(words) == 27
+        assert len(words) == 66
         await command(4, 0)  # disarm
         assert int(dut.uio_oe.value) == 0
         await command(4, 11)  # config mode, host and actor both bank 1
         for index, word in enumerate(words):
             await config_word(index, word)
-        await config_word(27, tx_length)
-        await config_word(28, rx_capacity)
-        await config_word(29, 0)  # images use uio[0] for both logical inputs
+        await config_word(66, tx_length)
+        await config_word(67, rx_capacity)
+        await config_word(68, 0)  # images use uio[0] for both logical inputs
         await command(4, 3)  # leave config mode while disarmed
         await command(6, 100)  # source address, latched while disarmed
         await command(7, 200)  # RX region / SPI destination
@@ -120,12 +120,12 @@ async def spi_and_independent_uart_on_same_fabric(dut):
             assert ((int(dut.uio_out.value) >> 6) & 1) == 1, 'UART stop bit'
             previous = 1
 
-    await load_image('v2-unified-spi.mem')
+    await load_image('grid-spi.mem')
     assert int(dut.uio_oe.value) == 0xE0
-    await command(4, 0); await command(4, 11); await config_word(21, 31)
+    await command(4, 0); await command(4, 11); await config_word(48, 22)
     await command(4, 3); await command(4, 7)
     assert int(dut.uio_oe.value) == 0, 'invalid selector must keep pins disabled'
-    await command(4, 0); await command(4, 11); await config_word(21, 9)
+    await command(4, 0); await command(4, 11); await config_word(48, 10)
     await command(4, 3); await command(4, 7)
     assert int(dut.uio_oe.value) == 0xE0
     await write_byte(7, 0xA2)
@@ -138,13 +138,14 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     await command(5, 0); await idle_opcode(7); await peer
     assert await read_byte(200) == 0x0F and await read_byte(201) == 0xFF
 
-    # Reconfigure an output selector and repeat the SRAM-backed transfer.
-    await command(4, 0); await command(4, 11); await config_word(20, 0)
+    # Disconnect MOSI at its first neighbor link and repeat the transfer.
+    spi_image = [int(x, 16) for x in (Path(__file__).parents[1] / 'data' / 'grid-spi.mem').read_text().splitlines()]
+    await command(4, 0); await command(4, 11); await config_word(20, spi_image[20] & ~7)
     await command(4, 3); await command(4, 7)
     peer = cocotb.start_soon(spi_peer(alternate=True))
     await command(5, 0); await idle_opcode(7); await peer
 
-    await load_image('v2-unified-uart.mem')
+    await load_image('grid-uart.mem')
     assert int(dut.uio_oe.value) == 0xC0
     for addr, value in [(100, 0x53), (101, 0xA6), (102, 0x19), (205, 0xC7)]:
         await write_byte(addr, value)
@@ -176,10 +177,11 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     # supplied physical pad level feeds input 1, observable on output 1.
     # The external level can remain low after release (another bus master).
     await command(4, 11)
-    await config_word(20, 4)  # output 0 <- synchronized input 0
-    await config_word(21, 5)  # output 1 <- synchronized physical pad input 1
-    await config_word(25, 0x1B)  # outputs 0/1 enabled, both open drain
-    await config_word(29, 1)  # physical uio[6] feeds input 1
+    await config_word(8, 0x11)  # IO cell 0 drives east tracks 0/1 from inputs 0/1
+    await config_word(48, 14)  # output 0 <- west track 0
+    await config_word(49, 15)  # output 1 <- west track 1
+    await config_word(4, 0x1B)  # outputs 0/1 enabled, both open drain
+    await config_word(68, 1)  # physical uio[6] feeds input 1
     state['rx'] = 0; state['pad'] = 0; drive()
     await command(4, 3); await command(4, 7)
     await ClockCycles(dut.clk, 5)
@@ -198,15 +200,15 @@ async def spi_and_independent_uart_on_same_fabric(dut):
     await command(4, 0)
     assert int(dut.uio_oe.value) == 0
     await command(4, 11)
-    await config_word(29, 0)  # restore the original input-1 binding
-    await config_word(25, 0x03)  # restore push-pull outputs
+    await config_word(68, 0)  # restore the original input-1 binding
+    await config_word(4, 0x03)  # restore push-pull outputs
     state['rx'] = 0; drive()
     await command(4, 3); await command(4, 7)
     await ClockCycles(dut.clk, 5)
     assert int(dut.uio_oe.value) & 0x40, 'push-pull output must be enabled'
     assert not (int(dut.uio_out.value) & 0x20), 'input binding must be reconfigurable'
     await command(4, 0)
-    await command(4, 11); await config_word(29, 2)  # input 0 senses uio[5]
+    await command(4, 11); await config_word(68, 2)  # input 0 senses uio[5]
     state['clock_pad'] = 0; drive()
     await command(4, 3); await command(4, 7)
     await ClockCycles(dut.clk, 5)

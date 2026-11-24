@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 CELL = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
-INSTANCE_PREFIX = "Xfabric.memory.bank0.macro_bank.memory.sram"
+INSTANCE_PREFIX = "Xfabric.memory.row2_col0.bank.macro_bank.memory.sram"
 
 
 def fail(msg: str) -> None:
@@ -89,6 +89,6 @@ def main(argv: list[str]) -> None:
 
 
 if __name__ == "__main__":
-    for INSTANCE_PREFIX in ("Xfabric.memory.bank0.macro_bank.memory.sram",
-                            "Xfabric.memory.bank1.macro_bank.memory.sram"):
+    for INSTANCE_PREFIX in ("Xfabric.memory.row2_col0.bank.macro_bank.memory.sram",
+                            "Xfabric.memory.row2_col2.bank.macro_bank.memory.sram"):
         main(sys.argv)

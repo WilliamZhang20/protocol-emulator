@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "src" / "config.json"
 MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 INSTANCES = {
-    "fabric.memory.bank0.macro_bank.memory.sram": [42, 81],
-    "fabric.memory.bank1.macro_bank.memory.sram": [480, 81],
+    "fabric.memory.row2_col0.bank.macro_bank.memory.sram": [42, 81],
+    "fabric.memory.row2_col2.bank.macro_bank.memory.sram": [480, 81],
 }
 MACRO_DIR = ROOT / "macro" / MACRO_NAME
 PDN_CONFIG_PATH = ROOT / "src" / "pdn_cfg.tcl"

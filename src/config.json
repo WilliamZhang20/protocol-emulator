@@ -64,11 +64,11 @@
   "MACROS": {
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
-        "fabric.memory.bank0.macro_bank.memory.sram": {
+        "fabric.memory.row2_col0.bank.macro_bank.memory.sram": {
           "location": [42, 81],
           "orientation": "R0"
         },
-        "fabric.memory.bank1.macro_bank.memory.sram": {
+        "fabric.memory.row2_col2.bank.macro_bank.memory.sram": {
           "location": [480, 81],
           "orientation": "R0"
         }
@@ -99,10 +99,10 @@
     }
   },
   "PDN_MACRO_CONNECTIONS": [
-    "fabric.memory.bank0.macro_bank.memory.sram VPWR VGND VDD! VSS!",
-    "fabric.memory.bank0.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!",
-    "fabric.memory.bank1.macro_bank.memory.sram VPWR VGND VDD! VSS!",
-    "fabric.memory.bank1.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!"
+    "fabric.memory.row2_col0.bank.macro_bank.memory.sram VPWR VGND VDD! VSS!",
+    "fabric.memory.row2_col0.bank.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!",
+    "fabric.memory.row2_col2.bank.macro_bank.memory.sram VPWR VGND VDD! VSS!",
+    "fabric.memory.row2_col2.bank.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
   "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only",

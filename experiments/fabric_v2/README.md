@@ -1,10 +1,10 @@
 # Configurable serial fabric v2 experiment
 
-The Tiny Tapeout experiment now uses `fabric_v2_unified`, which combines the
-finite SPI path and independent UART streaming over one tile fabric and one
-two-bank SRAM subsystem. Standalone tests also retain the earlier wrappers for
-comparison. The new top has not yet passed physical or gate-level CI; prior
-results for the `memory_spi_fabric` top do not validate this new design.
+This is the earlier shared-selector baseline, retained for comparison. The
+Tiny Tapeout experiment now uses the structured [3 × 3 grid](../grid_fabric/README.md).
+`fabric_v2_unified` combines finite SPI and independent UART streaming over
+one tile fabric and one two-bank SRAM subsystem. Results for this baseline do
+not validate the new grid top.
 
 ```text
                    configurable Boolean selectors
@@ -145,12 +145,9 @@ uses host-supplied regions and lengths. Reports explicitly set
 `general_mapping` and `full_source_program_compiled` false. The source-driven
 CIRCT regression can run the SRAM RTL test with `V2_MEMORY_IMAGE_TB` set to
 its built executable, and the stream test with `V2_UART_STREAM_IMAGE_TB`.
-For the unified top, `--compile-v2-unified-spi` and
-`--compile-v2-unified-uart` emit 27 words including mode. The host loads those
-words through Tiny Tapeout pins, and additionally supplies TX length and RX
-capacity as words 27 and 28; word 29 controls optional pad feedback. The checked-in image fixtures are used by the
-pin-only RTL/GL cocotb test. General stream/function lowering and a physical
-timing proof remain absent. There is no complete source-language fit,
-completed gate-level or physical PPA result for this revision, or claim that
-this topology is the final fabric. Physical design must separately account for
-prior SRAM slew, capacitance and clock-fanout violations.
+For this baseline, `--compile-v2-unified-spi` and
+`--compile-v2-unified-uart` emit 27 words including mode. These images remain
+in the standalone baseline tests; the chip top now uses the distinct grid
+image contract. General stream/function lowering and a physical timing proof
+remain absent. Physical design must separately account for prior SRAM slew,
+capacitance and clock-fanout violations.

@@ -1,20 +1,11 @@
 # Two-SRAM placement experiment
 
-This branch's Tiny Tapeout top is a physical test vehicle, not the original
-protocol emulator or a complete redesign. It instantiates two IHP 1024 × 8
-SRAM macros, a routed/arbitrated memory interface, 17 configurable signal
-selectors, two timers and two 1–16-bit shifters. Static configuration chooses
-the finite SPI adapter or bounded independent UART streams around the same
-tiles and SRAM. There is no instruction fetch. The sibling compiler emits
-restricted source-derived images, but placement, routing and SRAM adapters
-remain specialized; full program/stream lowering is not implemented.
-
-```text
- host pins ──> configuration ──> routes ──> 2 timers / 2 shifters / pins
-      │                                      │
-      └──── memory routing ──┬── bank 0 ◄────┤ SPI/UART adapters
-                             └── bank 1 ◄────┘
-```
+This branch's Tiny Tapeout top is a physical test vehicle for the structured
+3 × 3 grid in [grid_fabric/README.md](experiments/grid_fabric/README.md).
+Two timers, two shifters, a logic tile, I/O and two separately instantiated
+IHP SRAM tiles connect through configurable finite-track neighbor routes.
+SPI and UART use hand-written adapters and source-derived images. There is no
+instruction fetch or general source-program lowering.
 
 The coordinates are initial candidate locations in micrometers, not a claim
 of legal placement, correct power connectivity, or timing closure. The GDS CI
@@ -60,17 +51,16 @@ must not be sent while a previous memory request is pending.
 | 2 / 3 | Write command byte / request a read at the host address. |
 | 4 | Set arm in bit 2. While disarmed, a command with arm=0 writes the two requester-to-bank routes in bits 1:0 and configuration mode in bit 3; then issue a separate arm=1 command. |
 | 5 | Start the finite SPI transfer or the UART TX region while armed and idle. UART RX starts independently. |
-| 6 / 7 | While disarmed in normal mode, set source / destination byte address bits 7:0 (upper bits zero). In configuration mode, set the low byte / write the high byte of the 16-bit configuration word addressed by host address bits 4:0. |
+| 6 / 7 | While disarmed in normal mode, set source / destination byte address bits 7:0 (upper bits zero). In configuration mode, set the low byte / write the high byte of the 16-bit configuration word addressed by host address bits 6:0. |
 
-The 27-word SPI image configures a 12-bit transfer; the 27-word UART image
-configures independent TX/RX. Host configuration words 27 and 28 separately
-set UART TX length and RX capacity. Both images select the same fabric; the
-host must set source/destination before arming. Memory contract and cancellation behavior are in
-[MEMORY_CONTRACT.md](experiments/tile_fabric/MEMORY_CONTRACT.md).
+The 66-word images configure SPI or UART on the same grid. Host words 66,
+67 and 68 set UART TX length, RX capacity and pad feedback. Set source and
+destination addresses before arming. The [grid contract](experiments/grid_fabric/README.md)
+describes routing and the remaining fixed word path.
 
 Local checks: `make lint synth-check gds-config-check sim`, plus
 `make tile-memory-lint tile-memory-experiment tile-memory-assertion-mutation
-tile-memory-spi-image-test tile-memory-synth tile-fabric-v2-experiment`. The chip-level cocotb test uses only Tiny Tapeout pins,
+tile-memory-spi-image-test tile-memory-synth tile-fabric-v2-experiment grid-fabric-experiment`. The chip-level cocotb test uses only Tiny Tapeout pins,
 and is used in both RTL and gate-level CI. `synth-check` verifies both flattened
 macro instance names, while `gds-config-check` checks both placements, M3
 keepouts and supply hooks. The GDS workflow performs the real physical run;
