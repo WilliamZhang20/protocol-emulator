@@ -201,7 +201,7 @@ grid-stream-test:
 		experiments/grid_stream/credit_latency_tb.sv $(BUILD_DIR)/grid_stream_mutation/stream_tiles_bad.v -MAKEFLAGS -j1
 	@if $(BUILD_DIR)/verilator/grid_credit_mutation/Vcredit_latency_tb > $(BUILD_DIR)/grid_stream_mutation/result.log 2>&1; then \
 		echo 'ERROR: missing read-credit reservation escaped assertions'; exit 1; \
-	elif grep -q "Assertion failed in credit_latency_tb.reader" $(BUILD_DIR)/grid_stream_mutation/result.log; then \
+	elif grep -Eq "Assertion failed in (TOP\.)?credit_latency_tb\.reader" $(BUILD_DIR)/grid_stream_mutation/result.log; then \
 		echo 'PASS: credit assertion rejects missing response reservation'; \
 	else cat $(BUILD_DIR)/grid_stream_mutation/result.log; echo 'ERROR: mutation failed for an unexpected reason'; exit 1; fi
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module branch_prefetch_tb \
