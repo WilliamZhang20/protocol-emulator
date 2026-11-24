@@ -49,7 +49,11 @@ async def grid_protocol_primitives(dut):
         await command(6, word & 255)
         await command(7, word >> 8)
 
-    async def load_image(name, *, tx_length=3, rx_capacity=5):
+    async def load_image(name, *, tx_length=None, rx_capacity=None):
+        if tx_length is None:
+            tx_length = 3 if 'uart' in name else 2
+        if rx_capacity is None:
+            rx_capacity = 5 if 'uart' in name else 1 if 'jtag' in name else 2
         words = [int(x, 16) for x in (Path(__file__).parents[1] / 'data' / name).read_text().splitlines()]
         assert len(words) == 66
         await command(4, 0)  # disarm
@@ -148,6 +152,38 @@ async def grid_protocol_primitives(dut):
     await command(4, 3); await command(4, 7)
     peer = cocotb.start_soon(spi_peer(alternate=True))
     await command(5, 0); await idle_opcode(7); await peer
+
+    # Route host/reader to SRAM 0 and writer to SRAM 1, then read the result
+    # from SRAM 1 after disarming and changing the host route.
+    await load_image('grid-spi.mem')
+    await command(4, 0); await command(4, 8); await config_word(88, 4)
+    await command(4, 0); await command(4, 4)
+    await write_byte(100, 0x0A); await write_byte(101, 0x5C)
+    peer = cocotb.start_soon(spi_peer())
+    await command(5, 0); await idle_opcode(7); await peer
+    await command(4, 0); await command(4, 3); await command(4, 7)
+    assert await read_byte(200) == 0x0F and await read_byte(201) == 0xFF
+    await command(4, 0); await command(4, 8); await config_word(88, 8)
+    await command(4, 0); await command(4, 4)
+    assert int(dut.uio_oe.value) == 0, 'invalid stream bank route must disable outputs'
+
+    # A two-byte frame whose source and destination both cross 1023 -> 1024.
+    await load_image('grid-spi.mem')
+    await command(4, 0); await command(4, 0); await command(4, 4)
+    await write_byte(1023, 0x0A)
+    await command(4, 0); await command(4, 3); await command(4, 7)
+    await write_byte(0, 0x5C)
+    await command(4, 0); await command(4, 8)
+    await config_word(89, 1023); await config_word(90, 1023); await config_word(88, 0)
+    await command(4, 0); await command(4, 4)
+    peer = cocotb.start_soon(spi_peer())
+    await command(5, 0); await idle_opcode(7); await peer
+    assert await read_byte(1023) == 0x0F
+    await command(4, 0); await command(4, 3); await command(4, 7)
+    assert await read_byte(0) == 0xFF
+    await command(4, 0); await command(4, 11); await config_word(89, 1024)
+    await command(4, 3); await command(4, 7)
+    assert int(dut.uio_oe.value) == 0, 'invalid full-width base must disable outputs'
 
     await load_image('grid-uart.mem')
     assert int(dut.uio_oe.value) == 0xC0

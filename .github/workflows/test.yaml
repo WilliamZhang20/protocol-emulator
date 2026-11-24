@@ -40,7 +40,7 @@ jobs:
 
       - name: Test reusable USB and Ethernet coder
         run: |
-          make grid-coder-reuse-test
+          make grid-coder-reuse-test SIM=icarus
           ! grep failure experiments/grid_fabric/reuse/results.xml
 
       - name: Test Summary

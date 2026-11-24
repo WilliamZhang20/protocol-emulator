@@ -17,7 +17,9 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   a complete I2C transaction nor USB/Ethernet packets have been compiled for
   the grid. Restricted source-derived SPI
   and UART images exercise the same grid. Its SRAM word paths are dedicated,
-  placement is fixed, and adapters remain hand-written. Physical CI for the
+  SPI, UART and the JTAG component now share credit-based SRAM reader and
+  writer tiles; a two-alternative prefetch block is tested separately but not
+  integrated. Placement is fixed, and source transaction lowering remains incomplete. Physical CI for the
   grid revision is required; prior passing results apply to the older top.
 - Next: compare protocol workloads and alternative grid layouts, extending the
   compiler's actual port/link model and source transaction/stream lowering.
@@ -26,6 +28,186 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   candidate; the grid must also preserve UART concurrency and SRAM arbitration.
 - The control-only end-to-end example is deliberately small. Corpus export or
   a component table is not evidence that an entire protocol fits.
+
+## Spatial-architecture direction (2026-11-24)
+
+Sources: V. Betz, *Spatial Computing Architectures: Opportunities and CAD
+Flows in the Deep Learning and More-than-Moore Era*, ICCAD 2026 keynote
+(<https://www.eecg.utoronto.ca/~vaughn/papers/iccad26_dl_and_spatial_keynote.pdf>),
+and H2PIPE (Doumet et al., FPL 2024, arXiv 2408.09209), which appears in the
+keynote as one example.
+
+### Framing: a spatio-temporal architecture
+
+Protocols are spatial at the bit level (timers, shifters, CRC and pins run in
+parallel with exact cycle timing) and temporal at the packet level
+(sync → PID → data → CRC → EOP; start → address → ACK → data → stop). The
+branches have sat at the two ends of the keynote's spatial/temporal spectrum:
+`main`/`8x4` use a CPU with instruction fetch (temporal, an overlay), while
+this grid is fully spatial, and its temporal control returned as two
+hand-written state machines in `grid_unified.v`. Target the middle, as
+Cerebras does:
+
+- **Spatial layer:** a static bit fabric with registered hops for everything
+  timing-exact.
+- **Temporal layer:** a small per-lane sequencer executing **descriptors**,
+  not instructions. One descriptor covers a whole field ("stream N bytes, CRC
+  on, stuffing on, then emit CRC"), following the keynote's NPU lesson of
+  amortizing control. A descriptor may switch the lane's routing/config
+  **context** between phases. `fabric_timer.v` still has `config_bank`
+  contexts (`ctx_next`); the grid dropped them, which is why it needs adapters.
+
+### Ideas to apply
+
+| Source idea | Application here |
+|---|---|
+| Programmable routing for logic plus a hardened NoC for system traffic | Keep 1-bit static tracks for timing signals. Replace the wire-alias word links in `grid_memory.v` with a small word mesh with a register at each router and colours = stream IDs. Do not time-multiplex bit tracks (adds jitter). |
+| Direct block-to-block links (VTR) | Dedicated neighbour links for timer→shifter pairs. The UART image's shift clock currently crosses 3 hops. |
+| Hard blocks vs soft fabric | Harden by corpus frequency. The 8x4 census found logic cells binding, mostly spent on stuffing and sequencing glue; the bit coder was the right move. The LUT is for leftover glue only. |
+| VTR research flow: architecture file, benchmarks, retargetable CAD, area/delay models | This is the laboratory (steps 2–4 below). Use VTR's minimum-channel-width method: find the smallest track count W at which every corpus protocol routes per layout, then size at about 1.3×W instead of guessing 4. Evaluate VPR as the mapper's placer/router on the 3×3 before writing a custom one. |
+| Architecture file → generated fabric (OpenFPGA) | Generate `grid_core` from the architecture file (dimensions, tile type per cell, track count); today cell positions and config addresses are hard-coded. Use OpenFPGA's scan-chain configuration as a reference, not the tool itself (generic LUT fabric would exceed the TT area budget). |
+| "A pipeline is as slow as its slowest stage" (HPIPE) | The mapper reports each stage's slack against the protocol's wire rate. |
+| Choose your precision | Shifter width 1–16 and CRC width 1–32 already do this; also make the bit/byte split a mapping choice. |
+| Streaming dataflow: fire on data arrival, latency-insensitive | Word-level firing rule: a shifter starts when its stream FIFO has a byte and the timer ticks; when the chip drives the clock, a stall feeds the timer's `hold` input. |
+| Programmable I/O tile | Make pad logic (synchronizer, edge polarity, open-drain, feedback) a uniform edge I/O tile type. It is currently split between `project.v` and `grid_core`, and CS never reaches a pad. |
+| Open problem: evaluation tools for spatio-temporal architectures | The laboratory is an instance of this; present it as a contribution. |
+
+Does not transfer: wafer-scale redundancy, multi-chip pipelines, 3D
+stacking, learned LUT functions, and layer pipelining's throughput-for-latency
+trade. Reply latency (USB turnaround, I2C ACK window) is a correctness
+constraint.
+
+### H2PIPE lessons for the memory path
+
+- Characterize under contention, not idle: SRAM arbitration latency with host,
+  TX and RX competing; per-hop route delay after place-and-route; pad timing.
+  Report each protocol against its wire-rate floor and an unlimited-resource
+  bound, plus a data-movement metric (Σ hops × toggle rate).
+- SRAM bandwidth is not the limit: one bank gives 1 byte/cycle (50 MB/s)
+  against ≤ about 3 MB/s for a clk/2 serial stream. The second bank is
+  justified by capacity, independent ports or locality only.
+- Predictable streams run ahead: replace both adapters with a generic
+  **stream reader** (base, length, credit counter, FIFO) and **stream
+  writer**; SPI becomes TX plus RX streams like UART, removing the mode bit.
+  FIFO depth = ⌈worst latency / byte period⌉ + 1 ≈ ⌈4/16⌉ + 1 = 2 (today 4).
+  For data-dependent replies (ACK/NAK, I2C register reads) prefetch both
+  candidates.
+- Credits, not valid/ready, where streams share a bank's return path (avoids
+  the head-of-line deadlock in H2PIPE Fig. 5). The UART engine is already a
+  one-credit scheme; generalize to per-stream credits.
+- Stall locally: classify streams as stallable (chip drives the clock: stall
+  via timer `hold`) or real-time (far side drives the clock: rely on the
+  latency bound).
+- Configuration is used once, so make its path narrow: a shift chain through
+  the tiles with legal-by-construction encodings.
+
+### Findings from reading the grid RTL
+
+1. Routes in `grid_switch` are combinational across several hops (and through
+   the LUT), dropping the 8x4 "every line is a register output, one hop per
+   cycle" rule. Timing depends on configuration. Registering each interior
+   switch output costs 24 links × 4 tracks = 96 flops (≈4.7k µm²); the
+   mapper matches skew (SCK vs MOSI) and adjusts with the timer `first`
+   register.
+2. `grid_word_link` is a plain `assign`; after flattening, the "spatial" word
+   path is one net the placer can put anywhere. Register at tile boundaries.
+3. `cfg[0:62]` keeps about 450 flops (estimate, not synthesized; ≈20k µm²)
+   only because `configured` checks unused upper bits, plus duplicated timer
+   first/period words.
+4. The SPI adapter moves at most 16 bits per host start; UART streams.
+5. Timer 0 at (0,2) is 3 hops from shifter 0 at (1,0). Placing timer 0 at
+   the centre (1,1) makes it one hop from both shifters and the output pins.
+6. Smaller: `pins[2]` (CS) never reaches a pad; host SRAM access requires
+   `arm`; TX/RX/SPI base addresses are limited to bytes 0–255.
+
+### Memory banking and distribution
+
+- **Bandwidth does not justify banks.** One bank gives 1 byte/cycle; a fast
+  serial stream needs at most one byte per 16 cycles. With round-robin
+  arbitration N streams see about N+2 cycles worst-case latency, so a depth-2
+  FIFO holds up to about 14 streams per bank. Even 8x4 with every lane active
+  does not need banks for bandwidth or latency.
+- **Capacity is the real limit.** `grid_unified` rejects `tx_end > 1024` and
+  routes each requester to one bank, so a full Ethernet frame (up to 1518
+  bytes; 10BASE-T is in the 8x4 corpus) cannot be sent or received. Streams
+  must address (bank, offset) and continue into the next bank; 11-bit lengths
+  already allow it.
+- **Locality is secondary once word hops are registered:** a distant bank
+  costs a few cycles of latency, not timing. Per-lane banks would buy only
+  isolation (no cross-lane latency interference) and shorter SRAM-pin nets,
+  at about 49k µm² per macro plus keepouts and PDN work. Hand-moving SRAMs on
+  6x4 broke DPL/PDN (`016f736`).
+
+Plan:
+
+1. Bank count is an architecture-file parameter. Stream tiles address
+   (bank, offset), so shared-pool versus per-lane banks does not change the
+   programming model.
+2. Explicit, compiler-placed buffers, no global address space (Cerebras:
+   explicit data movement; H2PIPE: compiler assigns layers to HBM channels).
+   The mapper places each buffer by capacity and distance to its lane, then
+   checks the latency bound.
+3. Three levels: flops (FIFOs, headers, CRC state), optional small scratch in
+   each stream tile, shared SRAM for payloads.
+4. Keep two banks until the laboratory, extended to report capacity and
+   contention per protocol and lane, shows a corpus protocol failing for
+   lack of capacity or isolation.
+5. Check which other IHP SRAM sizes the Tiny Tapeout flow supports; denser or
+   narrower macros change the per-lane versus shared comparison.
+
+### Word mesh
+
+The word-level interconnect between SRAM and lanes, separate from the 1-bit
+tracks.
+
+- **Address generation sits beside the SRAM** (Plasticine's memory-unit
+  pattern): the stream reader/writer engines live in the SRAM tile, so only
+  data words travel (8 data + valid + stream ID, plus a credit return wire),
+  never addresses.
+- **Each hop is a register.** Latency equals hop count, timing is local
+  regardless of distance.
+- **Static, compiler-assigned routing.** Preferred: each stream owns a
+  dedicated word lane on each link it uses (a registered, word-wide version of
+  `grid_switch`), so there is no contention and latency is exact. Only if the
+  corpus needs more streams than lanes: share links with a stream-ID route
+  table and output arbitration, with end-to-end credits so words never block
+  inside the mesh.
+- **Build only the links the corpus needs.** A full 2D mesh on the 3×3 is
+  24 directed links × about 11 flops ≈ 264 flops (≈13k µm², close to a CRC
+  tile). A registered chain from each SRAM along its row or column to the
+  lanes (H2PIPE's daisy chain) is likely enough, especially on 8x4 with one
+  lane per row.
+
+### Implementation order for the findings
+
+Grouped so that image-breaking changes regenerate the SPI/UART images once.
+
+0. **Baseline:** synthesize `grid_core` to check the ~450-flop estimate; run
+   GDS on the current unified top.
+1. **Low-risk cleanups (images unchanged):** validate config on write and
+   store only fields plus a valid bit; drop duplicate timer words; allow host
+   SRAM access while disarmed; widen TX/RX/SPI base addresses to 10 bits. CS
+   to a pad needs a pin decision first (every `uio` pin is used).
+2. **Registered hops plus timer 0 at the centre (findings 1 and 5) as one
+   batch:** 96 flops, timer 0 to (1,1) and LUT to (0,2), mapper skew
+   compensation via timer `first`; regenerate images once.
+3. **Stream reader/writer tiles (findings 2 and 4) and memory:** at the SRAM
+   tiles, credit-based, FIFO depth 2, registered word chain to the lanes,
+   (bank, offset) addressing with cross-bank streams; SPI becomes TX plus RX
+   streams, deleting the SPI state machine and mode bit.
+4. **Per-lane descriptor sequencer plus config contexts,** removing the rest of
+   the adapter logic.
+5. **Config shift chain (finding 3 full version),** once the tile set is
+   stable, since it changes the host protocol and cocotb harness.
+
+In parallel from step 2: the minimum-track-width sweep in the laboratory, and
+capacity/contention reporting for the banking decision.
+
+Pitch storyline: protocols are spatial at the bit level and temporal at the
+packet level → static registered bit fabric, word mesh to SRAM stream ports,
+descriptor sequencer per lane → generated from one architecture file and
+evaluated VTR-style against a protocol corpus (minimum track width, wire-rate
+slack, hop counts).
 
 ## Earlier planning notes
 
@@ -205,3 +387,78 @@ Once you confirm, I'll write spec 1 (IR op set) and spec 2 (arch file schema), e
 - Compiler baseline `main` targets hardware revision `7dd2f41` (actor ABI 1).
   The compiler WIP's actor images target ABI 2 and need matching experimental
   RTL. See `docs/architecture-triage.md` for details.
+
+## Fabric redesign: hardware, compiler, and test plan
+
+**Target:** a structured, heterogeneous 2D fabric grid with configurable
+connections and a programmable temporal layer. The compiler maps protocol
+operations onto reusable tiles, routes their signals, and schedules their
+runtime phases. The precise layout, switch connectivity, and temporal control
+are experimental choices constrained by protocol coverage, timing, and area.
+
+The stream reader/writer and cross-bank addressing are parts of the same memory
+subsystem: one moves data, the other extends where streams can access it. They
+share interfaces, arbitration, compiler allocation, and tests. The current
+stream changes are uncommitted work in progress, not a completed architecture.
+
+### Design requirements
+
+- **Switches:** compiler-selectable tile connections, turns, and fanout where
+  workloads need them. Compare track counts, connectivity, direct links, and
+  pipeline placement instead of assuming either the current switch or a fully
+  connected switch is sufficient. Registered hops cost area and cycles; their
+  timing and skew must be represented by the compiler.
+- **Temporal layer:** programmable sequencing, input events, branches, and
+  configuration contexts where useful, without a hard-coded controller per
+  protocol. Evaluate a compact field-level sequencer, its operation set,
+  response latency, number of lanes, and storage. Descriptor storage and any
+  SRAM fetching are explicit design choices, not free consequences of naming.
+- **Width:** support protocol fields of different bit widths through tile and
+  routing choices. Byte streams are a memory transport convenience, not a
+  requirement that all fields be byte-sized. Bit-banging alone does not solve
+  parallel-width or throughput requirements.
+- **Memory:** consider SRAM capacity, placement, bank contention, stream
+  ordering, and real-time service together. Size FIFOs using measured or proven
+  latency bounds, including routing and bank crossing; a depth of two is a
+  hypothesis under specific traffic assumptions, not a universal guarantee.
+- **Area and timing:** establish the actual Tiny Tapeout baseline, including
+  SRAM macros, standard cells, routing overhead, and margin. For each candidate
+  report area by function, timing, physical feasibility, and protocol coverage.
+  Existing estimates for registered links and the word mesh require measurement.
+
+### Staged work and decision gates
+
+1. **Baseline and finish the current memory experiment.** Inventory the
+   uncommitted hardware and compiler work, complete the interrupted regression,
+   synthesize it, and compare against the committed grid. Exercise cross-bank
+   ordering, credits under contention, and pin-level behavior. Measure area and
+   retain, simplify, or discard changes based on evidence. **Done locally:**
+   retain the stream experiment as the experimental baseline; see its
+   [inventory, validation, area comparison, and limits](experiments/grid_stream/BASELINE.md).
+   Physical validation of the current work remains outstanding.
+2. **Establish a shared architecture contract.** Describe tile instances and
+   capabilities, ports, switch choices, link latencies, bank capacity,
+   configuration, and temporal operations. First represent the actual RTL;
+   generate hardware from the model when the contract is stable. The compiler
+   reports placement, routes, schedule, memory use, and resource visualization.
+3. **Compare topology and switch candidates.** Sweep a small set of layouts,
+   track counts, switch connectivity, direct links, and selective registered
+   paths against the same protocol corpus. Report routing success, latency,
+   area, timing, and physical feasibility. Distinguish missing hardware from
+   compiler mapping limitations before choosing modifications.
+4. **Implement and test programmable temporal control.** Start with an I2C
+   source-driven transaction covering START, address, ACK/NACK, clock stretch,
+   data, and STOP. Measure sequencer and context costs and response timing;
+   preserve SPI and concurrent UART as regressions.
+5. **Extend protocol coverage on the same fabric.** Reuse the JTAG, CRC, and
+   line-coding work where appropriate. Target explicit USB and Ethernet subsets
+   first, such as USB low-speed transmit and 10BASE-T digital transmit, then
+   expand. These milestones alone do not prove complete standards or physical
+   interface support.
+
+**Acceptance gate:** one hardware design, configured by compiler-generated
+programs, runs the agreed SPI, UART, I2C, JTAG, USB, and Ethernet workloads
+at their required pin timings within the area budget. For every workload report
+separately whether it is parsed, mapped, validated at RTL pins, and validated
+at gate level or physically. Physical checks should run alongside development
+without blocking unrelated compiler and functional work.

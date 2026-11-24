@@ -4,7 +4,8 @@ This branch's Tiny Tapeout top is a physical test vehicle for the structured
 3 × 3 grid in [grid_fabric/README.md](experiments/grid_fabric/README.md).
 Two timers, two shifters, a logic tile, I/O and two separately instantiated
 IHP SRAM tiles connect through configurable finite-track neighbor routes.
-SPI and UART use hand-written adapters and source-derived images. There is no
+SPI and UART use shared credit-based SRAM stream tiles, configured frame
+packing, and source-derived images. There is no
 instruction fetch or general source-program lowering.
 
 The coordinates are initial candidate locations in micrometers, not a claim
@@ -38,7 +39,8 @@ workflow as complete electrical signoff or as proof that a larger fabric fits.
 data stable with strobe low for four clocks, high for five, then low for four.
 `uo_out` holds the last completed SRAM read, except while opcode 7 is held with
 strobe low, when bit 0 shows CS, or opcode 4 is idle, when it shows status
-`{rx_overflow,tx_error,tx_active,spi_error,spi_active,3'b000}`. Once configured
+`{rx_overflow,tx_error,tx_active,tx_error,tx_active,3'b000}`; the duplicated
+low status bits preserve the earlier test interface. Once configured
 and armed, `uio[5]` is the configured clock output, `uio[6]` is the serial
 output, and `uio[7]` is the selected transfer-done pulse. Output enables for
 the first two follow the image; the done pin is enabled while configured.
@@ -49,8 +51,8 @@ must not be sent while a previous memory request is pending.
 | --- | --- |
 | 0 / 1 | Set host SRAM byte address bits 7:0 / 9:8. |
 | 2 / 3 | Write command byte / request a read at the host address. |
-| 4 | Set arm in bit 2. While disarmed, a command with arm=0 writes the two requester-to-bank routes in bits 1:0 and configuration mode in bit 3; then issue a separate arm=1 command. |
-| 5 | Start the finite SPI transfer or the UART TX region while armed and idle. UART RX starts independently. |
+| 4 | Set arm in bit 2. While disarmed, a command with arm=0 writes the default host/stream bank routes in bits 1:0 and configuration mode in bit 3. Leaving configuration mode preserves independently written word-88 routes; issue a separate arm=1 command. |
+| 5 | Start the configured TX stream while armed and idle. If enabled, RX starts independently. |
 | 6 / 7 | While disarmed in normal mode, set source / destination byte address bits 7:0 (upper bits zero). In configuration mode, set the low byte / write the high byte of the 16-bit configuration word addressed by host address bits 6:0. |
 
 The 66-word images configure SPI or UART on the same grid. Host words 66,

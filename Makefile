@@ -18,6 +18,9 @@ RTL_SOURCES := \
 	src/grid_core.v \
 	src/grid_memory.v \
 	src/grid_unified.v \
+	src/grid_stream_tiles.v \
+	src/grid_stream_memory.v \
+	src/grid_stream_fabric.v \
 	src/fabric_crc.v \
 	src/spi_tiles.v \
 	src/memory_tiles.v \
@@ -31,10 +34,11 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-coder-reuse-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
+	@echo "make grid-stream-test  Test credit-based reader/writer and shared-bank arbitration"
 	@echo "make grid-coder-reuse-test  Validate the earlier packet coder against USB/Ethernet references"
 	@echo "make synth-check  Check flattened SRAM hierarchy for LibreLane"
 	@echo "make gds-config-check  Check SRAM macro and PDN configuration"
@@ -156,15 +160,57 @@ grid-fabric-experiment:
 		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_crc_reuse) \
 		experiments/grid_fabric/reuse/crc_reuse_tb.sv src/fabric_crc.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/grid_crc_reuse/Vcrc_reuse_tb
-	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL --top-module grid_unified_tb \
-		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_unified) \
-		experiments/grid_fabric/grid_unified_tb.sv src/grid_unified.v src/grid_memory.v src/grid_core.v src/grid_switch.v \
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module grid_stream_fabric_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_stream_fabric) \
+		experiments/grid_stream/grid_stream_fabric_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_switch.v \
 		src/fabric_v2_tiles.v src/fabric_crc.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
-	$(BUILD_DIR)/verilator/grid_unified/Vgrid_unified_tb +SPI_IMAGE=$(abspath $(if $(GRID_SPI_IMAGE),$(GRID_SPI_IMAGE),test/data/grid-spi.mem)) +UART_IMAGE=$(abspath $(if $(GRID_UART_IMAGE),$(GRID_UART_IMAGE),test/data/grid-uart.mem))
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_unified.v src/grid_memory.v src/grid_core.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_unified -chparam USE_MACRO 1; synth -top grid_unified -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(BUILD_DIR)/verilator/grid_stream_fabric/Vgrid_stream_fabric_tb +SPI_IMAGE=$(abspath $(if $(GRID_SPI_IMAGE),$(GRID_SPI_IMAGE),test/data/grid-spi.mem)) +UART_IMAGE=$(abspath $(if $(GRID_UART_IMAGE),$(GRID_UART_IMAGE),test/data/grid-uart.mem))
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_stream_fabric -chparam USE_MACRO 1; synth -top grid_stream_fabric -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+
+grid-stream-test:
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module stream_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_stream) \
+		experiments/grid_stream/stream_tb.sv src/grid_stream_tiles.v src/grid_stream_memory.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_stream/Vstream_tb
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL --top-module arbiter_bound_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_arbiter_bound) \
+		experiments/grid_stream/arbiter_bound_tb.sv src/grid_stream_memory.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_arbiter_bound/Varbiter_bound_tb
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module credit_latency_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_credit_latency) \
+		experiments/grid_stream/credit_latency_tb.sv src/grid_stream_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_credit_latency/Vcredit_latency_tb
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module bank_order_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_bank_order) \
+		experiments/grid_stream/bank_order_tb.sv src/grid_stream_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_bank_order/Vbank_order_tb
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module cross_bank_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_cross_bank) \
+		experiments/grid_stream/cross_bank_tb.sv src/grid_stream_tiles.v src/grid_stream_memory.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_cross_bank/Vcross_bank_tb
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module multi_reader_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_multi_reader) \
+		experiments/grid_stream/multi_reader_tb.sv src/grid_stream_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_multi_reader/Vmulti_reader_tb
+	mkdir -p $(BUILD_DIR)/grid_stream_mutation
+	sed 's/used<DEPTH/count<DEPTH/' src/grid_stream_tiles.v > $(BUILD_DIR)/grid_stream_mutation/stream_tiles_bad.v
+	@! cmp -s src/grid_stream_tiles.v $(BUILD_DIR)/grid_stream_mutation/stream_tiles_bad.v || \
+		(echo 'ERROR: credit mutation did not change the reader'; exit 1)
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module credit_latency_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_credit_mutation) \
+		experiments/grid_stream/credit_latency_tb.sv $(BUILD_DIR)/grid_stream_mutation/stream_tiles_bad.v -MAKEFLAGS -j1
+	@if $(BUILD_DIR)/verilator/grid_credit_mutation/Vcredit_latency_tb > $(BUILD_DIR)/grid_stream_mutation/result.log 2>&1; then \
+		echo 'ERROR: missing read-credit reservation escaped assertions'; exit 1; \
+	elif grep -q "Assertion failed in credit_latency_tb.reader" $(BUILD_DIR)/grid_stream_mutation/result.log; then \
+		echo 'PASS: credit assertion rejects missing response reservation'; \
+	else cat $(BUILD_DIR)/grid_stream_mutation/result.log; echo 'ERROR: mutation failed for an unexpected reason'; exit 1; fi
+	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_STREAM_ASSERT --top-module branch_prefetch_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_branch_prefetch) \
+		experiments/grid_stream/branch_prefetch_tb.sv experiments/grid_stream/branch_prefetch.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_branch_prefetch/Vbranch_prefetch_tb
 
 grid-coder-reuse-test:
-	$(MAKE) -C experiments/grid_fabric/reuse SIM=verilator
+	$(MAKE) -C experiments/grid_fabric/reuse SIM=$(SIM)
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment
