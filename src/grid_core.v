@@ -46,9 +46,9 @@ module grid_core(
   assign local_signal[0]={cfg[4][7] ? (!prev[1] && sync[1]) : (prev[1] && !sync[1]),
                           cfg[4][6] ? (!prev[0] && sync[0]) : (prev[0] && !sync[0]),sync[1],sync[0]};
   assign local_signal[1]=0;
-  assign local_signal[2]={level,fall,rise,tick};
+  assign local_signal[4]={level,fall,rise,tick};
   assign local_signal[3]={serial | !busy,serial,done,busy};
-  assign local_signal[4]={3'b0,cfg[3][{2'b00,sink[11],sink[10]}]};
+  assign local_signal[2]={3'b0,cfg[3][{2'b00,sink[11],sink[10]}]};
   assign local_signal[5]={level1,fall1,rise1,tick1};
   assign local_signal[6]={3'b0,trigger};
   assign local_signal[7]={serial1 | !busy1,serial1,done1,busy1};
@@ -94,7 +94,7 @@ module grid_core(
   // Timer inputs 0..2, shifter inputs 3..6, IO outputs 7..9, LUT inputs 10..11.
   genvar q;
   generate for(q=0;q<19;q=q+1) begin: inputs
-    localparam integer CELL=(q<3)?2:(q<7)?3:(q<10)?1:(q<12)?4:(q<15)?5:7;
+    localparam integer CELL=(q<3)?4:(q<7)?3:(q<10)?1:(q<12)?2:(q<15)?5:7;
     localparam integer ADDR=(q<12)?41+q:56+q-12;
     if(q==10 || q==11) begin: logic_feedforward
       // No local LUT output can feed itself. The monotonic, fixed-class
