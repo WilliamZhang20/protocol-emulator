@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
-           'grid_core.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
+           'grid_core.v', 'grid_sequencer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
            'memory_tiles.v', 'program_memory.v']
 
 
@@ -80,7 +80,12 @@ def check(contract, modules):
         for resource in cell['resources']:
             assert contract['resources'][resource]['cell'] == cell['id']
     assert len(network['sink_cells']) == 19
-    assert network['hop_cycles'] == 0 and not contract['temporal']['programmable_sequencer']
+    assert network['hop_cycles'] == 0 and contract['temporal']['programmable_sequencer']
+    assert top['sequencer']['type'] == 'grid_sequencer'
+    seq = modules['grid_sequencer']['memories']['rows']
+    assert seq['size'] == contract['temporal']['rows'] and seq['width'] == 16
+    contexts = modules['grid_core']['memories']['context_routes']
+    assert contexts['size'] == contract['temporal']['alternate_context_slots'] and contexts['width'] == 16
 
 
 def prove_switch(contract, yosys, tmp):

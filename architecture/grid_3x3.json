@@ -12,7 +12,7 @@
       {"id": 3, "row": 1, "column": 0, "resources": ["shifter0"], "local_outputs": ["busy", "done", "serial", "serial_or_idle"]},
       {"id": 4, "row": 1, "column": 1, "resources": ["lut"], "local_outputs": ["logic"]},
       {"id": 5, "row": 1, "column": 2, "resources": ["timer1"], "local_outputs": ["tick", "rise", "fall", "level"]},
-      {"id": 6, "row": 2, "column": 0, "resources": ["sram0"], "local_outputs": ["trigger"]},
+      {"id": 6, "row": 2, "column": 0, "resources": ["sram0"], "local_outputs": ["trigger_or_action0", "action1", "action2", "frame_fire"]},
       {"id": 7, "row": 2, "column": 1, "resources": ["shifter1"], "local_outputs": ["busy", "done", "serial", "serial_or_idle"]},
       {"id": 8, "row": 2, "column": 2, "resources": ["sram1", "crc"], "local_outputs": ["crc_out", "crc_ok"]}
     ]
@@ -51,7 +51,18 @@
     },
     "tx_length_word": 66, "rx_capacity_word": 67, "pad_feedback_word": 68,
     "crc_words": [69, 80], "bank_routes_word": 88, "tx_base_word": 89, "rx_base_word": 90,
-    "bank_routes_fields": {"host": 0, "reader": 1, "writer": 2}, "base_offset_bits": 10
+    "bank_routes_fields": {"host": 0, "reader": 1, "writer": 2}, "base_offset_bits": 10,
+    "temporal_mode_word": 91, "temporal_entry_idle_word": 92,
+    "temporal_rows": [96, 111], "alternate_context_words": [112, 116]
   },
-  "temporal": {"kind": "fixed_frame_scheduler", "programmable_sequencer": false, "runtime_context_switching": false, "configuration_static_while_armed": true, "operations": ["read_frame", "fire_shifters", "wait_shifters", "write_frame", "repeat", "autonomous_receive"], "general_branching": false}
+  "temporal": {
+    "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,
+    "runtime_context_switching": true, "configuration_static_while_armed": true,
+    "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_done", "tx_stream_empty"],
+    "row_encoding": {"action": [3, 0], "event": [6, 4], "true_next": [10, 7], "false_next": [14, 11], "halt": [15, 15]},
+    "halt_error_action_bit": 2, "alternate_context_slots": 5,
+    "context_encoding": {"sink_index": [4, 0], "selector": [9, 5], "enable": [10, 10], "reserved": [15, 11]},
+    "operations": ["branch_on_event", "wait_by_self_branch", "set_actions", "switch_context", "request_frame", "halt"],
+    "general_branching": true, "program_storage": "configuration_registers", "sram_instruction_fetch": false
+  }
 }

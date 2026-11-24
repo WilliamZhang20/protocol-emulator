@@ -6,11 +6,19 @@ module grid_core(
   input wire [6:0] cfg_addr,input wire [15:0] cfg_data,
   input wire trigger,input wire [1:0] pin_in,input wire [15:0] tx,tx1,
   output wire [15:0] rx,rx1,output wire busy,done,busy1,done1,
-  output wire [2:0] pin_out,pin_oe,output wire configured);
+  output wire [2:0] pin_out,pin_oe,output wire configured,
+  input wire temporal_enable,input wire [3:0] temporal_actions,input wire temporal_context,
+  output wire temporal_tick,output wire [1:0] temporal_pins,output wire contexts_configured);
   reg [15:0] cfg[0:62];
   reg [62:0] written;
   reg [11:0] crc_written;
   reg [15:0] crc_routes[0:3];
+  // Five sparse overrides form a second routing context. Each word is
+  // {reserved[4:0], enable, alternate_selector[4:0], sink_index[4:0]}.
+  reg [15:0] context_routes[0:4];
+  reg [4:0] context_written;
+  wire [4:0] context_valid;
+  wire [9:0] context_unique;
   reg crc_shape_valid;
   reg [1:0] meta,sync,prev;
   wire [3:0] n_in[0:8],s_in[0:8],w_in[0:8],e_in[0:8];
@@ -31,10 +39,13 @@ module grid_core(
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
   always @(posedge clk) begin
-    if(!rst_n) begin written<=0;crc_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;end
+    if(!rst_n) begin written<=0;crc_written<=0;context_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;end
     else begin
       meta<=pin_in;sync<=meta;prev<=sync;
       if(!arm && cfg_we && cfg_addr<=62) begin cfg[cfg_addr[5:0]]<=cfg_data;written[cfg_addr[5:0]]<=1;end
+      if(!arm && cfg_we && cfg_addr>=112 && cfg_addr<=116) begin
+        context_routes[cfg_addr-112]<=cfg_data;context_written[cfg_addr-112]<=1;
+      end
       if(!arm && cfg_we && cfg_addr>=69 && cfg_addr<=80) begin
         crc_written[cfg_addr-69]<=1;
         if(cfg_addr==75) crc_shape_valid<=cfg_data[15:6]==0;
@@ -50,7 +61,7 @@ module grid_core(
   assign local_signal[3]={serial | !busy,serial,done,busy};
   assign local_signal[4]={3'b0,cfg[3][{2'b00,sink[11],sink[10]}]};
   assign local_signal[5]={level1,fall1,rise1,tick1};
-  assign local_signal[6]={3'b0,trigger};
+  assign local_signal[6]=temporal_enable ? {trigger,temporal_actions[2:0]} : {3'b0,trigger};
   assign local_signal[7]={serial1 | !busy1,serial1,done1,busy1};
   assign local_signal[8]={2'b0,crc_ok,crc_out};
   genvar x;
@@ -92,18 +103,46 @@ module grid_core(
   fabric_crc crc_tile(clk,rst_n,live && cfg[4][8],cfg_we && !arm && cfg_addr>=69 && cfg_addr<=76,
     cfg_addr[2:0]-3'd5,cfg_data,crc_lines,2'b0,2'b0,2'b0,crc_out,crc_tail,crc_ok,crc_value);
   // Timer inputs 0..2, shifter inputs 3..6, IO outputs 7..9, LUT inputs 10..11.
+  genvar z;
+  generate for(z=0;z<5;z=z+1) begin: context_checks
+    wire [4:0] target=context_routes[z][4:0];
+    wire [4:0] selection=context_routes[z][9:5];
+    assign context_valid[z]=context_routes[z][15:11]==0 &&
+      (!context_routes[z][10] || (target<19 && selection<=21 &&
+       ((target!=10 && target!=11) || selection<=1 || selection>=6)));
+  end endgenerate
+  assign context_unique[0]=!context_routes[0][10] || !context_routes[1][10] || context_routes[0][4:0]!=context_routes[1][4:0];
+  assign context_unique[1]=!context_routes[0][10] || !context_routes[2][10] || context_routes[0][4:0]!=context_routes[2][4:0];
+  assign context_unique[2]=!context_routes[0][10] || !context_routes[3][10] || context_routes[0][4:0]!=context_routes[3][4:0];
+  assign context_unique[3]=!context_routes[1][10] || !context_routes[2][10] || context_routes[1][4:0]!=context_routes[2][4:0];
+  assign context_unique[4]=!context_routes[1][10] || !context_routes[3][10] || context_routes[1][4:0]!=context_routes[3][4:0];
+  assign context_unique[5]=!context_routes[2][10] || !context_routes[3][10] || context_routes[2][4:0]!=context_routes[3][4:0];
+  assign context_unique[6]=!context_routes[0][10] || !context_routes[4][10] || context_routes[0][4:0]!=context_routes[4][4:0];
+  assign context_unique[7]=!context_routes[1][10] || !context_routes[4][10] || context_routes[1][4:0]!=context_routes[4][4:0];
+  assign context_unique[8]=!context_routes[2][10] || !context_routes[4][10] || context_routes[2][4:0]!=context_routes[4][4:0];
+  assign context_unique[9]=!context_routes[3][10] || !context_routes[4][10] || context_routes[3][4:0]!=context_routes[4][4:0];
+  assign contexts_configured=(&context_written) && (&context_valid) && (&context_unique);
+  assign temporal_tick=tick;
+  assign temporal_pins=sync;
   genvar q;
   generate for(q=0;q<19;q=q+1) begin: inputs
     localparam integer CELL=(q<3)?2:(q<7)?3:(q<10)?1:(q<12)?4:(q<15)?5:7;
     localparam integer ADDR=(q<12)?41+q:56+q-12;
+    localparam [31:0] SINK_INDEX_FULL=q;
+    localparam [4:0] SINK_INDEX=SINK_INDEX_FULL[4:0];
+    wire [15:0] choice=(temporal_enable && temporal_context && context_routes[0][10] && context_routes[0][4:0]==SINK_INDEX) ? {11'b0,context_routes[0][9:5]} :
+      (temporal_enable && temporal_context && context_routes[1][10] && context_routes[1][4:0]==SINK_INDEX) ? {11'b0,context_routes[1][9:5]} :
+      (temporal_enable && temporal_context && context_routes[2][10] && context_routes[2][4:0]==SINK_INDEX) ? {11'b0,context_routes[2][9:5]} :
+      (temporal_enable && temporal_context && context_routes[3][10] && context_routes[3][4:0]==SINK_INDEX) ? {11'b0,context_routes[3][9:5]} :
+      (temporal_enable && temporal_context && context_routes[4][10] && context_routes[4][4:0]==SINK_INDEX) ? {11'b0,context_routes[4][9:5]} : cfg[ADDR];
     if(q==10 || q==11) begin: logic_feedforward
       // No local LUT output can feed itself. The monotonic, fixed-class
       // neighbor routes cannot return a signal to its originating cell.
       assign sink_valid[q]=(cfg[ADDR]<=1) || (cfg[ADDR]>=6 && cfg[ADDR]<=21);
-      assign sink[q]=route_input(cfg[ADDR],4'b0,n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
+      assign sink[q]=route_input(choice,4'b0,n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
     end else begin: regular_input
       assign sink_valid[q]=cfg[ADDR]<=21;
-      assign sink[q]=route_input(cfg[ADDR],local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
+      assign sink[q]=route_input(choice,local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
     end
   end endgenerate
   fabric_v2_timer timer(clk,rst_n,live,cfg_we && !arm && (cfg_addr==0 || cfg_addr==1),

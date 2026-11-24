@@ -23,6 +23,7 @@ project:
     - "fabric_v2_unified.v"
     - "grid_switch.v"
     - "grid_core.v"
+    - "grid_sequencer.v"
     - "grid_memory.v"
     - "grid_unified.v"
     - "grid_stream_tiles.v"
