@@ -3,7 +3,7 @@
 // The descriptor selects finite packed words or continuous byte consumption;
 // SRAM request/response handling is shared by both paths.
 module grid_stream_fabric #(parameter USE_MACRO=0)(
-    input wire clk,rst_n,arm,cfg_we,input wire [7:0] cfg_addr,input wire [15:0] cfg_data,
+    input wire clk,rst_n,arm_in,cfg_we,input wire [7:0] cfg_addr,input wire [15:0] cfg_data,
     input wire bank_cfg_we,input wire [1:0] bank_routes,
     input wire host_req,host_we,input wire [9:0] host_addr,input wire [7:0] host_wdata,
     output wire host_ready,host_rvalid,output wire [7:0] host_rdata,
@@ -15,6 +15,28 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     output wire [2:0] tx_queued,rx_queued,
     input wire spi_start,input wire [9:0] spi_source_addr,spi_dest_addr,
     output wire spi_done,spi_error,spi_active);
+  // Configuration and bank-route writes are accepted only while the host has
+  // the fabric disarmed, then travel the registered grid_config_tree to the
+  // cell that owns them. The fabric arms only after every accepted write has
+  // landed; disarm is immediate. A start that arrives in that window is held.
+  wire [16*26-1:0] cfg_leaves;
+  wire cfg_busy;
+  grid_config_tree config_tree(clk,rst_n,!arm_in && (cfg_we || bank_cfg_we),!cfg_we,
+    cfg_we ? cfg_addr : 8'd0,cfg_we ? cfg_data : {14'b0,bank_routes},cfg_leaves,cfg_busy);
+  wire arm=arm_in && !cfg_busy;
+  wire leaf_valid=cfg_leaves[15*26+25],leaf_bank=cfg_leaves[15*26+24];
+  wire [7:0] leaf_addr=cfg_leaves[15*26+16+:8];
+  wire [15:0] leaf_data=cfg_leaves[15*26+:16];
+  wire leaf_we=leaf_valid && !leaf_bank;
+  wire seq_valid=cfg_leaves[6*26+25] && !cfg_leaves[6*26+24];
+  wire [7:0] seq_addr=cfg_leaves[6*26+16+:8];
+  wire [15:0] seq_data=cfg_leaves[6*26+:16];
+  reg start_held;
+  wire start_request=tx_start || spi_start || start_held;
+  always @(posedge clk) begin
+    if(!rst_n || !arm_in) start_held<=0;
+    else start_held<=!arm && start_request;
+  end
   reg [15:0] format,ormask;reg [1:0] format_written;
   reg rx_autostart,descriptor_written,route_valid;
   reg [2:0] route_sel;
@@ -32,17 +54,17 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   always @(posedge clk) begin
     if(!rst_n) begin format<=0;ormask<=0;format_written<=0;rx_autostart<=0;descriptor_written<=0;route_valid<=1;route_sel<=0;
       packet_mode<=0;packet_mode_valid<=1;temporal_mode<=0;temporal_mode_valid<=1;temporal_settings_valid<=0;temporal_settings_written<=0;temporal_entry<=0;temporal_idle<=0;end
-    else if(!arm && cfg_we) begin
-      if(cfg_addr==63) begin format<=cfg_data;format_written[0]<=1;end
-      if(cfg_addr==64) begin ormask<=cfg_data;format_written[1]<=1;end
-      if(cfg_addr==65) begin rx_autostart<=cfg_data[0];descriptor_written<=cfg_data[15:1]==0;end
-      if(cfg_addr==88) begin route_valid<=cfg_data[15:3]==0;route_sel<=cfg_data[2:0];end
-      if(cfg_addr==91) begin temporal_mode<=cfg_data[0];temporal_mode_valid<=cfg_data[15:2]==0;end
-      if(cfg_addr==93) begin packet_mode<=cfg_data[0];packet_mode_valid<=cfg_data[15:1]==0;end
-      if(cfg_addr==92) begin temporal_entry<=cfg_data[3:0];temporal_idle<=cfg_data[7:4];
-        temporal_settings_valid<=cfg_data[15:8]==0;temporal_settings_written<=1;end
+    else if(leaf_we) begin
+      if(leaf_addr==63) begin format<=leaf_data;format_written[0]<=1;end
+      if(leaf_addr==64) begin ormask<=leaf_data;format_written[1]<=1;end
+      if(leaf_addr==65) begin rx_autostart<=leaf_data[0];descriptor_written<=leaf_data[15:1]==0;end
+      if(leaf_addr==88) begin route_valid<=leaf_data[15:3]==0;route_sel<=leaf_data[2:0];end
+      if(leaf_addr==91) begin temporal_mode<=leaf_data[0];temporal_mode_valid<=leaf_data[15:2]==0;end
+      if(leaf_addr==93) begin packet_mode<=leaf_data[0];packet_mode_valid<=leaf_data[15:1]==0;end
+      if(leaf_addr==92) begin temporal_entry<=leaf_data[3:0];temporal_idle<=leaf_data[7:4];
+        temporal_settings_valid<=leaf_data[15:8]==0;temporal_settings_written<=1;end
     end
-    else if(!arm && bank_cfg_we) begin route_valid<=1;route_sel<={bank_routes[1],bank_routes[1],bank_routes[0]};end
+    else if(leaf_valid) begin route_valid<=1;route_sel<={leaf_data[1],leaf_data[1],leaf_data[0]};end
   end
   wire grid_configured,contexts_configured,temporal_tick;
   wire [1:0] temporal_pins;
@@ -59,8 +81,8 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   assign spi_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_spi_done;
   assign tx_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
   assign spi_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_spi_error;
-  assign tx_active=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
-  assign spi_active=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_spi_active;
+  assign tx_active=start_held || (temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active);
+  assign spi_active=start_held || (temporal_mode ? temporal_active : packet_mode ? packet_running : frame_spi_active);
   wire [1:0] busy,finished;wire [15:0] rx0,rx1;
   reg [15:0] txword0,txword1,received;
   wire rd_valid,rd_req,rd_active,rd_done,rd_error;wire [10:0] rd_addr;
@@ -79,7 +101,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   assign frame_spi_active=state!=IDLE;
   assign frame_tx_active=state!=IDLE;
   assign tx_queued={1'b0,rd_queued};assign rx_queued={1'b0,wr_queued};
-  wire host_start=(tx_start || spi_start) && state==IDLE;
+  wire host_start=arm && start_request && state==IDLE;
   wire temporal_request=!packet_mode && temporal_active && sequencer_actions[3] && sequencer_actions[2] && !temporal_request_prev && !temporal_halting;
   wire start=!packet_mode && (temporal_mode ? temporal_request : host_start) && state==IDLE;
   wire [2:0] frame_bytes={1'b0,format[1:0]}+(format[13] ? (format[14] ? 3'd2 : 3'd1) : 3'd0);
@@ -135,11 +157,11 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],(seq_event_enable[1] ? seq_events[1] : temporal_pins[1]),(seq_event_enable[0] ? seq_events[0] : temporal_pins[0]),(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
   wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
-    cfg_we && cfg_addr>=96 && cfg_addr<=111,cfg_addr[3:0],cfg_data,
-    cfg_we && cfg_addr==91 && cfg_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
+    seq_valid && seq_addr>=96 && seq_addr<=111,seq_addr[3:0],seq_data,
+    seq_valid && seq_addr==91 && seq_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
     sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed);
   grid_core grid(clk,rst_n,arm && format_valid && route_valid && temporal_ready,
-    cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80) || (cfg_addr>=112 && cfg_addr<=123) || cfg_addr>=128),cfg_addr,cfg_data,
+    cfg_leaves,
     fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
     temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
     packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
@@ -161,8 +183,8 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     rd_active,rd_done,rd_error,rd_queued,rd_outstanding);
   grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,arm && configured && !cancel,writer_start,selected_rx_base,selected_rx_capacity,
     writer_valid_local,wr_ready_local,writer_input_local,wr_req,mem_ready[2],wr_addr,wr_data,wr_active,wr_done,wr_error,wr_queued);
-  wire stream_route_write=bank_cfg_we || (cfg_we && cfg_addr==88);
-  wire [2:0] stream_routes=(cfg_we && cfg_addr==88) ? cfg_data[2:0] : {bank_routes[1],bank_routes[1],bank_routes[0]};
+  wire stream_route_write=leaf_valid && (leaf_bank || leaf_addr==88);
+  wire [2:0] stream_routes=leaf_bank ? {leaf_data[1],leaf_data[1],leaf_data[0]} : leaf_data[2:0];
   grid_stream_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,stream_route_write,stream_routes,{wr_addr[10],rd_addr[10]},
     {wr_req,rd_req,host_req},{1'b1,1'b0,host_we},{wr_addr[9:0],rd_addr[9:0],host_addr},{wr_data,8'b0,host_wdata},mem_ready,mem_rvalid,mem_rdata);
   assign host_ready=mem_ready[0];assign host_rvalid=mem_rvalid[0];assign host_rdata=mem_rdata[7:0];

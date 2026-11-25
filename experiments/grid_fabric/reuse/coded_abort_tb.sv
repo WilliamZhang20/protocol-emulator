@@ -36,6 +36,7 @@ module coded_abort_tb;
     payload[4]=8'hff;payload[5]=8'h80;payload[6]=8'h7e;payload[7]=8'h3f;
     repeat(4) @(negedge clk);rst_n=1;
     for(i=0;i<124;i=i+1)cfg(7'(i),words[i]);
+    repeat(3) @(negedge clk); // grid_config_tree latency
     if(!configured)$fatal(1,"coded image rejected");
     @(negedge clk);arm=1;
     for(i=0;i<8;i=i+1)write_byte(10'(100+i),payload[i]);

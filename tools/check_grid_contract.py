@@ -113,8 +113,17 @@ def check(contract, modules):
     assert top['sequencer']['type'] == 'grid_sequencer'
     seq = modules['grid_sequencer']['memories']['rows']
     assert seq['size'] == contract['temporal']['rows'] and seq['width'] == 16
-    contexts = modules['grid_core']['memories']['context_routes']
-    assert contexts['size'] == contract['temporal']['alternate_context_slots'] and contexts['width'] == 16
+    slots = contract['temporal']['alternate_context_slots']
+    netnames = modules['grid_core']['netnames']
+    assert all(len(netnames[f'context_routes[{i}]']['bits']) == 16 for i in range(slots))
+    assert f'context_routes[{slots}]' not in netnames
+    # Configuration reaches the core only through the registered distribution tree.
+    tree = contract['configuration']['distribution']
+    assert top['config_tree']['type'] == tree['module']
+    core_ports = modules['grid_core']['ports']
+    assert 'cfg_leaves' in core_ports and not {'cfg_we', 'cfg_addr', 'cfg_data'} & set(core_ports)
+    assert len(core_ports['cfg_leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
+    assert len(modules[tree['module']]['ports']['leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
 
 
 def prove_switch(contract, yosys, tmp):

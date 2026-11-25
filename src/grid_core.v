@@ -6,8 +6,9 @@
 // and 2, timers in column 1. Their words live at 128-184 and reset to zero,
 // so images for the first nine cells leave them inert.
 module grid_core(
-  input wire clk,rst_n,arm,cfg_we,
-  input wire [7:0] cfg_addr,input wire [15:0] cfg_data,
+  input wire clk,rst_n,arm,
+  // Leaves 0-14 of grid_config_tree, one per cell: {valid,bank,addr[7:0],data[15:0]}.
+  input wire [16*26-1:0] cfg_leaves,
   input wire trigger,input wire [1:0] pin_in,input wire [15:0] tx,tx1,
   output wire [15:0] rx,rx1,output wire busy,done,busy1,done1,
   output wire [2:0] pin_out,pin_oe,output wire configured,
@@ -17,8 +18,11 @@ module grid_core(
   output wire packet_request,packet_stop,packet_configured,packet_tick,
   output wire [1:0] seq_events,seq_event_enable);
   localparam CELLS=15;
-  reg [15:0] cfg[0:62];
-  reg [62:0] written;
+  // Configuration storage is distributed: every register is written only from
+  // its own cell's leaf of grid_config_tree, so no configuration bus spans the
+  // chip. Writes reach the leaves only while disarmed (see grid_config_tree).
+  wire [15:0] cfg[0:62];
+  wire [62:0] written;
   reg [11:0] crc_written;
   reg [5:0] coder_written;
   reg [5:0] coder_tick_select;
@@ -28,8 +32,8 @@ module grid_core(
   reg [15:0] crc_routes[0:3];
   // Five sparse overrides form a second routing context. Each word is
   // {reserved[4:0], enable, alternate_selector[4:0], sink_index[4:0]}.
-  reg [15:0] context_routes[0:4];
-  reg [4:0] context_written;
+  wire [15:0] context_routes[0:4];
+  wire [4:0] context_written;
   wire [4:0] context_valid;
   wire [9:0] context_unique;
   reg crc_shape_valid;
@@ -38,20 +42,12 @@ module grid_core(
   wire [3:0] n_out[0:CELLS-1],s_out[0:CELLS-1],w_out[0:CELLS-1],e_out[0:CELLS-1];
   wire [3:0] local_signal[0:CELLS-1];
   wire [42:0] sink;
-  // Extension words 128-184: 24 switch words for cells 9-14 (12 bits), four
-  // LUT4 truth tables, 26 tile-input selectors (5 bits) and the sequencer
-  // event-input enables. Each keeps a validity bit for reserved upper bits.
-  reg [11:0] ext_switch[0:23];
-  reg [15:0] ext_truth[0:3];
-  reg [4:0] ext_select[0:21];
-  reg [15:0] timer_word[0:3];
-  reg [4:0] seq_select[0:1];
-  reg [1:0] seq_enable;
-  reg [56:0] ext_valid;
-  wire ext_write=!arm && cfg_we && cfg_addr>=128 && cfg_addr<=184;
-  wire [7:0] ext_index=cfg_addr-8'd128;
-  wire [7:0] select_offset=ext_index<44 ? ext_index-8'd28 : ext_index-8'd32;
-  wire [4:0] select_index=select_offset[4:0];
+  // Extension words 128-184 (index 0-56): 24 switch words for cells 9-14
+  // (12 bits), four LUT4 truth tables, 16 LUT4 input selectors, timer 2/3
+  // words, six timer input selectors and the sequencer event inputs. Each
+  // keeps a validity bit for reserved upper bits; they reset to zero.
+  wire [15:0] ext_value[0:56];
+  wire [56:0] ext_valid;
   wire [3:0] crc_in;
   wire [3:0] crc_route_valid;
   wire crc_out,crc_tail,crc_ok;
@@ -73,45 +69,91 @@ module grid_core(
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
-  integer e;
-  // Timer words (indices 44-47) have no valid bit; word 56 checks its reserved bits.
-  wire [56:0] ext_valid_mask=(ext_index>=44 && ext_index<48) ? 57'b0 : 57'b1 << ext_index[5:0];
-  wire [56:0] ext_valid_value={cfg_data[15:2]==0,{56{ext_word_valid}}};
-  wire ext_word_valid=ext_index<24 ? cfg_data[15:12]==0 : ext_index<28 ? 1'b1 : cfg_data<=21;
+  wire [14:0] leaf_we;
+  wire [7:0] la[0:14];
+  wire [15:0] ld[0:14];
+  genvar k;
+  generate for(k=0;k<15;k=k+1) begin: leaf
+    assign leaf_we[k]=cfg_leaves[k*26+25] && !cfg_leaves[k*26+24];
+    assign la[k]=cfg_leaves[k*26+16+:8];
+    assign ld[k]=cfg_leaves[k*26+:16];
+  end endgenerate
+  // Words 0-62 belong to the cell whose tile or selectors they configure;
+  // word 4 (pin enables, open drain, event polarity, CRC enable) to the I/O cell.
+  genvar wi;
+  generate for(wi=0;wi<63;wi=wi+1) begin: word
+    localparam integer OWNER=(wi<=1)?2:(wi==2)?3:(wi==3)?4:(wi==4)?1:(wi<=40)?(wi-5)/4:
+      (wi<=43)?2:(wi<=47)?3:(wi<=50)?1:(wi<=52)?4:(wi<=54)?5:(wi==55)?7:(wi<=58)?5:7;
+    localparam [31:0] ADDR_FULL=wi;
+    localparam [7:0] ADDR=ADDR_FULL[7:0];
+    reg [15:0] value;
+    reg done;
+    wire hit=leaf_we[OWNER] && la[OWNER]==ADDR;
+    always @(posedge clk) begin
+      if(!rst_n) done<=0;else if(hit) done<=1;
+      if(hit) value<=ld[OWNER];
+    end
+    assign cfg[wi]=value;
+    assign written[wi]=done;
+  end endgenerate
+  genvar xi;
+  generate for(xi=0;xi<57;xi=xi+1) begin: ext
+    localparam integer LUT=(xi<24)?0:(xi<28)?xi-24:(xi<44)?(xi-28)/4:0;
+    localparam integer LUT_CELL=(LUT==0)?9:(LUT==1)?11:(LUT==2)?12:14;
+    localparam integer OWNER=(xi<24)?9+xi/4:(xi<44)?LUT_CELL:(xi<46 || (xi>=48 && xi<51))?10:(xi<54)?13:6;
+    localparam [31:0] ADDR_FULL=128+xi;
+    localparam [7:0] ADDR=ADDR_FULL[7:0];
+    reg [15:0] value;
+    reg ok;
+    wire hit=leaf_we[OWNER] && la[OWNER]==ADDR;
+    wire [15:0] data=ld[OWNER];
+    // Timer words (44-47) have no valid bit; word 56 checks its reserved bits.
+    wire data_ok=(xi<24) ? data[15:12]==0 : (xi<28 || (xi>=44 && xi<48)) ? 1'b1 :
+      (xi==56) ? data[15:2]==0 : data<=21;
+    always @(posedge clk) begin
+      if(!rst_n) begin value<=0;ok<=1;end
+      else if(hit) begin value<=data;ok<=data_ok;end
+    end
+    assign ext_value[xi]=value;
+    assign ext_valid[xi]=ok;
+  end endgenerate
+  // Sequencer cell 6: alternate-context words 112-116.
+  genvar ci;
+  generate for(ci=0;ci<5;ci=ci+1) begin: context_word
+    localparam [31:0] ADDR_FULL=112+ci;
+    localparam [7:0] ADDR=ADDR_FULL[7:0];
+    reg [15:0] value;
+    reg done;
+    wire hit=leaf_we[6] && la[6]==ADDR;
+    always @(posedge clk) begin
+      if(!rst_n) done<=0;else if(hit) done<=1;
+      if(hit) value<=ld[6];
+    end
+    assign context_routes[ci]=value;
+    assign context_written[ci]=done;
+  end endgenerate
+  // CRC and coded-shifter cell 8: words 69-80 and 117-122.
   always @(posedge clk) begin
-    if(!rst_n) begin written<=0;crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;temporal_oe_gate<=0;temporal_oe_gate_valid<=1;context_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;
-      ext_valid<={57{1'b1}};seq_enable<=0;seq_select[0]<=0;seq_select[1]<=0;
-      for(e=0;e<24;e=e+1) ext_switch[e]<=0;
-      for(e=0;e<22;e=e+1) ext_select[e]<=0;
-      for(e=0;e<4;e=e+1) begin ext_truth[e]<=0;timer_word[e]<=0;end
-    end
-    else begin
-      meta<=pin_in;sync<=meta;prev<=sync;
-      if(!arm && cfg_we && cfg_addr<=62) begin cfg[cfg_addr[5:0]]<=cfg_data;written[cfg_addr[5:0]]<=1;end
-      if(!arm && cfg_we && cfg_addr>=112 && cfg_addr<=116) begin
-        context_routes[cfg_addr-112]<=cfg_data;context_written[cfg_addr-112]<=1;
-      end
-      if(!arm && cfg_we && cfg_addr==118) coder_tick_select<=cfg_data[5:0];
-      if(!arm && cfg_we && cfg_addr==121) coder_tail_required<=|cfg_data[14:9];
-      if(!arm && cfg_we && cfg_addr==123) begin temporal_oe_gate<=cfg_data[2:0];temporal_oe_gate_valid<=cfg_data[15:3]==0;end
-      if(!arm && cfg_we && cfg_addr>=117 && cfg_addr<=122) coder_written[cfg_addr-117]<=1;
-      if(ext_write) begin
-        // One whole-vector update: per-bit writes crash CI's Verilator 5.020 (V3Gate).
-        ext_valid<=(ext_valid & ~ext_valid_mask) | (ext_valid_value & ext_valid_mask);
-        if(ext_index<24) ext_switch[ext_index[4:0]]<=cfg_data[11:0];
-        else if(ext_index<28) ext_truth[ext_index[1:0]]<=cfg_data;
-        else if(ext_index>=44 && ext_index<48) timer_word[ext_index[1:0]]<=cfg_data;
-        // LUT4 inputs at 156-171, timer 2/3 start/stop/hold at 176-181.
-        else if(ext_index<44 || (ext_index>=48 && ext_index<54)) ext_select[select_index]<=cfg_data[4:0];
-        else if(ext_index==54 || ext_index==55) seq_select[ext_index[0]]<=cfg_data[4:0];
-        else if(ext_index==56) seq_enable<=cfg_data[1:0];
-      end
-      if(!arm && cfg_we && cfg_addr>=69 && cfg_addr<=80) begin
-        crc_written[cfg_addr-69]<=1;
-        if(cfg_addr==75) begin crc_shape_valid<=cfg_data[15:7]==0;crc_link_valid<=cfg_data[6];end
-        if(cfg_addr>=77) crc_routes[cfg_addr-77]<=cfg_data;
+    if(!rst_n) begin crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;crc_shape_valid<=0;end
+    else if(leaf_we[8]) begin
+      if(la[8]==118) coder_tick_select<=ld[8][5:0];
+      if(la[8]==121) coder_tail_required<=|ld[8][14:9];
+      if(la[8]>=117 && la[8]<=122) coder_written[la[8]-117]<=1;
+      if(la[8]>=69 && la[8]<=80) begin
+        crc_written[la[8]-69]<=1;
+        if(la[8]==75) begin crc_shape_valid<=ld[8][15:7]==0;crc_link_valid<=ld[8][6];end
+        if(la[8]>=77) crc_routes[la[8]-77]<=ld[8];
       end
     end
+  end
+  // Output I/O cell 1: temporal output-enable gating, word 123.
+  always @(posedge clk) begin
+    if(!rst_n) begin temporal_oe_gate<=0;temporal_oe_gate_valid<=1;end
+    else if(leaf_we[1] && la[1]==123) begin temporal_oe_gate<=ld[1][2:0];temporal_oe_gate_valid<=ld[1][15:3]==0;end
+  end
+  always @(posedge clk) begin
+    if(!rst_n) begin meta<=0;sync<=0;prev<=0;end
+    else begin meta<=pin_in;sync<=meta;prev<=sync;end
   end
   // Event polarity is configurable independently for each synchronized pin.
   assign local_signal[0]={cfg[4][7] ? (!prev[1] && sync[1]) : (prev[1] && !sync[1]),
@@ -142,7 +184,7 @@ module grid_core(
         n_out[x],s_out[x],w_out[x],e_out[x]);
     end else begin: extension
       grid_switch sw(n_in[x],s_in[x],w_in[x],e_in[x],local_signal[x],
-        ext_switch[(x-9)*4],ext_switch[(x-9)*4+1],ext_switch[(x-9)*4+2],ext_switch[(x-9)*4+3],
+        ext_value[(x-9)*4][11:0],ext_value[(x-9)*4+1][11:0],ext_value[(x-9)*4+2][11:0],ext_value[(x-9)*4+3][11:0],
         n_out[x],s_out[x],w_out[x],e_out[x]);
     end
   end endgenerate
@@ -173,11 +215,11 @@ module grid_core(
   // exposed by this grid revision.
   wire [63:0] crc_lines={31'b0,crc_in[3],29'b0,crc_in[2],crc_in[1],crc_in[0]};
   assign packet_tick=crc_lines[coder_tick_select];
-  fabric_crc crc_tile(clk,rst_n,live && cfg[4][8] && (!packet_mode || packet_running),cfg_we && !arm && cfg_addr>=69 && cfg_addr<=76,
-    cfg_addr[2:0]-3'd5,cfg_data,crc_lines,{1'b0,coder_absorb},{1'b0,coder_bit},
+  fabric_crc crc_tile(clk,rst_n,live && cfg[4][8] && (!packet_mode || packet_running),leaf_we[8] && la[8]>=69 && la[8]<=76,
+    la[8][2:0]-3'd5,ld[8],crc_lines,{1'b0,coder_absorb},{1'b0,coder_bit},
     {1'b0,coder_emit},crc_out,crc_tail,crc_ok,crc_value);
   fabric_shifter coded_tile(clk,rst_n,live && packet_mode && packet_running,
-    cfg_we && !arm && cfg_addr>=117 && cfg_addr<=122,cfg_addr[2:0]-3'd4,cfg_data,
+    leaf_we[8] && la[8]>=117 && la[8]<=122,la[8][2:0]-3'd4,ld[8],
     2'b11,1'b0,crc_lines,coder_pulls,packet_request,packet_grant,packet_data,packet_eop,1'b0,
     coder_rx_request,1'b0,crc_tail,coder_rx_byte,coder_rx_eop,coder_rx_err,coder_serial,
     coder_active,coder_word,packet_stop,coder_rx_data,coder_status,coder_absorb,coder_bit,coder_emit);
@@ -226,13 +268,13 @@ module grid_core(
       assign sink[q]=route_input(choice,local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
     end
   end endgenerate
-  fabric_v2_timer timer(clk,rst_n,live,cfg_we && !arm && (cfg_addr==0 || cfg_addr==1),
-    cfg_addr==0 ? cfg_data : cfg[0],cfg_addr==1 ? cfg_data : cfg[1],
+  fabric_v2_timer timer(clk,rst_n,live,leaf_we[2] && (la[2]==0 || la[2]==1),
+    la[2]==0 ? ld[2] : cfg[0],la[2]==1 ? ld[2] : cfg[1],
     sink[0],sink[1],sink[2],tick,running,tvalid,level,rise,fall);
   fabric_v2_shift shifter(clk,rst_n,live,sink[3],sink[4],sink[5],cfg[2][4:0],cfg[2][5],
     tx,sink[6],serial,rx,busy,done);
-  fabric_v2_timer timer1(clk,rst_n,live,cfg_we && !arm && (cfg_addr==53 || cfg_addr==54),
-    cfg_addr==53 ? cfg_data : cfg[53],cfg_addr==54 ? cfg_data : cfg[54],
+  fabric_v2_timer timer1(clk,rst_n,live,leaf_we[5] && (la[5]==53 || la[5]==54),
+    la[5]==53 ? ld[5] : cfg[53],la[5]==54 ? ld[5] : cfg[54],
     sink[12],sink[13],sink[14],tick1,running1,tvalid1,level1,rise1,fall1);
   fabric_v2_shift shifter1(clk,rst_n,live,sink[15],sink[16],sink[17],cfg[55][4:0],cfg[55][5],
     tx1,sink[18],serial1,rx1,busy1,done1);
@@ -243,21 +285,55 @@ module grid_core(
   genvar y;
   generate for(y=19;y<43;y=y+1) begin: ext_inputs
     localparam integer CELL=(y<22)?10:(y<25)?13:(y<29)?9:(y<33)?11:(y<37)?12:(y<41)?14:6;
-    wire [4:0] choice=(y>=41) ? seq_select[y-41] : (y<25) ? ext_select[y+16-19] : ext_select[y-25];
+    // Selectors: 25-40 at extension words 28-43, 19-24 at 48-53, 41-42 at 54-55.
+    localparam integer EXT=(y>=41) ? y+13 : (y<25) ? y+29 : y+3;
+    wire [4:0] choice=ext_value[EXT][4:0];
     assign sink[y]=route_input({11'b0,choice},local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
   end endgenerate
   assign seq_events={sink[42],sink[41]};
-  assign seq_event_enable=seq_enable;
-  fabric_v2_timer timer2(clk,rst_n,live,cfg_we && !arm && (cfg_addr==172 || cfg_addr==173),
-    cfg_addr==172 ? cfg_data : timer_word[0],cfg_addr==173 ? cfg_data : timer_word[1],
+  assign seq_event_enable=ext_value[56][1:0];
+  fabric_v2_timer timer2(clk,rst_n,live,leaf_we[10] && (la[10]==172 || la[10]==173),
+    la[10]==172 ? ld[10] : ext_value[44],la[10]==173 ? ld[10] : ext_value[45],
     sink[19],sink[20],sink[21],tick2,running2,tvalid2,level2,rise2,fall2);
-  fabric_v2_timer timer3(clk,rst_n,live,cfg_we && !arm && (cfg_addr==174 || cfg_addr==175),
-    cfg_addr==174 ? cfg_data : timer_word[2],cfg_addr==175 ? cfg_data : timer_word[3],
+  fabric_v2_timer timer3(clk,rst_n,live,leaf_we[13] && (la[13]==174 || la[13]==175),
+    la[13]==174 ? ld[13] : ext_value[46],la[13]==175 ? ld[13] : ext_value[47],
     sink[22],sink[23],sink[24],tick3,running3,tvalid3,level3,rise3,fall3);
   genvar b;
   generate for(b=0;b<4;b=b+1) begin: lut4
-    grid_lut4_cell tile(clk,rst_n,live,ext_truth[b],{sink[28+4*b],sink[27+4*b],sink[26+4*b],sink[25+4*b]},ble_q[b]);
+    grid_lut4_cell tile(clk,rst_n,live,ext_value[24+b],{sink[28+4*b],sink[27+4*b],sink[26+4*b],sink[25+4*b]},ble_q[b]);
   end endgenerate
-  wire unused_ext=&{1'b0,running2,tvalid2,running3,tvalid3};
+  wire unused_ext=&{1'b0,running2,tvalid2,running3,tvalid3,cfg_leaves[16*26-1:15*26]};
+endmodule
+
+// Registered configuration distribution: one root register next to the host
+// link feeds one leaf register per cell (0-14) plus leaf 15 for the stream
+// scheduler. A leaf drives only its own cell's configuration registers, so
+// no configuration net spans the chip; the root drives 16 leaves. A write is
+// visible in its cell's registers three cycles after it is accepted; busy
+// covers those cycles so the fabric can hold arm off until every accepted
+// write has landed. Bank-route commands travel the same path, preserving
+// their order relative to word 88.
+module grid_config_tree(
+  input wire clk,rst_n,accept,bank,input wire [7:0] addr,input wire [15:0] data,
+  output wire [16*26-1:0] leaves,output wire busy);
+  reg root_valid,trail;
+  reg [24:0] root_bus;
+  always @(posedge clk) begin
+    if(!rst_n) begin root_valid<=0;trail<=0;end
+    else begin root_valid<=accept;trail<=root_valid;end
+    root_bus<={bank,addr,data};
+  end
+  assign busy=root_valid || trail;
+  genvar k;
+  generate for(k=0;k<16;k=k+1) begin: leaf
+    reg valid;
+    reg [24:0] bus;
+    // keep: the leaves have identical inputs; merging them would restore a broadcast.
+    (* keep *) always @(posedge clk) begin
+      if(!rst_n) valid<=0;else valid<=root_valid;
+      bus<=root_bus;
+    end
+    assign leaves[k*26+:26]={valid,bus};
+  end endgenerate
 endmodule
 `default_nettype wire

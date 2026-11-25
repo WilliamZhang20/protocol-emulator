@@ -4,7 +4,7 @@
 // UART uses four-byte TX/RX queues, one outstanding actor read, and registered
 // actor requests. RX storage is a finite, non-wrapping region.
 module grid_unified #(parameter USE_MACRO=0)(
-    input wire clk,rst_n,arm,cfg_we,input wire [6:0] cfg_addr,input wire [15:0] cfg_data,
+    input wire clk,rst_n,arm_in,cfg_we,input wire [6:0] cfg_addr,input wire [15:0] cfg_data,
     input wire bank_cfg_we,input wire [1:0] bank_routes,
     input wire host_req,host_we,input wire [9:0] host_addr,input wire [7:0] host_wdata,
     output wire host_ready,host_rvalid,output wire [7:0] host_rdata,
@@ -16,6 +16,12 @@ module grid_unified #(parameter USE_MACRO=0)(
     output wire [2:0] tx_queued,rx_queued,
     input wire spi_start,input wire [9:0] spi_source_addr,spi_dest_addr,
     output reg spi_done,spi_error,output wire spi_active);
+  // Grid words travel grid_config_tree; arm waits until they have landed.
+  wire [16*26-1:0] cfg_leaves;
+  wire cfg_busy;
+  grid_config_tree config_tree(clk,rst_n,!arm_in && cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),1'b0,
+    {1'b0,cfg_addr},cfg_data,cfg_leaves,cfg_busy);
+  wire arm=arm_in && !cfg_busy;
   reg [15:0] format,ormask;
   reg [1:0] fmt_written;
   reg mode_uart,mode_written;
@@ -26,7 +32,7 @@ module grid_unified #(parameter USE_MACRO=0)(
   assign configured=adapter_valid && tile_configured;
   always @(posedge clk) begin
     if(!rst_n) begin format<=0;ormask<=0;fmt_written<=0;mode_uart<=0;mode_written<=0;end
-    else if(!arm && cfg_we) begin
+    else if(!arm_in && cfg_we) begin
       if(cfg_addr==63) begin format<=cfg_data;fmt_written[0]<=1;end
       if(cfg_addr==64) begin ormask<=cfg_data;fmt_written[1]<=1;end
       if(cfg_addr==65) begin mode_uart<=cfg_data[0];mode_written<=cfg_data[15:1]==0;end
@@ -67,10 +73,10 @@ module grid_unified #(parameter USE_MACRO=0)(
   wire [9:0] actor_addr=mode_uart ? req_addr : spi_addr;
   wire [7:0] actor_data=mode_uart ? req_data : spi_wdata;
   assign tx_active=tx_live;
-  grid_core grid(clk,rst_n,arm && adapter_valid,cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),{1'b0,cfg_addr},cfg_data,
+  grid_core grid(clk,rst_n,arm && adapter_valid,cfg_leaves,
       fabric_fire,pin_in,txword,spi_txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,tile_configured,
       1'b0,4'b0,1'b0,,,,1'b0,1'b0,1'b0,8'b0,1'b0,,,,,,);
-  grid_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,bank_cfg_we,bank_routes,
+  grid_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm_in,bank_cfg_we,bank_routes,
       {actor_req,host_req},{actor_we,host_we},{actor_addr,host_addr},{actor_data,host_wdata},ready,rvalid,mem_data);
   assign host_ready=ready[0];assign host_rvalid=rvalid[0];assign host_rdata=mem_data[7:0];
   wire actor_accept=mode_uart && req && ready[1];

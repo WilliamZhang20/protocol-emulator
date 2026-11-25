@@ -43,6 +43,11 @@ module grid_unified_tb;
   task automatic cfg(input [6:0] a,input [15:0] v);
     begin @(negedge clk);cfg_addr=a;cfg_data=v;cfg_we=1;@(negedge clk);cfg_we=0;end
   endtask
+  // Configuration writes reach their cells through grid_config_tree three
+  // clocks later; wait before inspecting configured.
+  task automatic settle;
+    begin repeat(3) @(negedge clk);end
+  endtask
   task automatic banks(input [1:0] v);
     begin @(negedge clk);bank_routes=v;bank_cfg_we=1;@(negedge clk);bank_cfg_we=0;end
   endtask
@@ -63,6 +68,7 @@ module grid_unified_tb;
       $readmemh(uart_image,image_words);
       for(k=0;k<66;k=k+1) cfg(7'(k),image_words[k]);
       bit_period=int'(image_words[1]);
+      settle();
       if(!configured) $fatal(1,"invalid UART grid image");
     end
   endtask
@@ -72,6 +78,7 @@ module grid_unified_tb;
       if(spi_image=="") $fatal(1,"supply SPI_IMAGE");
       $readmemh(spi_image,image_words);
       for(k=0;k<66;k=k+1) cfg(7'(k),image_words[k]);
+      settle();
       if(!configured) $fatal(1,"invalid SPI grid image");
     end
   endtask
@@ -134,7 +141,7 @@ module grid_unified_tb;
     banks(2'b00);spi_test(0);
     banks(2'b11);spi_test(0);
     cfg(20,image_words[20] & 16'hfff8);spi_test(1); // disconnect MOSI at its first grid link
-    cfg(48,22);@(negedge clk);arm=1;#1;
+    cfg(48,22);settle();arm=1;#1;
     if(configured || pin_oe!=0) $fatal(1,"invalid grid selector must disable outputs");
     @(negedge clk);arm=0;
     cfg(48,image_words[48]);cfg(63,16'h2005);

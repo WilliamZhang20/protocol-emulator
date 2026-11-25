@@ -43,6 +43,11 @@ module grid_stream_fabric_tb;
   task automatic cfg(input [6:0] a,input [15:0] v);
     begin @(negedge clk);cfg_addr=a;cfg_data=v;cfg_we=1;@(negedge clk);cfg_we=0;end
   endtask
+  // Configuration writes reach their cells through grid_config_tree three
+  // clocks later; wait before inspecting configured.
+  task automatic settle;
+    begin repeat(3) @(negedge clk);end
+  endtask
   task automatic banks(input [1:0] v);
     begin @(negedge clk);bank_routes=v;bank_cfg_we=1;@(negedge clk);bank_cfg_we=0;end
   endtask
@@ -63,6 +68,7 @@ module grid_stream_fabric_tb;
       $readmemh(uart_image,image_words);
       for(k=0;k<66;k=k+1) cfg(7'(k),image_words[k]);
       bit_period=int'(image_words[1]);
+      settle();
       if(!configured) $fatal(1,"invalid UART grid image");
     end
   endtask
@@ -72,6 +78,7 @@ module grid_stream_fabric_tb;
       if(spi_image=="") $fatal(1,"supply SPI_IMAGE");
       $readmemh(spi_image,image_words);
       for(k=0;k<66;k=k+1) cfg(7'(k),image_words[k]);
+      settle();
       if(!configured) $fatal(1,"invalid SPI grid image");
     end
   endtask
@@ -90,6 +97,29 @@ module grid_stream_fabric_tb;
       if(spi_error) $fatal(1,"SPI error");
       host_read(200,8'h0f);host_read(201,8'hff);
       @(negedge clk);arm=0;#1;if(pin_oe!=0) $fatal(1,"SPI disarm");
+    end
+  endtask
+  // Arm and start on the clock after a configuration write: the fabric must
+  // not arm, and the start must be held, until the write reaches its cell.
+  // The in-flight write disconnects MOSI, so a transfer that overtook it
+  // would shift the payload instead of zeros.
+  task automatic ordering_test;
+    integer k;
+    begin
+      spi_source_addr=100;spi_dest_addr=200;pin_in=2'b11;
+      cfg(20,image_words[20]);
+      arm=1;host_write(100,8'h0a);host_write(101,8'h5c);@(negedge clk);arm=0;
+      cfg(20,image_words[20] & 16'hfff8);
+      arm=1;spi_start=1;@(negedge clk);spi_start=0;#1;
+      if(pin_oe!=0 || !spi_active) $fatal(1,"arm or start overtook a configuration write");
+      fork
+        begin for(k=0;k<12;k=k+1) begin @(posedge pin_out[1]);#1;
+          if(pin_out[0]!==0) $fatal(1,"SPI used the stale route at bit %0d",k);
+        end end
+        begin @(posedge spi_done);end
+      join
+      if(spi_error) $fatal(1,"SPI error after held start");
+      @(negedge clk);arm=0;
     end
   endtask
   task automatic two_frame_test;
@@ -182,7 +212,8 @@ module grid_stream_fabric_tb;
     two_frame_test();
     expect_length_error(3,4);expect_length_error(2,1);expect_length_error(2,3);expect_length_error(4,2);
     cfg(20,image_words[20] & 16'hfff8);spi_test(1); // disconnect MOSI at its first grid link
-    cfg(48,22);@(negedge clk);arm=1;#1;
+    ordering_test();
+    cfg(48,22);settle();arm=1;#1;
     if(configured || pin_oe!=0) $fatal(1,"invalid grid selector must disable outputs");
     @(negedge clk);arm=0;
     cfg(48,image_words[48]);cfg(63,16'h2005);

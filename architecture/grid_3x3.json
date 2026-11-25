@@ -71,7 +71,12 @@
     "temporal_rows": [96, 111], "alternate_context_words": [112, 116], "temporal_oe_gate_word": 123,
     "extension_words": [128, 184], "extension_reset_to_zero": true, "extension_switch_words": [128, 151],
     "lut4_truth_words": [152, 155], "lut4_input_words": [156, 171], "timer23_words": [172, 175],
-    "timer23_input_words": [176, 181], "sequencer_event_input_words": [182, 183], "sequencer_event_enable_word": 184
+    "timer23_input_words": [176, 181], "sequencer_event_input_words": [182, 183], "sequencer_event_enable_word": 184,
+    "distribution": {"module": "grid_config_tree", "stages": ["root", "cell leaf"], "leaves": 16, "leaf_bits": 26,
+      "leaf_fields": {"valid": [25, 25], "bank_route_command": [24, 24], "address": [23, 16], "data": [15, 0]},
+      "leaf_cells": "leaves 0-14 are grid cells 0-14; leaf 15 is the stream scheduler",
+      "write_visible_after_cycles": 3,
+      "arm": "the fabric arms only after every accepted write has landed; disarm is immediate; a start received meanwhile is held"}
   },
   "temporal": {
     "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,

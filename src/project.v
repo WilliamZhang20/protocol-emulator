@@ -33,7 +33,7 @@ module tt_um_protocol_emulator (
   wire [15:0] image_word={ui_in,cfg_low};
   wire safe_arm=arm && source_valid && dest_valid;
   grid_stream_fabric #(.USE_MACRO(1)) fabric(
-      .clk(clk),.rst_n(reset_n),.arm(safe_arm),.cfg_we(image_write),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
+      .clk(clk),.rst_n(reset_n),.arm_in(safe_arm),.cfg_we(image_write),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
       .bank_cfg_we(cfg_write),.bank_routes(ui_in[1:0]),
       .host_req(host_req),.host_we(host_we),.host_addr(host_addr),.host_wdata(host_wdata),
       .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),

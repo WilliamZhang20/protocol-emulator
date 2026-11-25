@@ -115,6 +115,18 @@ all 185 words (0–184):
 
 Words 66, 67 and 68 set TX length, RX capacity and pad feedback. Extended
 compiler images include them; the original 66-word component images do not.
+Configuration storage is distributed. `grid_config_tree` registers each
+accepted write once at the root, next to the host link, and once more in a
+leaf for each cell (0–14) plus one for the stream scheduler. Every
+configuration register is written only from its own cell's leaf, so no
+configuration net spans the chip. In the 1aa32b5 layout the old global write
+bus and its address decode accounted for over half of the routed wire. A
+write lands three clocks after it is accepted. The fabric arms only once
+every accepted write has landed, and a start received in that window is
+held. Disarm is immediate. Bank-route commands use the same path, so they
+stay ordered with word 88. The image format, word addresses and host
+commands are unchanged.
+
 Before a configuration write, the host must clear address bits 9:8: opcode 0
 changes only the low eight bits, so issue opcode 1 with zero first after any
 SRAM access above address 255. A configuration write with nonzero high bits is
