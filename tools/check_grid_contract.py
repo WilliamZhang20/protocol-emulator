@@ -41,6 +41,13 @@ def check(contract, modules):
                        ('shifter0', 'fabric_v2_shift'), ('shifter1', 'fabric_v2_shift'),
                        ('crc', 'fabric_crc'), ('coded_shifter', 'fabric_shifter')]:
         assert core[contract['resources'][name]['instance']]['type'] == kind
+    # The coded tile and CRC share direct registered handshake signals, not
+    # independent soft routes; catch drift that would silently corrupt FCS.
+    coder = core[contract['resources']['coded_shifter']['instance']]['connections']
+    crc = core[contract['resources']['crc']['instance']]['connections']
+    for codec_port, crc_port in [('crc_absorb', 'link_absorb'), ('crc_bit', 'link_bit'), ('crc_emit', 'link_emit')]:
+        assert coder[codec_port] == crc[crc_port][:1], codec_port
+    assert coder['crc_in'] == crc['tail_out']
     sinks = modules['grid_core']['netnames']['sink']['bits']
     for name, first in [('timer0', 0), ('shifter0', 3), ('timer1', 12), ('shifter1', 15)]:
         resource = contract['resources'][name]

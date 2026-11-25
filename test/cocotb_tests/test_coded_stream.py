@@ -103,8 +103,6 @@ async def run_usb_data_packet(dut, image_file, program_file):
     await command(4,0);await command(4,8);await config(75,image[75])
     await command(4,0);await command(4,4)
     assert int(dut.uio_oe.value)&0x80,'coded temporal configuration did not arm'
-    for i,byte in enumerate(packet):await write_byte(100+i,byte)
-    expected=usb_encode(packet+crc16_usb(data).to_bytes(2,'little'))
     async def monitor():
         samples=[]
         for _ in range(15000):
@@ -114,24 +112,31 @@ async def run_usb_data_packet(dut, image_file, program_file):
             samples.append(('Z' if oe&0x60!=0x60 else ('K' if dp and not dm else 'J' if dm and not dp else 'SE0' if not dp and not dm else 'SE1')))
             if pins&0x80:return samples,oe
         assert False,'USB packet did not finish'
-    for _ in range(2):
-        task=cocotb.start_soon(monitor());await command(5,0);samples,oe=await task
-        found=[]
-        for offset in range(min(200,len(samples))):
-            if (samples[offset:offset+33*len(expected):33]==expected and
-                all(len(samples[offset+i*33+3:offset+(i+1)*33-3])==27 and
-                    all(x==symbol for x in samples[offset+i*33+3:offset+(i+1)*33-3])
-                    for i,symbol in enumerate(expected))):found.append(offset)
-        if not found:
-            runs=[]
-            for x in samples:
-                if runs and runs[-1][0]==x:runs[-1][1]+=1
-                else:runs.append([x,1])
-            dut._log.info('USB observed runs: %s',runs)
-        assert found,('USB waveform mismatch',len(samples),len(expected))
-        assert oe&0x60==0,'bus not released after EOP'
-        state['op']=4;state['strobe']=0;drive();await ClockCycles(dut.clk,5);await FallingEdge(dut.clk)
-        assert not (int(dut.uo_out.value)&0x40),'packet engine reported underrun/error'
+    packets=[packet]
+    if len(data)==8:
+        # Same configured byte length, host replaces SRAM contents at runtime.
+        packets += [packet[:2]+bytes(8), packet[:2]+bytes([0x55,0xaa]*4)]
+    for current in packets:
+        for i,byte in enumerate(current):await write_byte(100+i,byte)
+        expected=usb_encode(current+crc16_usb(current[2:]).to_bytes(2,'little'))
+        for _ in range(2):
+            task=cocotb.start_soon(monitor());await command(5,0);samples,oe=await task
+            found=[]
+            for offset in range(min(200,len(samples))):
+                if (samples[offset:offset+33*len(expected):33]==expected and
+                    all(len(samples[offset+i*33+3:offset+(i+1)*33-3])==27 and
+                        all(x==symbol for x in samples[offset+i*33+3:offset+(i+1)*33-3])
+                        for i,symbol in enumerate(expected))):found.append(offset)
+            if not found:
+                runs=[]
+                for x in samples:
+                    if runs and runs[-1][0]==x:runs[-1][1]+=1
+                    else:runs.append([x,1])
+                dut._log.info('USB observed runs: %s',runs)
+            assert found,('USB waveform mismatch',len(samples),len(expected))
+            assert oe&0x60==0,'bus not released after EOP'
+            state['op']=4;state['strobe']=0;drive();await ClockCycles(dut.clk,5);await FallingEdge(dut.clk)
+            assert not (int(dut.uo_out.value)&0x40),'packet engine reported underrun/error'
     dut._log.info('USB low-speed DATA0 packet, CRC, stuffing and EOP sent across chip pins')
 
 

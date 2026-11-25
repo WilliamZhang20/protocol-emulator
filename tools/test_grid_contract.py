@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from check_grid_contract import check, SOURCES
 
 ROOT = Path(__file__).resolve().parents[1]
 contract = json.loads((ROOT / 'architecture/grid_3x3.json').read_text())
@@ -27,4 +28,18 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
             raise SystemExit(f'ERROR: {name} mutation was accepted')
         if name == 'switch turns' and 'proof did fail' not in result.stdout.lower():
             raise SystemExit(f'ERROR: switch mutation failed for an unexpected reason: {result.stdout}')
-print('PASS: contract checker rejects mutated placement, FIFO depth and switch turns')
+    # Mutate the elaborated direct CRC-to-coder link rather than just the
+    # metadata: accepting this would produce silently wrong packet FCS.
+    netlist = Path(tmp) / 'grid.json'
+    script = ('read_verilog ' + ' '.join('src/' + x for x in SOURCES) +
+              '; hierarchy -check -top grid_stream_fabric; proc; write_json ' + str(netlist))
+    subprocess.run([sys.argv[1], '-Q', '-q', '-p', script], cwd=ROOT, check=True)
+    modules = json.loads(netlist.read_text())['modules']
+    modules['grid_core']['cells']['coded_tile']['connections']['crc_in'] = ['0']
+    try:
+        check(contract, modules)
+    except AssertionError:
+        pass
+    else:
+        raise SystemExit('ERROR: broken coded CRC link was accepted')
+print('PASS: contract checker rejects topology, FIFO, switch and CRC-link mutations')
