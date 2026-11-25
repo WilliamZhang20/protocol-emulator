@@ -93,8 +93,8 @@ module grid_core(
       if(!arm && cfg_we && cfg_addr==123) begin temporal_oe_gate<=cfg_data[2:0];temporal_oe_gate_valid<=cfg_data[15:3]==0;end
       if(!arm && cfg_we && cfg_addr>=117 && cfg_addr<=122) coder_written[cfg_addr-117]<=1;
       if(ext_write) begin
-        // One valid-bit write per word (a per-branch form crashed Verilator 5.020).
-        if(ext_index!=56 && !(ext_index>=44 && ext_index<48)) ext_valid[ext_index[5:0]]<=ext_word_valid;
+        // Constant-index loop: a variable bit select crashed Verilator 5.020.
+        for(e=0;e<56;e=e+1) if({24'b0,ext_index}==e && !(e>=44 && e<48)) ext_valid[e]<=ext_word_valid;
         if(ext_index<24) ext_switch[ext_index[4:0]]<=cfg_data[11:0];
         else if(ext_index<28) ext_truth[ext_index[1:0]]<=cfg_data;
         else if(ext_index>=44 && ext_index<48) timer_word[ext_index[1:0]]<=cfg_data;
