@@ -46,7 +46,7 @@ module grid_unified_tb;
   // Configuration writes reach their cells through grid_config_tree three
   // clocks later; wait before inspecting configured.
   task automatic settle;
-    begin repeat(3) @(negedge clk);end
+    begin repeat(5) @(negedge clk);end
   endtask
   task automatic banks(input [1:0] v);
     begin @(negedge clk);bank_routes=v;bank_cfg_we=1;@(negedge clk);bank_cfg_we=0;end

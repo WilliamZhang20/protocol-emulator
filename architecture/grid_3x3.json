@@ -76,7 +76,9 @@
       "leaf_fields": {"valid": [25, 25], "bank_route_command": [24, 24], "address": [23, 16], "data": [15, 0]},
       "leaf_cells": "leaves 0-14 are grid cells 0-14; leaf 15 is the stream scheduler",
       "write_visible_after_cycles": 3,
-      "arm": "the fabric arms only after every accepted write has landed; disarm is immediate; a start received meanwhile is held"}
+      "validity_register_stages": 2,
+      "arm_after_cycles": 5,
+      "arm": "the fabric arms only after every accepted write has landed and the registered validity result reflects it; disarm is immediate; a start received meanwhile is held"}
   },
   "temporal": {
     "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,

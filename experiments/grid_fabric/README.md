@@ -121,9 +121,11 @@ leaf for each cell (0–14) plus one for the stream scheduler. Every
 configuration register is written only from its own cell's leaf, so no
 configuration net spans the chip. In the 1aa32b5 layout the old global write
 bus and its address decode accounted for over half of the routed wire. A
-write lands three clocks after it is accepted. The fabric arms only once
-every accepted write has landed, and a start received in that window is
-held. Disarm is immediate. Bank-route commands use the same path, so they
+write lands three clocks after it is accepted. Configuration validity is a
+deep check over static words, so it is registered twice (in the grid core and
+in the scheduler). The fabric arms only five clocks after the last accepted
+write, once that registered result is current, and a start received in that
+window is held. Disarm is immediate. Bank-route commands use the same path, so they
 stay ordered with word 88. The image format, word addresses and host
 commands are unchanged.
 

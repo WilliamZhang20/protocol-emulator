@@ -76,7 +76,10 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire temporal_ready=!temporal_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
     contexts_configured && temporal_programmed[temporal_entry] && !rx_autostart);
   wire packet_ready=!packet_mode || (packet_mode_valid && !rx_autostart && packet_configured);
-  assign configured=format_valid && grid_configured && route_valid && temporal_ready && packet_ready;
+  wire configured_now=format_valid && grid_configured && route_valid && temporal_ready && packet_ready;
+  reg configured_q;
+  always @(posedge clk) if(!rst_n) configured_q<=0; else configured_q<=configured_now;
+  assign configured=configured_q;
   assign tx_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
   assign spi_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_spi_done;
   assign tx_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;

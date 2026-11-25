@@ -46,7 +46,7 @@ module grid_stream_fabric_tb;
   // Configuration writes reach their cells through grid_config_tree three
   // clocks later; wait before inspecting configured.
   task automatic settle;
-    begin repeat(3) @(negedge clk);end
+    begin repeat(5) @(negedge clk);end
   endtask
   task automatic banks(input [1:0] v);
     begin @(negedge clk);bank_routes=v;bank_cfg_we=1;@(negedge clk);bank_cfg_we=0;end
@@ -217,7 +217,7 @@ module grid_stream_fabric_tb;
     if(configured || pin_oe!=0) $fatal(1,"invalid grid selector must disable outputs");
     @(negedge clk);arm=0;
     cfg(48,image_words[48]);cfg(63,16'h2005);
-    spi_source_addr=1023;tx_base=1023;@(negedge clk);arm=1;
+    spi_source_addr=1023;tx_base=1023;settle();arm=1;
     @(negedge clk);spi_start=1;@(negedge clk);spi_start=0;
     if(!spi_done || !spi_error || spi_active) $fatal(1,"dual-lane source range not rejected");
     @(negedge clk);arm=0;spi_source_addr=100;tx_base=100;rx_capacity=16;saw_tx_done=0;

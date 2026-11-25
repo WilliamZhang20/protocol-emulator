@@ -55,7 +55,7 @@ module grid_core(
   wire coder_serial,coder_active,coder_absorb,coder_bit,coder_emit;
   wire coder_pulls,coder_rx_request,coder_rx_eop,coder_rx_err,coder_word;
   wire [7:0] coder_rx_byte;wire [15:0] coder_rx_data,coder_status;
-  assign packet_configured=(&coder_written) && (!coder_tail_required ||
+  wire packet_configured_now=(&coder_written) && (!coder_tail_required ||
     (cfg[4][8] && (&crc_written) && crc_shape_valid && crc_link_valid));
   wire [35:0] switch_valid;
   wire [18:0] sink_valid;
@@ -64,7 +64,7 @@ module grid_core(
   wire tick,running,tvalid,level,rise,fall,serial;
   wire tick1,running1,tvalid1,level1,rise1,fall1,serial1;
   wire live=arm && rst_n && configured;
-  assign configured=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
+  wire configured_now=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
     (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid);
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
@@ -244,7 +244,18 @@ module grid_core(
   assign context_unique[7]=!context_routes[1][10] || !context_routes[4][10] || context_routes[1][4:0]!=context_routes[4][4:0];
   assign context_unique[8]=!context_routes[2][10] || !context_routes[4][10] || context_routes[2][4:0]!=context_routes[4][4:0];
   assign context_unique[9]=!context_routes[3][10] || !context_routes[4][10] || context_routes[3][4:0]!=context_routes[4][4:0];
-  assign contexts_configured=(&context_written) && (&context_valid) && (&context_unique);
+  wire contexts_configured_now=(&context_written) && (&context_valid) && (&context_unique);
+  // Validity is a deep function of static configuration. It is registered
+  // here and again in the scheduler; grid_config_tree holds arm off until
+  // both stages reflect the last accepted write.
+  reg configured_q,contexts_configured_q,packet_configured_q;
+  always @(posedge clk) begin
+    if(!rst_n) begin configured_q<=0;contexts_configured_q<=0;packet_configured_q<=0;end
+    else begin configured_q<=configured_now;contexts_configured_q<=contexts_configured_now;packet_configured_q<=packet_configured_now;end
+  end
+  assign configured=configured_q;
+  assign contexts_configured=contexts_configured_q;
+  assign packet_configured=packet_configured_q;
   assign temporal_tick=tick;
   assign temporal_pins=sync;
   genvar q;
@@ -316,14 +327,16 @@ endmodule
 module grid_config_tree(
   input wire clk,rst_n,accept,bank,input wire [7:0] addr,input wire [15:0] data,
   output wire [16*26-1:0] leaves,output wire busy);
-  reg root_valid,trail;
+  reg root_valid; reg [2:0] trail;
   reg [24:0] root_bus;
   always @(posedge clk) begin
     if(!rst_n) begin root_valid<=0;trail<=0;end
-    else begin root_valid<=accept;trail<=root_valid;end
+    else begin root_valid<=accept;trail<={trail[1:0],root_valid};end
     root_bus<={bank,addr,data};
   end
-  assign busy=root_valid || trail;
+  // A write lands in its cell register 3 clocks after acceptance; the two
+  // registered validity stages need 2 more before the fabric may arm.
+  assign busy=root_valid || (|trail);
   genvar k;
   generate for(k=0;k<16;k=k+1) begin: leaf
     reg valid;
