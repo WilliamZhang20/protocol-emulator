@@ -20,7 +20,9 @@
 
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
-  "PL_TARGET_DENSITY_PCT": 60,
+  "// PL_TARGET_DENSITY_PCT": "40, not the template 60: at ~28% stdcell utilization 60 packed all logic into the left ~55% of the die around the SRAMs; run 45498815170 (6397ff6) ended global routing with 178 Metal2/3 overflows and detailed routing with 3 unfixable shorts across SRAM1 (126 KLayout M3.b). Lower density spreads cells over the empty right side.",
+  "PL_TARGET_DENSITY_PCT": 40,
+  "// 92068bf": "Moving bank 1 next to bank 0 (x=235.44) at density 60 did not route: detailed routing still had 806 violations after 43 iterations and hit the 6 h CI limit (run 45526662215). Keep the 10f2416 placement, which signed off; the 5x3 grid raises effective utilization from 0.26 to about 0.33, still under 40.",
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
   "//": "The value is in nanoseconds, so 20ns == 50MHz.",
@@ -61,7 +63,6 @@
   "CLOCK_PORT": "clk",
 
   "//": "IHP 1024x8 single-port SRAM macro integration",
-  "// MACROS": "Both SRAMs sit together at the left edge, R0 at y=81 (the signed-off bank-0 placement), so the logic area is contiguous. Bank 1 at x=480 sat inside the logic as a 147x336 um wall with no free routing layer over it; run 45498815170 (6397ff6) overflowed global routing around it and left net6416 shorted across it (126 KLayout M3.b).",
   "MACROS": {
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
@@ -70,7 +71,7 @@
           "orientation": "R0"
         },
         "fabric.memory.row2_col2.bank.macro_bank.memory.sram": {
-          "location": [235.44, 81],
+          "location": [480, 81],
           "orientation": "R0"
         }
       },
@@ -109,20 +110,20 @@
   "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only. The body rectangles block Metal2-4 over both SRAMs (prism SRAM guide), from y=82 so the bottom-edge pin connections (y<=81.13) stay free: run 45498815170 (6397ff6) routed net6416 on Metal3 across SRAM1 at y=165.48 and failed with 126 M3.b violations.",
   "ROUTING_OBSTRUCTIONS": [
     ["Metal3", 174.0, 80.4, 189.4, 81.0],
-    ["Metal3", 367.44, 80.4, 382.85, 81.0],
+    ["Metal3", 612.0, 80.4, 627.4, 81.0],
     ["Metal2", 42.0, 82.0, 188.88, 417.46],
     ["Metal3", 42.0, 82.0, 188.88, 417.46],
     ["Metal4", 42.0, 82.0, 188.88, 417.46],
-    ["Metal2", 235.44, 82.0, 382.32, 417.46],
-    ["Metal3", 235.44, 82.0, 382.32, 417.46],
-    ["Metal4", 235.44, 82.0, 382.32, 417.46]
+    ["Metal2", 480.0, 82.0, 626.88, 417.46],
+    ["Metal3", 480.0, 82.0, 626.88, 417.46],
+    ["Metal4", 480.0, 82.0, 626.88, 417.46]
   ],
 
-  "// FP_OBSTRUCTIONS": "Keep cells clear of the first SRAM's left-side routing trap and both edges of the second SRAM. The initial two-bank CI run had 284 M1.b spacing violations at x=480 and x=626.88, where cells abutted the second macro; the keepouts moved with the macro to x=235.44.",
+  "// FP_OBSTRUCTIONS": "Keep cells clear of the first SRAM's left-side routing trap and both edges of the second SRAM. The initial two-bank CI run had 284 M1.b spacing violations at x=480 and x=626.88, where cells abutted the second macro.",
   "FP_OBSTRUCTIONS": [
     [0.0, 78.5, 42.0, 417.5],
-    [232.44, 78.5, 235.44, 417.5],
-    [382.32, 78.5, 385.44, 417.5]
+    [477.0, 78.5, 480.0, 417.5],
+    [626.88, 78.5, 630.0, 417.5]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",
