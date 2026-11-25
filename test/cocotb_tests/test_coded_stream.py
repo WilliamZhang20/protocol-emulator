@@ -47,8 +47,15 @@ async def ethernet_manchester_frame(dut):
             samples.append(((pins>>6)&1,(pins>>5)&1,oe))
             if pins&0x80:return samples
         assert False,'packet did not finish'
+    async def contend():
+        # The host and packet reader share SRAM0. These writes are outside
+        # the packet buffer and occur while the 10 Mb/s stream is active.
+        for i in range(20):
+            await write_byte(600+i,(i*37)&255)
     for _ in range(2):
-        task=cocotb.start_soon(monitor());await command(5,0);samples=await task
+        task=cocotb.start_soon(monitor());await command(5,0)
+        traffic=cocotb.start_soon(contend())
+        samples=await task;await traffic
         observed=[p for p,n,oe in samples]
         found=[]
         for offset in range(min(100,len(observed))):
