@@ -59,7 +59,7 @@
   "temporal": {
     "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,
     "runtime_context_switching": true, "configuration_static_while_armed": true,
-    "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_or_coded_stream_done", "tx_stream_empty"],
+    "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done_or_coded_start", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_or_coded_stream_done", "tx_stream_empty"],
     "row_encoding": {"action": [3, 0], "event": [6, 4], "true_next": [10, 7], "false_next": [14, 11], "halt": [15, 15]},
     "halt_error_action_bit": 2, "alternate_context_slots": 5,
     "context_encoding": {"sink_index": [4, 0], "selector": [9, 5], "enable": [10, 10], "reserved": [15, 11]},

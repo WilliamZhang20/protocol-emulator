@@ -32,7 +32,7 @@
     "93": 1
   },
   "full_source_function_compiled": false,
-  "limitations": "Frame fragment only; link pulses, idle behavior and analog PHY are not implemented.",
+  "limitations": "Frame fragment only; link pulses and analog PHY are not implemented.",
   "payload_base": 100,
   "payload_bytes": [
     85,
@@ -104,5 +104,27 @@
     44,
     45
   ],
-  "source_profile": "ethernet-stored-frame"
+  "source_profile": "ethernet-stored-frame",
+  "temporal": {
+    "entry": 0,
+    "idle_actions": 8,
+    "rows": [
+      168,
+      2400,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776
+    ]
+  }
 }

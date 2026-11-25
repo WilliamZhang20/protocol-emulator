@@ -49,5 +49,27 @@
   ],
   "rx_capacity": 6,
   "source_cycles": 42,
-  "source_test": "select IR and write and read the user DR"
+  "source_test": "select IR and write and read the user DR",
+  "temporal": {
+    "entry": 0,
+    "idle_actions": 8,
+    "rows": [
+      2188,
+      2408,
+      504,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776,
+      32776
+    ]
+  }
 }

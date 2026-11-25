@@ -131,7 +131,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire writer_start=arm && configured && !packet_mode && ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid));
   wire reader_consume=packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
   wire fire=state==FIRE;
-  wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],temporal_pins[1],temporal_pins[0],finished[0],temporal_tick,1'b1};
+  wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],temporal_pins[1],temporal_pins[0],(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
   wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
     cfg_we && cfg_addr>=96 && cfg_addr<=111,cfg_addr[3:0],cfg_data,

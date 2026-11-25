@@ -57,7 +57,7 @@ async def run_jtag_source_test(dut, fixture):
     assert len(payload) == 2 * frames
     tdi = [(payload[2*i] >> bit) & 1 for i in range(frames) for bit in range(8)]
     tms = [(payload[2*i+1] >> bit) & 1 for i in range(frames) for bit in range(8)]
-    image_path = Path(os.environ.get('JTAG_IMAGE', root / 'grid-jtag.mem'))
+    image_path = Path(os.environ.get('JTAG_IMAGE', root / 'grid-jtag-temporal.mem'))
     image = [int(x, 16) for x in image_path.read_text().splitlines()]
     await command(4, 11)
     for addr, word in enumerate(image):
@@ -103,6 +103,7 @@ async def run_jtag_source_test(dut, fixture):
                 assert index == len(tms), (index, len(tms))
                 assert state == 'IDLE', state
                 return expected_rx
+        dut._log.info('JTAG timeout after %d edges, TAP=%s, uio=%#x oe=%#x', index, state, int(dut.uio_out.value), int(dut.uio_oe.value))
         assert False, 'JTAG transaction did not complete'
 
     task = cocotb.start_soon(tap())

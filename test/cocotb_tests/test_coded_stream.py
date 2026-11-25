@@ -36,6 +36,7 @@ async def ethernet_manchester_frame(dut):
     for index,word in enumerate(image):await config(index,word)
     await command(4,0);await command(4,4)
     assert int(dut.uio_oe.value)&0x80,'coded stream did not arm'
+    assert (int(dut.uio_out.value)&0x60)==0,'Ethernet outputs must be quiet before transmit'
     for i,byte in enumerate(payload):await write_byte(100+i,byte)
     bits=lsb_bits(payload+ethernet_fcs(frame));expected=[x for b in bits for x in (1-b,b)]
     async def monitor():
@@ -56,6 +57,7 @@ async def ethernet_manchester_frame(dut):
         assert found,('no exact Manchester/FCS stream',len(samples),len(expected),observed[:80],expected[:40])
         offset=found[0]
         assert all(n==1-p and (oe&0x60)==0x60 for p,n,oe in samples[offset:offset+2*len(expected)])
+        assert samples[-1][0:2]==(0,0),'Ethernet outputs must return to quiet after transmit'
         state['op']=4;state['strobe']=0;drive();await ClockCycles(dut.clk,5);await FallingEdge(dut.clk)
         assert not (int(dut.uo_out.value)&0x40),'packet engine reported underrun/error'
     dut._log.info('Ethernet preamble, frame and FCS transmitted in %d Manchester half-bits',len(expected))
