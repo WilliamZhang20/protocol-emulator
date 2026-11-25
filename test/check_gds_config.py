@@ -18,7 +18,7 @@ CONFIG_PATH = ROOT / "src" / "config.json"
 MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 INSTANCES = {
     "fabric.memory.row2_col0.bank.macro_bank.memory.sram": [42, 81],
-    "fabric.memory.row2_col2.bank.macro_bank.memory.sram": [480, 81],
+    "fabric.memory.row2_col2.bank.macro_bank.memory.sram": [235.44, 81],
 }
 MACRO_DIR = ROOT / "macro" / MACRO_NAME
 PDN_CONFIG_PATH = ROOT / "src" / "pdn_cfg.tcl"
@@ -174,7 +174,7 @@ def main() -> None:
     positions = list(INSTANCES.values())
     require(positions[0][0] + 146.88 < positions[1][0], "the SRAM macro footprints overlap")
     fp_obstructions = config.get("FP_OBSTRUCTIONS", [])
-    for needed in ([477.0, 78.5, 480.0, 417.5], [626.88, 78.5, 630.0, 417.5]):
+    for needed in ([232.44, 78.5, 235.44, 417.5], [382.32, 78.5, 385.44, 417.5]):
         require(any(r[0] <= needed[0] and r[1] <= needed[1] and r[2] >= needed[2] and r[3] >= needed[3]
                     for r in fp_obstructions), f"missing bank-1 cell keepout {needed}")
 
