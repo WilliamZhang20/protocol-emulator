@@ -24,7 +24,12 @@ module tt_um_protocol_emulator (
   wire [2:0] pins,pin_oe,tx_queued,rx_queued;
   wire [7:0] host_rdata;
   wire cfg_write=command && uio_in[4:2]==3'd4 && !arm && !ui_in[2] && (!cfg_mode || ui_in[3]);
-  wire image_write=command && uio_in[4:2]==3'd7 && !arm && cfg_mode && host_addr[9:8]==0;
+  // Per-call host words (TX length, RX capacity, TX and RX bases) may also be
+  // written while armed and idle, so a program's calls keep its pins driven.
+  // The fabric ignores every configuration write while armed.
+  wire host_word=host_addr[7:0]==66 || host_addr[7:0]==67 || host_addr[7:0]==89 || host_addr[7:0]==90;
+  wire image_write=command && uio_in[4:2]==3'd7 && cfg_mode && host_addr[9:8]==0 &&
+    (!arm || (host_word && !tx_active && !spi_active));
   wire [15:0] image_word={ui_in,cfg_low};
   wire safe_arm=arm && source_valid && dest_valid;
   grid_stream_fabric #(.USE_MACRO(1)) fabric(
@@ -42,8 +47,11 @@ module tt_um_protocol_emulator (
       .spi_done(spi_done),.spi_error(spi_error),.spi_active(spi_active));
   wire finish=tx_done || spi_done;
   wire [7:0] status={rx_overflow,tx_error,tx_active,spi_error,spi_active,3'b000};
+  // Idle opcode views: 4 status, 5 received-byte count (low 8 bits, for
+  // autonomous RX streams), 7 the third output pin.
   assign uo_out=(uio_in[4:2]==3'd7 && !sync2) ? {7'b0,pins[2]} :
-                (uio_in[4:2]==3'd4 && !sync2) ? status : read_data;
+                (uio_in[4:2]==3'd4 && !sync2) ? status :
+                (uio_in[4:2]==3'd5 && !sync2) ? rx_written[7:0] : read_data;
   assign uio_out={finish,pins[0],pins[1],5'b0};
   assign uio_oe={safe_arm && configured,pin_oe[0],pin_oe[1],5'b0};
   always @(posedge clk) begin
@@ -70,13 +78,13 @@ module tt_um_protocol_emulator (
           3:begin host_we<=0;host_req<=1;end
           4:begin arm<=ui_in[2];if(!arm) cfg_mode<=ui_in[3];end
           5:if(arm && !tx_active && !spi_active) start<=1;
-          6:if(cfg_mode && !arm) cfg_low<=ui_in;else if(!arm) begin source_addr<={2'b00,ui_in};source_valid<=1;end
+          6:if(cfg_mode) cfg_low<=ui_in;else if(!arm) begin source_addr<={2'b00,ui_in};source_valid<=1;end
           7:if(!cfg_mode && !arm) begin dest_addr<={2'b00,ui_in};dest_valid<=1;end
           default:begin end
         endcase
       end
     end
   end
-  wire unused=&{1'b0,rx_received,rx_written,tx_queued,rx_queued,uio_in[7]};
+  wire unused=&{1'b0,rx_received,rx_written[10:8],tx_queued,rx_queued,uio_in[7]};
 endmodule
 `default_nettype wire

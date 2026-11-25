@@ -1,0 +1,124 @@
+{
+  "calls": {
+    "channel": null,
+    "fails": [],
+    "functions": {}
+  },
+  "clock_hz": 50000000,
+  "invariants": [],
+  "pins": {
+    "rx": 1,
+    "tx": 0
+  },
+  "tests": [
+    {
+      "line": 33,
+      "name": "loopback",
+      "peers": [],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "bytes": [
+            85,
+            163,
+            0
+          ],
+          "line": 35,
+          "op": "write",
+          "target": {
+            "stream": "send"
+          }
+        },
+        {
+          "count": 3,
+          "expect": [
+            85,
+            163,
+            0
+          ],
+          "line": 36,
+          "op": "read",
+          "target": {
+            "stream": "recv"
+          }
+        }
+      ],
+      "wires": [
+        [
+          0,
+          1
+        ]
+      ]
+    },
+    {
+      "line": 39,
+      "name": "talks to a terminal",
+      "peers": [
+        {
+          "args": {
+            "bit": 64,
+            "from_chip": {
+              "pin": 0
+            },
+            "to_chip": {
+              "pin": 1
+            }
+          },
+          "kind": "uart_device",
+          "line": 40,
+          "name": "terminal"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "bytes": [
+            104,
+            105
+          ],
+          "line": 41,
+          "op": "write",
+          "target": {
+            "stream": "send"
+          }
+        },
+        {
+          "count": 2,
+          "expect": [
+            104,
+            105
+          ],
+          "line": 42,
+          "op": "read",
+          "target": {
+            "peer": "terminal"
+          }
+        },
+        {
+          "bytes": [
+            111,
+            107
+          ],
+          "line": 43,
+          "op": "write",
+          "target": {
+            "peer": "terminal"
+          }
+        },
+        {
+          "count": 2,
+          "expect": [
+            111,
+            107
+          ],
+          "line": 44,
+          "op": "read",
+          "target": {
+            "stream": "recv"
+          }
+        }
+      ],
+      "wires": []
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "base_words": {
+    "0": 8,
+    "1": 8,
+    "123": 0,
+    "152": 44718,
+    "153": 43690,
+    "172": 4,
+    "173": 4,
+    "184": 3,
+    "2": 40,
+    "3": 0,
+    "4": 7,
+    "53": 8,
+    "54": 8,
+    "55": 1,
+    "63": 5,
+    "64": 0,
+    "65": 0,
+    "66": 3,
+    "67": 3,
+    "68": 0,
+    "69": 0,
+    "70": 0,
+    "71": 0,
+    "72": 0,
+    "73": 0,
+    "74": 0,
+    "75": 0,
+    "76": 0,
+    "88": 0,
+    "89": 100,
+    "90": 200,
+    "93": 0
+  },
+  "full_source_function_compiled": true,
+  "gap_cycles": 4,
+  "half_period_cycles": 8,
+  "interface": {
+    "functions": {
+      "transfer": {
+        "reply": {
+          "base": 200,
+          "count": {
+            "len": "data"
+          }
+        },
+        "sram": [
+          {
+            "base": 100,
+            "bytes": {
+              "arg": "data"
+            }
+          }
+        ],
+        "words": {
+          "66": {
+            "len": "data"
+          },
+          "67": {
+            "len": "data"
+          },
+          "89": 100,
+          "90": 200
+        }
+      }
+    },
+    "pins": {
+      "cs": "uo0",
+      "miso": "uio0",
+      "mosi": "uio6",
+      "sck": "uio5"
+    }
+  },
+  "limitations": "One SRAM byte per word: consecutive words are separate frames, so SCK pauses between words (no edges while paused).",
+  "payload_base": 100,
+  "payload_bytes": [
+    165,
+    60,
+    129
+  ],
+  "reply_base": 200,
+  "sequencer_rows_used": 8,
+  "source_function": "transfer",
+  "source_profile": "spi-mode0-transfer",
+  "temporal": {
+    "entry": 0,
+    "idle_actions": 0,
+    "rows": [
+      2177,
+      4364,
+      4576,
+      2672,
+      10882,
+      11056,
+      13248,
+      32768,
+      32768,
+      32768,
+      32768,
+      32768,
+      32768,
+      32768,
+      32768,
+      32768
+    ]
+  }
+}

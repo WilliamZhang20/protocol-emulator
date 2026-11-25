@@ -111,7 +111,12 @@ compiler images include them; the original 66-word component images do not.
 Before a configuration write, the host must clear address bits 9:8: opcode 0
 changes only the low eight bits, so issue opcode 1 with zero first after any
 SRAM access above address 255. A configuration write with nonzero high bits is
-ignored. Bits 0 and 1 of word 68 select uio[6]
+ignored. The per-call host words (66 and 67, TX length and RX capacity; 89
+and 90, TX and RX bases) may also be written while armed and idle (arm with
+opcode 4 value 0x0C to keep configuration mode), so a program's calls keep its
+pins driven; every other word is accepted only while disarmed. While the host
+link idles on opcode 5, `uo_out` shows the low byte of the received-byte count
+(opcode 4 shows status, opcode 7 the third output pin). Bits 0 and 1 of word 68 select uio[6]
 for input 1 and uio[5] for input 0; clear bits select uio[0]. This setting
 persists across disarm and must be explicitly reset to zero for the supplied
 SPI/UART images. An enabled open-drain output drives only zero and releases on

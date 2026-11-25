@@ -1,0 +1,210 @@
+{
+  "calls": {
+    "channel": 1,
+    "fails": [],
+    "functions": {
+      "transfer": {
+        "id": 0,
+        "params": [
+          {
+            "name": "data",
+            "type": "bytes",
+            "via": 0
+          }
+        ],
+        "result": {
+          "channel": 0
+        },
+        "sends": [
+          {
+            "value": {
+              "a": {
+                "len": "data"
+              },
+              "b": 1,
+              "op": "-"
+            }
+          },
+          {
+            "body": [],
+            "repeat": {
+              "len": "data"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "clock_hz": 50000000,
+  "invariants": [
+    {
+      "check": {
+        "a": {
+          "edge": "changed",
+          "pin": 1
+        },
+        "b": {
+          "a": {
+            "pin": 0
+          },
+          "b": {
+            "const": 0
+          },
+          "op": "=="
+        },
+        "op": "implies"
+      },
+      "line": 43,
+      "name": "SCK only moves while CS is low"
+    }
+  ],
+  "pins": {
+    "cs": 0,
+    "miso": 3,
+    "mosi": 2,
+    "sck": 1
+  },
+  "tests": [
+    {
+      "line": 47,
+      "name": "exchanges bytes with a device",
+      "peers": [
+        {
+          "args": {
+            "cs": {
+              "pin": 0
+            },
+            "miso": {
+              "pin": 3
+            },
+            "mode": 0,
+            "mosi": {
+              "pin": 2
+            },
+            "replies": [
+              90,
+              195,
+              126
+            ],
+            "sck": {
+              "pin": 1
+            }
+          },
+          "kind": "spi_device",
+          "line": 48,
+          "name": "device"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "data": [
+              165,
+              60,
+              129
+            ]
+          },
+          "expect": [
+            90,
+            195,
+            126
+          ],
+          "function": "transfer",
+          "line": 49,
+          "op": "call"
+        },
+        {
+          "count": 3,
+          "expect": [
+            165,
+            60,
+            129
+          ],
+          "line": 50,
+          "op": "read",
+          "target": {
+            "peer": "device"
+          }
+        }
+      ],
+      "wires": []
+    },
+    {
+      "line": 53,
+      "name": "back-to-back transactions",
+      "peers": [
+        {
+          "args": {
+            "cs": {
+              "pin": 0
+            },
+            "miso": {
+              "pin": 3
+            },
+            "mode": 0,
+            "mosi": {
+              "pin": 2
+            },
+            "replies": [
+              1,
+              2,
+              3
+            ],
+            "sck": {
+              "pin": 1
+            }
+          },
+          "kind": "spi_device",
+          "line": 54,
+          "name": "device"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "data": [
+              16
+            ]
+          },
+          "expect": [
+            1
+          ],
+          "function": "transfer",
+          "line": 55,
+          "op": "call"
+        },
+        {
+          "args": {
+            "data": [
+              32,
+              48
+            ]
+          },
+          "expect": [
+            2,
+            3
+          ],
+          "function": "transfer",
+          "line": 56,
+          "op": "call"
+        },
+        {
+          "count": 3,
+          "expect": [
+            16,
+            32,
+            48
+          ],
+          "line": 57,
+          "op": "read",
+          "target": {
+            "peer": "device"
+          }
+        }
+      ],
+      "wires": []
+    }
+  ]
+}

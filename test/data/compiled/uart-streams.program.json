@@ -1,0 +1,341 @@
+{
+  "full_source_program_compiled": false,
+  "general_mapping": false,
+  "host_configuration": {
+    "independent_bank_routes_word": 88,
+    "pad_feedback_value": 0,
+    "pad_feedback_word": 68,
+    "rx_base_word": 90,
+    "rx_capacity_word": 67,
+    "tx_base_word": 89,
+    "tx_length_word": 66
+  },
+  "interface": {
+    "pins": {
+      "rx": "uio0",
+      "tx": "uio6"
+    },
+    "setup_words": {
+      "66": 1,
+      "67": 256,
+      "68": 0,
+      "89": 100,
+      "90": 512
+    },
+    "streams": {
+      "recv": {
+        "base": 512,
+        "capacity": 256,
+        "direction": "from_chip"
+      },
+      "send": {
+        "base": 100,
+        "direction": "to_chip",
+        "length_word": 66
+      }
+    }
+  },
+  "limitations": "Fixed tile placement and hand-written frame scheduling; two turn-restricted route classes, no general stream/function lowering or physical timing proof.",
+  "routing": [
+    {
+      "paths": [
+        {
+          "cell": 2,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 6,
+              "selector": 1,
+              "to": 7
+            },
+            {
+              "direction": 3,
+              "from": 7,
+              "selector": 5,
+              "to": 8
+            },
+            {
+              "direction": 0,
+              "from": 8,
+              "selector": 6,
+              "to": 5
+            },
+            {
+              "direction": 0,
+              "from": 5,
+              "selector": 5,
+              "to": 2
+            }
+          ],
+          "sink": 0
+        },
+        {
+          "cell": 3,
+          "hops": [
+            {
+              "direction": 0,
+              "from": 6,
+              "selector": 1,
+              "to": 3
+            }
+          ],
+          "sink": 3
+        }
+      ],
+      "signal": "tx_start",
+      "source_cell": 6,
+      "source_port": 0,
+      "track": 0
+    },
+    {
+      "paths": [
+        {
+          "cell": 2,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 3,
+              "selector": 2,
+              "to": 4
+            },
+            {
+              "direction": 3,
+              "from": 4,
+              "selector": 5,
+              "to": 5
+            },
+            {
+              "direction": 0,
+              "from": 5,
+              "selector": 6,
+              "to": 2
+            }
+          ],
+          "sink": 1
+        }
+      ],
+      "signal": "tx_done",
+      "source_cell": 3,
+      "source_port": 1,
+      "track": 1
+    },
+    {
+      "paths": [
+        {
+          "cell": 3,
+          "hops": [
+            {
+              "direction": 2,
+              "from": 2,
+              "selector": 1,
+              "to": 1
+            },
+            {
+              "direction": 2,
+              "from": 1,
+              "selector": 5,
+              "to": 0
+            },
+            {
+              "direction": 1,
+              "from": 0,
+              "selector": 7,
+              "to": 3
+            }
+          ],
+          "sink": 4
+        }
+      ],
+      "signal": "tx_tick",
+      "source_cell": 2,
+      "source_port": 0,
+      "track": 0
+    },
+    {
+      "paths": [
+        {
+          "cell": 1,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 3,
+              "selector": 4,
+              "to": 4
+            },
+            {
+              "direction": 0,
+              "from": 4,
+              "selector": 6,
+              "to": 1
+            }
+          ],
+          "sink": 7
+        }
+      ],
+      "signal": "tx_wire",
+      "source_cell": 3,
+      "source_port": 3,
+      "track": 0
+    },
+    {
+      "paths": [
+        {
+          "cell": 5,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 0,
+              "selector": 4,
+              "to": 1
+            },
+            {
+              "direction": 3,
+              "from": 1,
+              "selector": 5,
+              "to": 2
+            },
+            {
+              "direction": 1,
+              "from": 2,
+              "selector": 6,
+              "to": 5
+            }
+          ],
+          "sink": 12
+        },
+        {
+          "cell": 7,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 0,
+              "selector": 4,
+              "to": 1
+            },
+            {
+              "direction": 1,
+              "from": 1,
+              "selector": 6,
+              "to": 4
+            },
+            {
+              "direction": 1,
+              "from": 4,
+              "selector": 5,
+              "to": 7
+            }
+          ],
+          "sink": 15
+        }
+      ],
+      "signal": "rx_fall",
+      "source_cell": 0,
+      "source_port": 3,
+      "track": 0
+    },
+    {
+      "paths": [
+        {
+          "cell": 5,
+          "hops": [
+            {
+              "direction": 3,
+              "from": 7,
+              "selector": 2,
+              "to": 8
+            },
+            {
+              "direction": 0,
+              "from": 8,
+              "selector": 6,
+              "to": 5
+            }
+          ],
+          "sink": 13
+        }
+      ],
+      "signal": "rx_done",
+      "source_cell": 7,
+      "source_port": 1,
+      "track": 1
+    },
+    {
+      "paths": [
+        {
+          "cell": 7,
+          "hops": [
+            {
+              "direction": 2,
+              "from": 5,
+              "selector": 1,
+              "to": 4
+            },
+            {
+              "direction": 1,
+              "from": 4,
+              "selector": 7,
+              "to": 7
+            }
+          ],
+          "sink": 16
+        },
+        {
+          "cell": 7,
+          "hops": [
+            {
+              "direction": 2,
+              "from": 5,
+              "selector": 1,
+              "to": 4
+            },
+            {
+              "direction": 1,
+              "from": 4,
+              "selector": 7,
+              "to": 7
+            }
+          ],
+          "sink": 17
+        }
+      ],
+      "signal": "rx_tick",
+      "source_cell": 5,
+      "source_port": 0,
+      "track": 1
+    },
+    {
+      "paths": [
+        {
+          "cell": 7,
+          "hops": [
+            {
+              "direction": 1,
+              "from": 0,
+              "selector": 2,
+              "to": 3
+            },
+            {
+              "direction": 1,
+              "from": 3,
+              "selector": 5,
+              "to": 6
+            },
+            {
+              "direction": 3,
+              "from": 6,
+              "selector": 6,
+              "to": 7
+            }
+          ],
+          "sink": 18
+        }
+      ],
+      "signal": "rx_wire",
+      "source_cell": 0,
+      "source_port": 1,
+      "track": 2
+    }
+  ],
+  "source_validated": true,
+  "target": "grid-3x3-uart-experiment"
+}

@@ -469,10 +469,14 @@ stream changes are uncommitted work in progress, not a completed architecture.
    first, such as USB low-speed transmit and 10BASE-T digital transmit, then
    expand. These milestones alone do not prove complete standards or physical
    interface support.
-   **Functionally complete (RTL pins and generic gate level):** SPI, UART,
-   I²C write, JTAG TAP, USB low-speed DATA0 transmit, Ethernet frames up to
-   full MTU and the whole 10BASE-T `transmit()` link session (link pulses,
-   frame, TP_IDL) compiled from source. The session needed a grid extension
+   **Functionally complete (RTL pins and generic gate level):** SPI
+   `transfer()` and I²C `write_read()` (repeated START, reads, NACK, clock
+   stretching) compiled from their whole source functions onto the sequencer,
+   UART streams, I²C write, JTAG TAP, USB low-speed DATA0 transmit, Ethernet
+   frames up to full MTU and the whole 10BASE-T `transmit()` link session (link
+   pulses, frame, TP_IDL) compiled from source. A generic runner
+   (`test_compiled.py`) replays each compiled program's own source tests at the
+   chip pins with specification-written peers. The session needed a grid extension
    to 5×3 (two timers, four registered LUT4 cells, routed sequencer events);
    earlier images are unchanged. See the
    [coverage record](experiments/grid_fabric/PROTOCOL_COVERAGE.md). The
