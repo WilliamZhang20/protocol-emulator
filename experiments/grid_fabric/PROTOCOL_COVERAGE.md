@@ -13,7 +13,7 @@ and host commands only; they do not access internal RTL hierarchy.
 | I²C | `examples/i2c.spt` restricted `write_only` source profile; generic sequencer and routed contexts | START, address, data, ACK/NACK, stretch, STOP and RX SRAM in `test_temporal_i2c.py` | No reads, repeated starts or general runtime-variable source programs. |
 | JTAG | Both JTAG example source tests are lowered to a static stream of paired TDI/TMS bytes; source expectations retain bit offsets. The generic temporal sequencer requests each paired-shifter frame. | TAP IDCODE and user-register write/read, including peer assertions, in `test_jtag_tap.py` | Literal `step`/`scan8` calls only; padding is emitted only in TAP idle and adds clocks. Not a general JTAG source compiler. TMS uses the multiplexed `uo[0]` output. |
 | USB | `examples/usb.spt` restricted low-speed DATA0 transmit profile, with specialized payload of 0–8 data bytes. Uses coder, CRC, credit reader and temporal controller for EOP and output release. | Empty, mixed/stuffed and eight-byte packets; runtime SRAM payload changes, CRC, NRZI, per-bit timing, SE0/J EOP, bus release and repeated transmissions in `test_coded_stream.py` | Transmit subset only: no USB receive, enumeration, token packets or analog compliance. 50 MHz clock, 33 cycles/bit. |
-| Ethernet | `WIRE_FRAME` from `examples/ethernet_tx_coded.spt`; coder and CRC emit a stored-frame fragment. | 60-byte frame, preamble and FCS checked at digital differential pins over two transmissions while the host also writes to SRAM0; 40 MHz clock, two cycles/half-bit | Source **frame fragment**, not the full `transmit()` session: link pulses, timed inter-frame behavior and analog PHY/magnetics are not implemented or verified. Outputs return to a quiet digital state after a frame. |
+| Ethernet | `WIRE_FRAME` from `examples/ethernet_tx_coded.spt`; coder and CRC emit a stored-frame fragment. | 60-byte and full-MTU frames, preamble and FCS checked at digital differential pins; full-MTU payload crosses the SRAM bank boundary. Host writes contend with SRAM0; 40 MHz clock, two cycles/half-bit | Source **frame fragment**, not the full `transmit()` session: link pulses, timed inter-frame behavior and analog PHY/magnetics are not implemented or verified. Outputs return to a quiet digital state after a frame. |
 
 The JTAG compiler reports `peer_checks` for source assertions on the simulated
 attached TAP. These are checked by the independent peer model; they are not
@@ -36,7 +36,7 @@ case, a three-client round robin has at most a three-cycle grant wait and the
 registered return adds a cycle. With a 32-cycle minimum Ethernet byte period,
 `ceil(4 / 32) + 1 = 2` gives the depth-two starting bound; USB has more slack.
 That bound assumes continuous requests, same-bank ordered returns and no
-additional routed latency. Cross-bank drains or new pipelines need a fresh bound. The source-specific USB
+additional routed latency. Cross-bank drains or new pipelines need a fresh bound; the full-MTU RTL test exercises the existing crossing but does not prove a worst-case bound. The source-specific USB
 end sequence uses two routing contexts and the generic sequencer; a configurable
 output-enable gate releases the bus after EOP. No protocol-specific USB state
 machine is hardwired into the chip.

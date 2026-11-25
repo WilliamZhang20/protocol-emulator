@@ -7,7 +7,7 @@ complete protocol compiler.
 
 The machine-readable [grid contract](../../architecture/grid_3x3.json) records
 the current tile inventory, coordinates, ports, routing, memory, configuration,
-and fixed temporal scheduler. `make grid-contract-check` compares elaborated
+and programmable temporal sequencer. `make grid-contract-check` compares elaborated
 RTL instances and neighbor links against it and proves all switch selector
 combinations with Yosys SAT. This check does not yet prove every configuration
 word, tile behavior, SRAM arbitration rule, or physical timing against the
@@ -19,7 +19,7 @@ row 0       [input IO] ---- [output IO] ---- [timer 0]
                 |                |                |
 row 1       [shift 0] ----- [2-input LUT] --- [timer 1]
                 |                |                |
-row 2       [SRAM 0] ------ [shift 1] ------ [SRAM 1 + CRC]
+row 2       [SRAM 0 + temporal control] -- [shift 1] -- [SRAM 1 + CRC + coded shift]
 ```
 
 Each line represents **four independent one-bit tracks in each direction**.
@@ -51,7 +51,7 @@ SPI, UART and the JTAG component. Protocol functions are not fully lowered.
 The sibling CIRCT mapper's `--compile-grid-spi` and `--compile-grid-uart`
 accept restricted, source-validated examples and allocate one of four tracks
 per signal using either legal turn class with conflict checks and backtracking. Tile placement is currently fixed; this is not a general placer,
-full source lowering or proof of timing. The 66 16-bit words are:
+full source lowering or proof of timing. The original component images use words 0–65; the extended protocol images use additional words:
 
 * 0–4: timer 0 first/period, shift 0 width/order, LUT truth table, pin enables,
   open-drain mask, input-event polarities and CRC enable (word 4 bit 8).
@@ -70,21 +70,29 @@ full source lowering or proof of timing. The 66 16-bit words are:
   follow lane 0's bytes in the selected SRAM bank. The scheduler checks ranges
   and waits for both lanes. A frame can be repeated across a longer TX stream.
 * 69–76: optional CRC tile registers, reusing the legacy configurable 1–32 bit
-  `fabric_crc` contract. Direct legacy shifter links are not present here.
+  `fabric_crc` contract. The coded shifter has a direct registered CRC link.
   Words 77–80 select its absorb, emit, reset and data inputs from the SRAM 1
   cell's local or neighboring signals. In the CRC's internal 64-line inputs,
   these are lines 0, 1, 2 and 32 respectively. When enabled, all 12 words
-  must be written, routes must be valid and direct-link bits must be clear,
-  otherwise the grid does not arm.
+  must be written and routes must be valid. Direct-link bit 6 selects the
+  coded shifter; bit 7 and upper reserved bits must be clear.
 * 88: optional independent bank routes for host, reader and writer in bits
   0–2. Leaving configuration mode preserves this setting; the ordinary bank
   command assigns both streams together.
 * 89–90: full 10-bit TX and RX base offsets. Reserved upper bits must be zero.
   Word 88 supplies their starting banks; a stream may cross from bank 0 into
   bank 1 but cannot wrap beyond the two-bank capacity.
+* 91–92: temporal sequencer enable and entry/idle actions; 93 selects the
+  generic coded-stream path. Words 96–111 hold its 16 rows, 112–116 hold
+  sparse alternate-context selectors, 117–122 configure the coded shifter,
+  and 123 controls temporal gating of output enables.
 
-The host additionally writes word 66 TX length, 67 RX length and 68 pad
-feedback; these are not in the image. Bits 0 and 1 of word 68 select uio[6]
+Words 66, 67 and 68 set TX length, RX capacity and pad feedback. Extended
+compiler images include them; the original 66-word component images do not.
+Before a configuration write, the host must clear address bits 9:7: opcode 0
+changes only the low eight bits, so issue opcode 1 with zero first after any
+SRAM access above address 255. A configuration write with nonzero high bits is
+ignored. Bits 0 and 1 of word 68 select uio[6]
 for input 1 and uio[5] for input 0; clear bits select uio[0]. This setting
 persists across disarm and must be explicitly reset to zero for the supplied
 SPI/UART images. An enabled open-drain output drives only zero and releases on
@@ -106,22 +114,7 @@ overflow and assertions, followed by synthesis and a two-macro count check.
 return, shared-bank contention at one byte per 16 clocks, and an isolated
 two-alternative prefetch primitive. The branch primitive is not connected to
 the chip top yet. See [the stream contract](../grid_stream/README.md).
-`make sim` checks the chip interface with only top-level pins, including a
-reconfigured signal route, bidirectional pads, observed input edges and a
-clock-stretch primitive and a nine-bit I2C byte phase with ACK, NACK and a
-stretched clock. START, STOP and source transaction lowering are not covered.
-It checks a source-validated JTAG `scan8` component with distinct SRAM-loaded
-TDI and TMS lanes and TDO sampling. Full TAP transactions, dynamic `step` and
-the source function's exact cycle semantics remain open.
-It also checks the reused CRC using USB and Ethernet
-vectors and payloads from the earlier protocol tests. The sibling compiler
-can regenerate the images and extract a partial source-derived CRC profile;
-it does not yet lower packet control or CRC connections.
-`make grid-coder-reuse-test` separately tests the old coded-shifter and CRC
-blocks together against the existing USB NRZI/stuffing encoder and Ethernet
-Manchester/FCS reference. It verifies the encoded packet bitstreams in an
-isolated reuse harness; these coded blocks are not yet connected to the grid's
-SRAM stream or pin tiles, and link-pulse/USB end-of-packet control is not tested
-there.
-Physical placement, routed timing, pad timing, full-program compilation,
-I2C/JTAG/Ethernet/USB support and a broader topology comparison remain open.
+`make sim` checks the chip interface with only top-level pins. The current
+[JTAG, I²C, USB and Ethernet coverage and limitations](PROTOCOL_COVERAGE.md)
+include temporal transactions and source-derived coded-stream images. The
+physical flow and placed gate-level tests are separate from RTL simulation.

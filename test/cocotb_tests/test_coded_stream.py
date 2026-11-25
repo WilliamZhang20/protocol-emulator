@@ -7,8 +7,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from cocotb_tests.line_codes import ethernet_fcs, lsb_bits
 
-@cocotb.test()
-async def ethernet_manchester_frame(dut):
+async def run_ethernet_frame(dut, image_file, program_file):
     cocotb.start_soon(Clock(dut.clk,25,unit='ns').start())
     dut.ena.value=1;dut.rst_n.value=0;dut.ui_in.value=0
     state={'op':0,'strobe':0}
@@ -24,12 +23,17 @@ async def ethernet_manchester_frame(dut):
         await FallingEdge(dut.clk);state['strobe']=0;drive()
         await ClockCycles(dut.clk,4)
     async def config(i,w):
-        await command(0,i);await command(6,w&255);await command(7,w>>8)
+        # Config writes are rejected unless host address bits 9:7 are zero.
+        await command(1,0);await command(0,i);await command(6,w&255);await command(7,w>>8)
     async def write_byte(addr,value):
         await command(0,addr&255);await command(1,addr>>8);await command(2,value)
+    async def read_byte(addr):
+        await command(0,addr&255);await command(1,addr>>8);await command(3,0)
+        await ClockCycles(dut.clk,5);await FallingEdge(dut.clk)
+        return int(dut.uo_out.value)
     root=Path(__file__).parents[1]/'data'
-    image=[int(x,16) for x in Path(os.environ.get('CODED_IMAGE',root/'grid-ethernet-coded.mem')).read_text().splitlines()]
-    program=json.loads(Path(os.environ.get('CODED_PROGRAM',root/'grid-ethernet-coded.json')).read_text())
+    image=[int(x,16) for x in Path(os.environ.get('CODED_IMAGE',root/image_file)).read_text().splitlines()]
+    program=json.loads(Path(os.environ.get('CODED_PROGRAM',root/program_file)).read_text())
     payload=bytes(program['payload_bytes']);frame=payload[8:]
     assert len(image)==124 and image[66]==len(payload)
     await command(4,8)
@@ -37,11 +41,25 @@ async def ethernet_manchester_frame(dut):
     await command(4,0);await command(4,4)
     assert int(dut.uio_oe.value)&0x80,'coded stream did not arm'
     assert (int(dut.uio_out.value)&0x60)==0,'Ethernet outputs must be quiet before transmit'
-    for i,byte in enumerate(payload):await write_byte(100+i,byte)
+    for i,byte in enumerate(payload):
+        address=100+i
+        if address==1024:
+            assert [await read_byte(i) for i in range(100,108)]==list(payload[:8]), 'bank 0 payload corrupted during load'
+            # Host addresses are bank-local; keep the reader at bank 0 so it
+            # crosses into bank 1 naturally while the host selects bank 1.
+            await command(4,0);await command(4,8);await config(88,1)
+            await command(4,0);await command(4,4)
+        await write_byte(address%1024,byte)
+    if len(payload)>924:
+        assert [await read_byte(i) for i in range(4)]==list(payload[924:928]), 'bank 1 payload corrupted during load'
+        # Confirm that bank-1 loading did not alias and overwrite bank 0.
+        await command(4,0);await command(4,8);await config(88,0)
+        await command(4,0);await command(4,4)
+        assert [await read_byte(i) for i in range(100,108)]==list(payload[:8]), 'bank 1 load aliased bank 0'
     bits=lsb_bits(payload+ethernet_fcs(frame));expected=[x for b in bits for x in (1-b,b)]
     async def monitor():
         samples=[]
-        for _ in range(8000):
+        for _ in range(max(8000,2*len(expected)+2000)):
             await FallingEdge(dut.clk);await Timer(1,unit='ns')
             pins=int(dut.uio_out.value);oe=int(dut.uio_oe.value)
             samples.append(((pins>>6)&1,(pins>>5)&1,oe))
@@ -51,8 +69,10 @@ async def ethernet_manchester_frame(dut):
         # The host and packet reader share SRAM0. These writes are outside
         # the packet buffer and occur while the 10 Mb/s stream is active.
         for i in range(20):
-            await write_byte(600+i,(i*37)&255)
-    for _ in range(2):
+            await write_byte(i,(i*37)&255)
+    for phase in range(4 if len(payload)>924 else 2):
+        if phase:
+            await ClockCycles(dut.clk,phase)
         task=cocotb.start_soon(monitor());await command(5,0)
         traffic=cocotb.start_soon(contend())
         samples=await task;await traffic
@@ -61,6 +81,15 @@ async def ethernet_manchester_frame(dut):
         for offset in range(min(100,len(observed))):
             seq=observed[offset:offset+2*len(expected):2]
             if seq==expected and observed[offset:offset+2*len(expected)]==[v for x in expected for v in (x,x)]:found.append(offset)
+        if not found:
+            candidates=[]
+            for off in range(min(100,len(observed))):
+                seq=observed[off:off+2*len(expected):2]
+                prefix=next((i for i,(a,b) in enumerate(zip(seq,expected)) if a!=b),len(seq))
+                candidates.append((prefix,off))
+            best,off=max(candidates)
+            dut._log.info('Best Ethernet match (half-bits,offset): %s', (best,off))
+            dut._log.info('Output first 100 cycles: %s',observed[:100])
         assert found,('no exact Manchester/FCS stream',len(samples),len(expected),observed[:80],expected[:40])
         offset=found[0]
         assert all(n==1-p and (oe&0x60)==0x60 for p,n,oe in samples[offset:offset+2*len(expected)])
@@ -86,7 +115,8 @@ async def run_usb_data_packet(dut, image_file, program_file):
         await FallingEdge(dut.clk);state['strobe']=0;drive()
         await ClockCycles(dut.clk,4)
     async def config(i,w):
-        await command(0,i);await command(6,w&255);await command(7,w>>8)
+        # Config writes are rejected unless host address bits 9:7 are zero.
+        await command(1,0);await command(0,i);await command(6,w&255);await command(7,w>>8)
     async def write_byte(addr,value):
         await command(0,addr&255);await command(1,addr>>8);await command(2,value)
     root=Path(__file__).parents[1]/'data'
@@ -138,6 +168,16 @@ async def run_usb_data_packet(dut, image_file, program_file):
             state['op']=4;state['strobe']=0;drive();await ClockCycles(dut.clk,5);await FallingEdge(dut.clk)
             assert not (int(dut.uo_out.value)&0x40),'packet engine reported underrun/error'
     dut._log.info('USB low-speed DATA0 packet, CRC, stuffing and EOP sent across chip pins')
+
+
+@cocotb.test()
+async def ethernet_manchester_frame(dut):
+    await run_ethernet_frame(dut, 'grid-ethernet-coded.mem', 'grid-ethernet-coded.json')
+
+
+@cocotb.test()
+async def ethernet_mtu_cross_bank(dut):
+    await run_ethernet_frame(dut, 'grid-ethernet-mtu.mem', 'grid-ethernet-mtu.json')
 
 
 @cocotb.test()
