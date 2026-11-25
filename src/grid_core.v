@@ -74,6 +74,7 @@ module grid_core(
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
   integer e;
+  wire ext_word_valid=ext_index<24 ? cfg_data[15:12]==0 : ext_index<28 ? 1'b1 : cfg_data<=21;
   always @(posedge clk) begin
     if(!rst_n) begin written<=0;crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;temporal_oe_gate<=0;temporal_oe_gate_valid<=1;context_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;
       ext_valid<={57{1'b1}};seq_enable<=0;seq_select[0]<=0;seq_select[1]<=0;
@@ -92,16 +93,15 @@ module grid_core(
       if(!arm && cfg_we && cfg_addr==123) begin temporal_oe_gate<=cfg_data[2:0];temporal_oe_gate_valid<=cfg_data[15:3]==0;end
       if(!arm && cfg_we && cfg_addr>=117 && cfg_addr<=122) coder_written[cfg_addr-117]<=1;
       if(ext_write) begin
-        if(ext_index<24) begin ext_switch[ext_index[4:0]]<=cfg_data[11:0];ext_valid[ext_index[5:0]]<=cfg_data[15:12]==0;end
-        else if(ext_index<28) begin ext_truth[ext_index[1:0]]<=cfg_data;ext_valid[ext_index[5:0]]<=1;end
+        // One valid-bit write per word (a per-branch form crashed Verilator 5.020).
+        if(ext_index!=56 && !(ext_index>=44 && ext_index<48)) ext_valid[ext_index[5:0]]<=ext_word_valid;
+        if(ext_index<24) ext_switch[ext_index[4:0]]<=cfg_data[11:0];
+        else if(ext_index<28) ext_truth[ext_index[1:0]]<=cfg_data;
         else if(ext_index>=44 && ext_index<48) timer_word[ext_index[1:0]]<=cfg_data;
-        else if(ext_index<44 || (ext_index>=48 && ext_index<54)) begin
-          // LUT4 inputs at 156-171, timer 2/3 start/stop/hold at 176-181.
-          ext_select[select_index]<=cfg_data[4:0];
-          ext_valid[ext_index[5:0]]<=cfg_data<=21;
-        end else if(ext_index==54 || ext_index==55) begin
-          seq_select[ext_index[0]]<=cfg_data[4:0];ext_valid[ext_index[5:0]]<=cfg_data<=21;
-        end else if(ext_index==56) begin seq_enable<=cfg_data[1:0];ext_valid[56]<=cfg_data[15:2]==0;end
+        // LUT4 inputs at 156-171, timer 2/3 start/stop/hold at 176-181.
+        else if(ext_index<44 || (ext_index>=48 && ext_index<54)) ext_select[select_index]<=cfg_data[4:0];
+        else if(ext_index==54 || ext_index==55) seq_select[ext_index[0]]<=cfg_data[4:0];
+        else if(ext_index==56) begin seq_enable<=cfg_data[1:0];ext_valid[56]<=cfg_data[15:2]==0;end
       end
       if(!arm && cfg_we && cfg_addr>=69 && cfg_addr<=80) begin
         crc_written[cfg_addr-69]<=1;

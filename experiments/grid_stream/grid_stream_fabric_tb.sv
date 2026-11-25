@@ -3,7 +3,7 @@
 // this bench is not included in the gate-level cocotb modules.
 module grid_stream_fabric_tb;
   reg clk=0,rst_n=0,arm=0,cfg_we=0,bank_cfg_we=0;
-  reg [6:0] cfg_addr=0;reg [15:0] cfg_data=0;
+  reg [7:0] cfg_addr=0;reg [15:0] cfg_data=0;
   reg [1:0] bank_routes=0,pin_in=2'b11;
   reg host_req=0,host_we=0,tx_start=0,spi_start=0;
   reg [9:0] spi_source_addr=100,spi_dest_addr=200;
