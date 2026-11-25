@@ -31,7 +31,12 @@ coder under registered responses, periodic contention and intentional
 starvation. An RTL-only fault-injection bench also verifies that the actual
 chip fabric reports an underrun, releases the USB bus, drains the reader and
 restarts. These tests are not a proof that every legal
-shared-bank traffic pattern meets every wire deadline. The source-specific USB
+shared-bank traffic pattern meets every wire deadline. For the tested same-bank
+case, a three-client round robin has at most a three-cycle grant wait and the
+registered return adds a cycle. With a 32-cycle minimum Ethernet byte period,
+`ceil(4 / 32) + 1 = 2` gives the depth-two starting bound; USB has more slack.
+That bound assumes continuous requests, same-bank ordered returns and no
+additional routed latency. Cross-bank drains or new pipelines need a fresh bound. The source-specific USB
 end sequence uses two routing contexts and the generic sequencer; a configurable
 output-enable gate releases the bus after EOP. No protocol-specific USB state
 machine is hardwired into the chip.
