@@ -74,3 +74,16 @@ module fabric_v2_shift(
   end
 endmodule
 `default_nettype wire
+
+// Registered 4-input logic cell. The output is only the flop, so routed
+// feedback (including through its own cell) cannot form a combinational loop.
+`default_nettype none
+module grid_lut4_cell(
+    input wire clk, rst_n, arm,
+    input wire [15:0] truth, input wire [3:0] in,
+    output reg q);
+  always @(posedge clk)
+    if (!rst_n || !arm) q <= 1'b0;
+    else q <= truth[in];
+endmodule
+`default_nettype wire

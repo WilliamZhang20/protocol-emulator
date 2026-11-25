@@ -469,6 +469,15 @@ stream changes are uncommitted work in progress, not a completed architecture.
    first, such as USB low-speed transmit and 10BASE-T digital transmit, then
    expand. These milestones alone do not prove complete standards or physical
    interface support.
+   **Functionally complete (RTL pins and generic gate level):** SPI, UART,
+   I²C write, JTAG TAP, USB low-speed DATA0 transmit, Ethernet frames up to
+   full MTU and the whole 10BASE-T `transmit()` link session (link pulses,
+   frame, TP_IDL) compiled from source. The session needed a grid extension
+   to 5×3 (two timers, four registered LUT4 cells, routed sequencer events);
+   earlier images are unchanged. See the
+   [coverage record](experiments/grid_fabric/PROTOCOL_COVERAGE.md). The
+   physical (GDS/precheck/post-layout GL) result for the extended grid is the
+   remaining gate.
 
 **Acceptance gate:** one hardware design, configured by compiler-generated
 programs, runs the agreed SPI, UART, I2C, JTAG, USB, and Ethernet workloads

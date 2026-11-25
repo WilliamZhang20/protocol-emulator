@@ -23,7 +23,7 @@ async def run_ethernet_frame(dut, image_file, program_file):
         await FallingEdge(dut.clk);state['strobe']=0;drive()
         await ClockCycles(dut.clk,4)
     async def config(i,w):
-        # Config writes are rejected unless host address bits 9:7 are zero.
+        # Config writes are rejected unless host address bits 9:8 are zero.
         await command(1,0);await command(0,i);await command(6,w&255);await command(7,w>>8)
     async def write_byte(addr,value):
         await command(0,addr&255);await command(1,addr>>8);await command(2,value)
@@ -115,7 +115,7 @@ async def run_usb_data_packet(dut, image_file, program_file):
         await FallingEdge(dut.clk);state['strobe']=0;drive()
         await ClockCycles(dut.clk,4)
     async def config(i,w):
-        # Config writes are rejected unless host address bits 9:7 are zero.
+        # Config writes are rejected unless host address bits 9:8 are zero.
         await command(1,0);await command(0,i);await command(6,w&255);await command(7,w>>8)
     async def write_byte(addr,value):
         await command(0,addr&255);await command(1,addr>>8);await command(2,value)

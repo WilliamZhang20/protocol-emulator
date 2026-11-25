@@ -24,11 +24,11 @@ module tt_um_protocol_emulator (
   wire [2:0] pins,pin_oe,tx_queued,rx_queued;
   wire [7:0] host_rdata;
   wire cfg_write=command && uio_in[4:2]==3'd4 && !arm && !ui_in[2] && (!cfg_mode || ui_in[3]);
-  wire image_write=command && uio_in[4:2]==3'd7 && !arm && cfg_mode && host_addr[9:7]==0;
+  wire image_write=command && uio_in[4:2]==3'd7 && !arm && cfg_mode && host_addr[9:8]==0;
   wire [15:0] image_word={ui_in,cfg_low};
   wire safe_arm=arm && source_valid && dest_valid;
   grid_stream_fabric #(.USE_MACRO(1)) fabric(
-      .clk(clk),.rst_n(reset_n),.arm(safe_arm),.cfg_we(image_write),.cfg_addr(host_addr[6:0]),.cfg_data(image_word),
+      .clk(clk),.rst_n(reset_n),.arm(safe_arm),.cfg_we(image_write),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
       .bank_cfg_we(cfg_write),.bank_routes(ui_in[1:0]),
       .host_req(host_req),.host_we(host_we),.host_addr(host_addr),.host_wdata(host_wdata),
       .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),
@@ -56,11 +56,11 @@ module tt_um_protocol_emulator (
       if(host_req && host_ready) host_req<=0;
       if(host_rvalid) read_data<=host_rdata;
       if(image_write) begin
-        if(host_addr[6:0]==66) tx_length<=image_word[10:0];
-        if(host_addr[6:0]==67) rx_capacity<=image_word[10:0];
-        if(host_addr[6:0]==68) pad_feedback<=image_word[1:0];
-        if(host_addr[6:0]==89) begin source_addr<=image_word[9:0];source_valid<=image_word[15:10]==0;end
-        if(host_addr[6:0]==90) begin dest_addr<=image_word[9:0];dest_valid<=image_word[15:10]==0;end
+        if(host_addr[7:0]==66) tx_length<=image_word[10:0];
+        if(host_addr[7:0]==67) rx_capacity<=image_word[10:0];
+        if(host_addr[7:0]==68) pad_feedback<=image_word[1:0];
+        if(host_addr[7:0]==89) begin source_addr<=image_word[9:0];source_valid<=image_word[15:10]==0;end
+        if(host_addr[7:0]==90) begin dest_addr<=image_word[9:0];dest_valid<=image_word[15:10]==0;end
       end
       if(command && !host_req) begin
         case(uio_in[4:2])

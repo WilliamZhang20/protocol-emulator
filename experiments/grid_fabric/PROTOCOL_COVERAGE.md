@@ -1,7 +1,8 @@
 # Stage 5 protocol coverage experiment
 
-The experimental chip top uses one heterogeneous 3×3 grid and the two SRAM
-macros for all cases below. The compiler paths are **restricted source
+The experimental chip top uses one heterogeneous 5×3 grid and the two SRAM
+macros for all cases below. Rows 0–2 are the original grid; every earlier
+image is unchanged and leaves rows 3–4 at their reset (inert) configuration. The compiler paths are **restricted source
 profiles**, not general lowering of arbitrary `.spt` functions. They reject
 source semantics they do not recognize. The chip tests use Tiny Tapeout pins
 and host commands only; they do not access internal RTL hierarchy.
@@ -14,6 +15,7 @@ and host commands only; they do not access internal RTL hierarchy.
 | JTAG | Both JTAG example source tests are lowered to a static stream of paired TDI/TMS bytes; source expectations retain bit offsets. The generic temporal sequencer requests each paired-shifter frame. | TAP IDCODE and user-register write/read, including peer assertions, in `test_jtag_tap.py` | Literal `step`/`scan8` calls only; padding is emitted only in TAP idle and adds clocks. Not a general JTAG source compiler. TMS uses the multiplexed `uo[0]` output. |
 | USB | `examples/usb.spt` restricted low-speed DATA0 transmit profile, with specialized payload of 0–8 data bytes. Uses coder, CRC, credit reader and temporal controller for EOP and output release. | Empty, mixed/stuffed and eight-byte packets; runtime SRAM payload changes, CRC, NRZI, per-bit timing, SE0/J EOP, bus release and repeated transmissions in `test_coded_stream.py` | Transmit subset only: no USB receive, enumeration, token packets or analog compliance. 50 MHz clock, 33 cycles/bit. |
 | Ethernet | `WIRE_FRAME` from `examples/ethernet_tx_coded.spt`; coder and CRC emit a stored-frame fragment. | 60-byte and full-MTU frames, preamble and FCS checked at digital differential pins; full-MTU payload crosses the SRAM bank boundary. Host writes contend with SRAM0; 40 MHz clock, two cycles/half-bit | Source **frame fragment**, not the full `transmit()` session: link pulses, timed inter-frame behavior and analog PHY/magnetics are not implemented or verified. Outputs return to a quiet digital state after a frame. |
+| Ethernet link session | The whole exported `transmit()` of `examples/ethernet_tx_coded.spt` (`ethernet_session` mode): declarations must match the profile exactly, `NLP_TICK` and the frame are parameters, and the body is compiled statement by statement into 15 sequencer rows. Uses only generic tiles: timers 0–3 (cadence, half-bit, pulse, tail), shifter 0 as a 10-tick counter, four registered LUT4 cells (idle-high, positive, negative, tail window) and the sequencer's routed event inputs. | `test_ethernet_session.py`: an observer independent of the configuration checks 4-clock (1,0) link pulses exactly 10×NLP_TICK apart (across the frame and across back-to-back sessions), Manchester data, CRC32 and exactly 12 clocks of TP_IDL. Real-time 16 ms period at 40 MHz (RTL) and NLP_TICK=4000 (RTL and gate level). A mutation that lengthens TP_IDL by one clock is rejected. | Digital transmit waveforms only: no analog PHY/magnetics, receive, collision handling or auto-negotiation. Sessions must send one frame between link pulses; the compiler rejects pulses while `sending` is set, unequal cadence counts and missing tail waits. |
 
 The JTAG compiler reports `peer_checks` for source assertions on the simulated
 attached TAP. These are checked by the independent peer model; they are not

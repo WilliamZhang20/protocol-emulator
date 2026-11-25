@@ -20,7 +20,19 @@ row 0       [input IO] ---- [output IO] ---- [timer 0]
 row 1       [shift 0] ----- [2-input LUT] --- [timer 1]
                 |                |                |
 row 2       [SRAM 0 + temporal control] -- [shift 1] -- [SRAM 1 + CRC + coded shift]
+                |                |                |
+row 3       [LUT4 reg 0] ------ [timer 2] ------ [LUT4 reg 1]
+                |                |                |
+row 4       [LUT4 reg 2] ------ [timer 3] ------ [LUT4 reg 3]
 ```
+
+Rows 3–4 extend the grid by a repeating column pattern (registered logic in
+columns 0 and 2, timers in column 1) using the same switch, track and
+tile-input-selector structure as every other cell. A LUT4 cell drives only its
+flop output (and its complement), so routed feedback cannot form a
+combinational loop; a cell may read its own output. The sequencer's events 3
+and 4 can be replaced by two routed inputs in its own cell (6). The grid is
+physically placed by the flow, not by these logical coordinates.
 
 Each line represents **four independent one-bit tracks in each direction**.
 Every directed outgoing track has a configuration mux: it may originate at
@@ -86,10 +98,17 @@ full source lowering or proof of timing. The original component images use words
   generic coded-stream path. Words 96–111 hold its 16 rows, 112–116 hold
   sparse alternate-context selectors, 117–122 configure the coded shifter,
   and 123 controls temporal gating of output enables.
+* 128–184 (extension, reset to zero; configuration addresses are 8 bits):
+  128–151 switch words for cells 9–14 (four per cell, as above); 152–155 LUT4
+  truth tables, indexed `{d,c,b,a}`; 156–171 LUT4 input selectors (cell k input
+  j at 156+4k+j, sinks 25–40); 172–175 timer 2/3 first and period; 176–181
+  timer 2/3 start, stop and hold selectors (sinks 19–24); 182–183 sequencer
+  event-input selectors (sinks 41–42); 184 bits 0/1 replace sequencer events
+  3/4 with those inputs. Extension sinks have no alternate-context override.
 
 Words 66, 67 and 68 set TX length, RX capacity and pad feedback. Extended
 compiler images include them; the original 66-word component images do not.
-Before a configuration write, the host must clear address bits 9:7: opcode 0
+Before a configuration write, the host must clear address bits 9:8: opcode 0
 changes only the low eight bits, so issue opcode 1 with zero first after any
 SRAM access above address 255. A configuration write with nonzero high bits is
 ignored. Bits 0 and 1 of word 68 select uio[6]

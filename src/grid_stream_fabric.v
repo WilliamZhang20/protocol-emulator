@@ -3,7 +3,7 @@
 // The descriptor selects finite packed words or continuous byte consumption;
 // SRAM request/response handling is shared by both paths.
 module grid_stream_fabric #(parameter USE_MACRO=0)(
-    input wire clk,rst_n,arm,cfg_we,input wire [6:0] cfg_addr,input wire [15:0] cfg_data,
+    input wire clk,rst_n,arm,cfg_we,input wire [7:0] cfg_addr,input wire [15:0] cfg_data,
     input wire bank_cfg_we,input wire [1:0] bank_routes,
     input wire host_req,host_we,input wire [9:0] host_addr,input wire [7:0] host_wdata,
     output wire host_ready,host_rvalid,output wire [7:0] host_rdata,
@@ -49,6 +49,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire [15:0] temporal_programmed;
   wire temporal_active,temporal_done,temporal_error,temporal_halting;
   wire [3:0] temporal_state,sequencer_actions;
+  wire [1:0] seq_events,seq_event_enable;
   wire [3:0] temporal_actions=temporal_active ? sequencer_actions : temporal_idle;
   wire temporal_ready=!temporal_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
     contexts_configured && temporal_programmed[temporal_entry] && !rx_autostart);
@@ -131,17 +132,18 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire writer_start=arm && configured && !packet_mode && ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid));
   wire reader_consume=packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
   wire fire=state==FIRE;
-  wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],temporal_pins[1],temporal_pins[0],(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
+  wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],(seq_event_enable[1] ? seq_events[1] : temporal_pins[1]),(seq_event_enable[0] ? seq_events[0] : temporal_pins[0]),(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
   wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
     cfg_we && cfg_addr>=96 && cfg_addr<=111,cfg_addr[3:0],cfg_data,
     cfg_we && cfg_addr==91 && cfg_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
     sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed);
   grid_core grid(clk,rst_n,arm && format_valid && route_valid && temporal_ready,
-    cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80) || (cfg_addr>=112 && cfg_addr<=123)),cfg_addr,cfg_data,
+    cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80) || (cfg_addr>=112 && cfg_addr<=123) || cfg_addr>=128),cfg_addr,cfg_data,
     fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
     temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
-    packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick);
+    packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
+    seq_events,seq_event_enable);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
   wire writer_valid=rx_autostart ? rx_event : frame_write;

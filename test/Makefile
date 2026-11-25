@@ -20,6 +20,8 @@ COMPILE_ARGS += -DFUNCTIONAL
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
 else
 SIM_BUILD = sim_build/gl
+# Lets long real-time cases skip themselves under gate-level simulation.
+export GATES
 COMPILE_ARGS += -DGL_TEST -DFUNCTIONAL -DSIM
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_io/verilog/sg13cmos5l_io.v
 VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilog/sg13cmos5l_udp.v
@@ -31,6 +33,6 @@ VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPS
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb
-COCOTB_TEST_MODULES = cocotb_tests.test_memory_placement,cocotb_tests.test_temporal_i2c,cocotb_tests.test_jtag_tap,cocotb_tests.test_coded_stream
+COCOTB_TEST_MODULES = cocotb_tests.test_memory_placement,cocotb_tests.test_temporal_i2c,cocotb_tests.test_jtag_tap,cocotb_tests.test_coded_stream,cocotb_tests.test_ethernet_session
 
 include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

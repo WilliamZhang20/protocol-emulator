@@ -1,10 +1,10 @@
 {
   "schema": "protocol-emulator.grid-contract.v1",
-  "name": "grid-3x3-stream-experiment",
+  "name": "grid-5x3-stream-experiment",
   "implementation": {"top": "tt_um_protocol_emulator", "fabric": "grid_stream_fabric", "core": "grid_core", "status": "experimental"},
   "clock": {"hz": 50000000, "input_synchronizer_stages": 2, "physical_timing_verified": false},
   "grid": {
-    "rows": 3, "columns": 3,
+    "rows": 5, "columns": 3,
     "cells": [
       {"id": 0, "row": 0, "column": 0, "resources": ["input_io"], "local_outputs": ["input0_level", "input1_level", "input0_edge", "input1_edge"]},
       {"id": 1, "row": 0, "column": 1, "resources": ["output_io"], "local_outputs": []},
@@ -12,20 +12,27 @@
       {"id": 3, "row": 1, "column": 0, "resources": ["shifter0"], "local_outputs": ["busy", "done", "serial", "serial_or_idle"]},
       {"id": 4, "row": 1, "column": 1, "resources": ["lut"], "local_outputs": ["logic"]},
       {"id": 5, "row": 1, "column": 2, "resources": ["timer1"], "local_outputs": ["tick", "rise", "fall", "level"]},
-      {"id": 6, "row": 2, "column": 0, "resources": ["sram0"], "local_outputs": ["trigger_or_action0", "action1", "action2", "frame_fire"]},
+      {"id": 6, "row": 2, "column": 0, "resources": ["sram0", "sequencer_events"], "local_outputs": ["trigger_or_action0", "action1", "action2", "frame_fire"]},
       {"id": 7, "row": 2, "column": 1, "resources": ["shifter1"], "local_outputs": ["busy", "done", "serial", "serial_or_idle"]},
-      {"id": 8, "row": 2, "column": 2, "resources": ["sram1", "crc", "coded_shifter"], "local_outputs": ["crc_out", "crc_ok", "coded_serial", "coded_active"]}
+      {"id": 8, "row": 2, "column": 2, "resources": ["sram1", "crc", "coded_shifter"], "local_outputs": ["crc_out", "crc_ok", "coded_serial", "coded_active"]},
+      {"id": 9, "row": 3, "column": 0, "resources": ["lut4_0"], "local_outputs": ["q", "q_n"]},
+      {"id": 10, "row": 3, "column": 1, "resources": ["timer2"], "local_outputs": ["tick", "rise", "fall", "level"]},
+      {"id": 11, "row": 3, "column": 2, "resources": ["lut4_1"], "local_outputs": ["q", "q_n"]},
+      {"id": 12, "row": 4, "column": 0, "resources": ["lut4_2"], "local_outputs": ["q", "q_n"]},
+      {"id": 13, "row": 4, "column": 1, "resources": ["timer3"], "local_outputs": ["tick", "rise", "fall", "level"]},
+      {"id": 14, "row": 4, "column": 2, "resources": ["lut4_3"], "local_outputs": ["q", "q_n"]}
     ]
   },
   "bit_network": {
     "directions": ["north", "south", "west", "east"],
     "tracks_per_direction": 4, "width_bits": 1, "hop_cycles": 0,
-    "switch_words": {"first": 5, "words_per_cell": 4, "selector_bits": 3},
+    "switch_words": {"first": 5, "words_per_cell": 4, "selector_bits": 3, "extension_first_cell": 9, "extension_first": 128},
     "selector_values": {"zero": 0, "local_first": 1, "local_last": 4, "straight": 5, "turn_first": 6, "turn_last": 7},
     "turn_classes": [{"tracks": [0, 1], "order": "horizontal_then_vertical"}, {"tracks": [2, 3], "order": "vertical_then_horizontal"}],
     "track_changes": false, "u_turns": false,
     "input_selector": {"constant_zero": 0, "constant_one": 1, "local_first": 2, "north_first": 6, "south_first": 10, "west_first": 14, "east_first": 18, "last": 21},
-    "sink_cells": [2, 2, 2, 3, 3, 3, 3, 1, 1, 1, 4, 4, 5, 5, 5, 7, 7, 7, 7],
+    "sink_cells": [2, 2, 2, 3, 3, 3, 3, 1, 1, 1, 4, 4, 5, 5, 5, 7, 7, 7, 7, 10, 10, 10, 13, 13, 13, 9, 9, 9, 9, 11, 11, 11, 11, 12, 12, 12, 12, 14, 14, 14, 14, 6, 6],
+    "sink_words": [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 57, 58, 59, 60, 61, 62, 176, 177, 178, 179, 180, 181, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 182, 183], "context_overridable_sinks": 19,
     "sink_word_first": 41, "sink_word_split": 12, "sink_word_second": 56,
     "lut_sinks": [10, 11], "lut_local_feedback": false
   },
@@ -34,6 +41,13 @@
     "timer1": {"kind": "timer", "cell": 5, "instance": "timer1", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [53, 54]},
     "shifter0": {"kind": "shifter", "cell": 3, "instance": "shifter", "width_bits_min": 1, "width_bits_max": 16, "inputs": ["start", "shift", "sample", "serial_in"], "outputs": ["busy", "done", "serial", "serial_or_idle"], "config_words": [2]},
     "shifter1": {"kind": "shifter", "cell": 7, "instance": "shifter1", "width_bits_min": 1, "width_bits_max": 16, "inputs": ["start", "shift", "sample", "serial_in"], "outputs": ["busy", "done", "serial", "serial_or_idle"], "config_words": [55]},
+    "timer2": {"kind": "timer", "cell": 10, "instance": "timer2", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [172, 173], "input_sinks": [19, 20, 21]},
+    "timer3": {"kind": "timer", "cell": 13, "instance": "timer3", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [174, 175], "input_sinks": [22, 23, 24]},
+    "lut4_0": {"kind": "lut4_register", "cell": 9, "instance": "lut4[0].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [152], "input_sinks": [25, 26, 27, 28], "local_feedback": true},
+    "lut4_1": {"kind": "lut4_register", "cell": 11, "instance": "lut4[1].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [153], "input_sinks": [29, 30, 31, 32], "local_feedback": true},
+    "lut4_2": {"kind": "lut4_register", "cell": 12, "instance": "lut4[2].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [154], "input_sinks": [33, 34, 35, 36], "local_feedback": true},
+    "lut4_3": {"kind": "lut4_register", "cell": 14, "instance": "lut4[3].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [155], "input_sinks": [37, 38, 39, 40], "local_feedback": true},
+    "sequencer_events": {"kind": "sequencer_port", "cell": 6, "inputs": ["event3", "event4"], "input_sinks": [41, 42], "config_words": [182, 183, 184]},
     "lut": {"kind": "lut", "cell": 4, "inputs": 2, "outputs": 1, "config_words": [3], "local_feedback": false},
     "input_io": {"kind": "input_io", "cell": 0, "pins": 2, "synchronized": true, "edge_polarity_config_word": 4},
     "output_io": {"kind": "output_io", "cell": 1, "pins": 3, "open_drain": true, "physical_pin_access": "outputs 0 and 1 on uio; output 2 is visible on uo[0] only when opcode 7 is idle", "config_words": [4]},
@@ -44,7 +58,7 @@
   },
   "memory": {"bank_count": 2, "total_bytes": 2048, "arbitration": "round_robin_per_bank", "clients": ["host", "reader", "writer"], "read_response_backpressure": false, "reader_fifo_bytes": 2, "writer_fifo_bytes": 2, "reader_start_requires_drained_responses": true, "cross_bank_ordered": true, "cross_bank_wrap": false, "word_links": "combinational_dedicated", "word_link_cycles": 0, "physical_locality_verified": false},
   "configuration": {
-    "word_width_bits": 16, "address_width_bits": 7, "write_while_armed": false,
+    "word_width_bits": 16, "address_width_bits": 8, "write_while_armed": false,
     "base_image_words": [0, 65], "frame_words": [63, 64, 65],
     "frame_fields": {
       "63": {"tx_frame_bytes": [1, 0], "rx_frame_bytes": [3, 2], "rx_lane": [4, 4], "tx_shift": [8, 5], "rx_shift": [12, 9], "second_lane_enable": [13, 13], "second_lane_two_bytes": [14, 14], "reserved": [15, 15]},
@@ -54,12 +68,16 @@
     "crc_words": [69, 80], "bank_routes_word": 88, "tx_base_word": 89, "rx_base_word": 90,
     "bank_routes_fields": {"host": 0, "reader": 1, "writer": 2}, "base_offset_bits": 10,
     "temporal_mode_word": 91, "temporal_entry_idle_word": 92, "coded_stream_mode_word": 93,
-    "temporal_rows": [96, 111], "alternate_context_words": [112, 116], "temporal_oe_gate_word": 123
+    "temporal_rows": [96, 111], "alternate_context_words": [112, 116], "temporal_oe_gate_word": 123,
+    "extension_words": [128, 184], "extension_reset_to_zero": true, "extension_switch_words": [128, 151],
+    "lut4_truth_words": [152, 155], "lut4_input_words": [156, 171], "timer23_words": [172, 175],
+    "timer23_input_words": [176, 181], "sequencer_event_input_words": [182, 183], "sequencer_event_enable_word": 184
   },
   "temporal": {
     "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,
     "runtime_context_switching": true, "configuration_static_while_armed": true,
     "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done_or_coded_start", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_or_coded_stream_done", "tx_stream_empty"],
+    "routed_event_inputs": {"sinks": [41, 42], "replace_events": [3, 4], "enable_word": 184, "enable_bits": [0, 1]},
     "row_encoding": {"action": [3, 0], "event": [6, 4], "true_next": [10, 7], "false_next": [14, 11], "halt": [15, 15]},
     "halt_error_action_bit": 2, "alternate_context_slots": 5,
     "context_encoding": {"sink_index": [4, 0], "selector": [9, 5], "enable": [10, 10], "reserved": [15, 11]},

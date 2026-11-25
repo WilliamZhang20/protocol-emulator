@@ -19,7 +19,8 @@ def check(contract, modules):
     assert contract['schema'] == 'protocol-emulator.grid-contract.v1'
     assert len(cells) == grid['rows'] * grid['columns']
     core = modules['grid_core']['cells']
-    switches = [core[f'mesh[{cell["id"]}].sw'] for cell in cells]
+    first_ext = network['switch_words']['extension_first_cell']
+    switches = [core[f'mesh[{cell["id"]}].' + ('base' if cell['id'] < first_ext else 'extension') + '.sw'] for cell in cells]
     assert sum(c['type'] == 'grid_switch' for c in core.values()) == len(cells)
     for cell, switch in zip(cells, switches):
         index, row, col = cell['id'], cell['row'], cell['column']
@@ -49,6 +50,27 @@ def check(contract, modules):
         assert coder[codec_port] == crc[crc_port][:1], codec_port
     assert coder['crc_in'] == crc['tail_out']
     sinks = modules['grid_core']['netnames']['sink']['bits']
+    for name, resource in contract['resources'].items():
+        if resource['kind'] == 'timer' and 'input_sinks' in resource:
+            assert core[resource['instance']]['type'] == 'fabric_v2_timer'
+        if resource['kind'] == 'lut4_register':
+            assert core[resource['instance']]['type'] == 'grid_lut4_cell'
+            tile = core[resource['instance']]['connections']
+            assert tile['in'] == [sinks[i] for i in resource['input_sinks']], name
+            local = modules['grid_core']['netnames'][f'local_signal[{resource["cell"]}]']['bits']
+            assert tile['q'] == [local[0]], name
+        for i in resource.get('input_sinks', []):
+            assert network['sink_cells'][i] == resource['cell'], (name, i)
+    for name in ('timer2', 'timer3'):
+        resource = contract['resources'][name]
+        tile = core[resource['instance']]
+        for sink, port in zip(resource['input_sinks'], resource['inputs']):
+            assert tile['connections'][port] == [sinks[sink]], (name, port)
+        local = modules['grid_core']['netnames'][f'local_signal[{resource["cell"]}]']['bits']
+        for index, port in enumerate(resource['outputs']):
+            assert tile['connections'][port] == [local[index]], (name, port)
+    assert modules['grid_core']['netnames']['seq_events']['bits'] == [sinks[i] for i in contract['resources']['sequencer_events']['input_sinks']]
+    assert len(network['sink_words']) == len(network['sink_cells'])
     for name, first in [('timer0', 0), ('shifter0', 3), ('timer1', 12), ('shifter1', 15)]:
         resource = contract['resources'][name]
         tile = core[resource['instance']]
@@ -86,7 +108,7 @@ def check(contract, modules):
     for cell in cells:
         for resource in cell['resources']:
             assert contract['resources'][resource]['cell'] == cell['id']
-    assert len(network['sink_cells']) == 19
+    assert len(network['sink_cells']) == 43 and network['context_overridable_sinks'] == 19
     assert network['hop_cycles'] == 0 and contract['temporal']['programmable_sequencer']
     assert top['sequencer']['type'] == 'grid_sequencer'
     seq = modules['grid_sequencer']['memories']['rows']
