@@ -9,18 +9,16 @@ decision to reuse the Rust frontend and experiment with CIRCT lowering.
   chip top and the standalone tile experiments.
 - Compiler experiment: sibling `protocol-emulator-compiler` branch
   `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
-- The experimental Tiny Tapeout top now uses the [structured 3 × 3 grid](experiments/grid_fabric/README.md).
-  Two timers and shifters, a logic tile, I/O and two SRAM tiles communicate
-  through finite configurable neighbor links. A reused programmable CRC tile
-  handles USB CRC-16 and Ethernet CRC-32 reference data through those links.
-  An observed SCL hold primitive is verified for clock stretching; neither
-  a complete I2C transaction nor USB/Ethernet packets have been compiled for
-  the grid. Restricted source-derived SPI
-  and UART images exercise the same grid. Its SRAM word paths are dedicated,
-  SPI, UART and the JTAG component now share credit-based SRAM reader and
-  writer tiles; a two-alternative prefetch block is tested separately but not
-  integrated. Placement is fixed, and source transaction lowering remains incomplete. Physical CI for the
-  grid revision is required; prior passing results apply to the older top.
+- The experimental Tiny Tapeout top now uses the [structured 5 × 3 grid](experiments/grid_fabric/README.md).
+  Four timers, two shifters, a combinational LUT, four registered LUT4 cells,
+  I/O, the temporal sequencer and two SRAM tiles communicate through finite
+  configurable neighbor links; a reused programmable CRC tile and coded shifter
+  serve USB and Ethernet. Restricted source profiles compile SPI `transfer()`,
+  I²C `write_read()`, UART streams, JTAG tests, USB DATA0 transmit and the
+  Ethernet `transmit()` session; [PROTOCOL_COVERAGE.md](experiments/grid_fabric/PROTOCOL_COVERAGE.md)
+  lists the evidence and boundaries. A two-alternative prefetch block is tested
+  separately but not integrated. Placement is fixed and general source lowering
+  remains incomplete; physical results come from the GDS CI run for each commit.
 - Next: compare protocol workloads and alternative grid layouts, extending the
   compiler's actual port/link model and source transaction/stream lowering.
   Distinguish mapping limitations from missing hardware, then implement the
@@ -64,7 +62,7 @@ Cerebras does:
 | Programmable routing for logic plus a hardened NoC for system traffic | Keep 1-bit static tracks for timing signals. Replace the wire-alias word links in `grid_memory.v` with a small word mesh with a register at each router and colours = stream IDs. Do not time-multiplex bit tracks (adds jitter). |
 | Direct block-to-block links (VTR) | Dedicated neighbour links for timer→shifter pairs. The UART image's shift clock currently crosses 3 hops. |
 | Hard blocks vs soft fabric | Harden by corpus frequency. The 8x4 census found logic cells binding, mostly spent on stuffing and sequencing glue; the bit coder was the right move. The LUT is for leftover glue only. |
-| VTR research flow: architecture file, benchmarks, retargetable CAD, area/delay models | This is the laboratory (steps 2–4 below). Use VTR's minimum-channel-width method: find the smallest track count W at which every corpus protocol routes per layout, then size at about 1.3×W instead of guessing 4. Evaluate VPR as the mapper's placer/router on the 3×3 before writing a custom one. |
+| VTR research flow: architecture file, benchmarks, retargetable CAD, area/delay models | This is the laboratory (steps 2–4 below). Use VTR's minimum-channel-width method: find the smallest track count W at which every corpus protocol routes per layout, then size at about 1.3×W instead of guessing 4. Evaluate VPR as the mapper's placer/router on the 5×3 before writing a custom one. |
 | Architecture file → generated fabric (OpenFPGA) | Generate `grid_core` from the architecture file (dimensions, tile type per cell, track count); today cell positions and config addresses are hard-coded. Use OpenFPGA's scan-chain configuration as a reference, not the tool itself (generic LUT fabric would exceed the TT area budget). |
 | "A pipeline is as slow as its slowest stage" (HPIPE) | The mapper reports each stage's slack against the protocol's wire rate. |
 | Choose your precision | Shifter width 1–16 and CRC width 1–32 already do this; also make the bit/byte split a mapping choice. |
@@ -172,7 +170,7 @@ tracks.
   corpus needs more streams than lanes: share links with a stream-ID route
   table and output arbitration, with end-to-end credits so words never block
   inside the mesh.
-- **Build only the links the corpus needs.** A full 2D mesh on the 3×3 is
+- **Build only the links the corpus needs.** A full 2D mesh on the original 3×3 is
   24 directed links × about 11 flops ≈ 264 flops (≈13k µm², close to a CRC
   tile). A registered chain from each SRAM along its row or column to the
   lanes (H2PIPE's daisy chain) is likely enough, especially on 8x4 with one

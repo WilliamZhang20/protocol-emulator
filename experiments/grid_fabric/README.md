@@ -1,11 +1,12 @@
-# Structured 3 × 3 grid experiment
+# Structured 5 × 3 grid experiment
 
 The experimental Tiny Tapeout top instantiates this grid, not the older
 shared-selector fabric. It has no instruction fetch. Configuration is static
 while armed; the grid is an architecture experiment, not a final floorplan or a
 complete protocol compiler.
 
-The machine-readable [grid contract](../../architecture/grid_3x3.json) records
+The machine-readable [grid contract](../../architecture/grid_3x3.json) (the file
+name predates the two extension rows; it describes the 5 × 3 grid) records
 the current tile inventory, coordinates, ports, routing, memory, configuration,
 and programmable temporal sequencer. `make grid-contract-check` compares elaborated
 RTL instances and neighbor links against it and proves all switch selector
@@ -47,23 +48,29 @@ RTL's route graph concrete and finite; they do not establish that the graph can
 fit every useful placement or protocol. Signals can share a route only when
 identical. Registered timers and shifters break protocol feedback loops.
 
-The two bottom-corner cells each instantiate a separate single-port 1024×8
+The two row-2 corner cells (cells 6 and 8) each instantiate a separate single-port 1024×8
 IHP SRAM macro with local host/actor arbitration. The actor word bus follows
-dedicated point-to-point links from shift 0 down and across the bottom row;
+dedicated point-to-point links from shift 0 down and across row 2;
 static configuration chooses either bank. These word links and the host access
 bus are **not** a general configurable data mesh, and the SRAM macros are not
 physically distributed throughout the full floorplan. SPI and UART reuse the
-the same credit-based stream reader and writer. Each has a two-byte FIFO;
+same credit-based stream reader and writer. Each has a two-byte FIFO;
 the bank arbitrates host, reader and writer independently. The shifter frame
 packer is configured by format words and consumes the same reader stream for
-SPI, UART and the JTAG component. Protocol functions are not fully lowered.
+SPI, UART and the JTAG component. Only the restricted source profiles listed in
+[PROTOCOL_COVERAGE.md](PROTOCOL_COVERAGE.md) are lowered; arbitrary `.spt`
+functions are not.
 
 ## Image contract
 
 The sibling CIRCT mapper's `--compile-grid-spi` and `--compile-grid-uart`
 accept restricted, source-validated examples and allocate one of four tracks
-per signal using either legal turn class with conflict checks and backtracking. Tile placement is currently fixed; this is not a general placer,
-full source lowering or proof of timing. The original component images use words 0–65; the extended protocol images use additional words:
+per signal using either legal turn class with conflict checks and backtracking.
+`--lower-temporal-function` compiles the whole exported SPI `transfer()`, I²C
+`write_read()` and Ethernet `transmit()` bodies into sequencer rows and
+extension-cell configuration. Tile placement is currently fixed; this is not a
+general placer, general source lowering or proof of timing. The original component images use words 0–65; extended compiler images write
+all 185 words (0–184):
 
 * 0–4: timer 0 first/period, shift 0 width/order, LUT truth table, pin enables,
   open-drain mask, input-event polarities and CRC enable (word 4 bit 8).
@@ -138,7 +145,8 @@ overflow and assertions, followed by synthesis and a two-macro count check.
 return, shared-bank contention at one byte per 16 clocks, and an isolated
 two-alternative prefetch primitive. The branch primitive is not connected to
 the chip top yet. See [the stream contract](../grid_stream/README.md).
-`make sim` checks the chip interface with only top-level pins. The current
+`make sim` checks the chip interface with only top-level pins, including
+`test_compiled.py`, which runs any compiled program's own source tests. The current
 [JTAG, I²C, USB and Ethernet coverage and limitations](PROTOCOL_COVERAGE.md)
 include temporal transactions and source-derived coded-stream images. The
 physical flow and placed gate-level tests are separate from RTL simulation.

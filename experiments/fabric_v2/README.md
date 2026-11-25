@@ -1,7 +1,7 @@
 # Configurable serial fabric v2 experiment
 
 This is the earlier shared-selector baseline, retained for comparison. The
-Tiny Tapeout experiment now uses the structured [3 × 3 grid](../grid_fabric/README.md).
+Tiny Tapeout experiment now uses the structured [5 × 3 grid](../grid_fabric/README.md).
 `fabric_v2_unified` combines finite SPI and independent UART streaming over
 one tile fabric and one two-bank SRAM subsystem. Results for this baseline do
 not validate the new grid top.

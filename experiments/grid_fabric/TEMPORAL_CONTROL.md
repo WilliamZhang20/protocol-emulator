@@ -1,7 +1,9 @@
 # Programmable temporal-control experiment
 
-This is the stage 4 experiment on the existing 3×3 grid, not a final area or
-protocol-coverage decision. The generic sequencer has 16 configurable rows of
+This was the stage 4 experiment on the original 3×3 grid (now rows 0–2 of the
+5×3 grid); it is not a final area or protocol-coverage decision. Stage 5 added
+routed event inputs (sinks 41/42, word 184); see
+[PROTOCOL_COVERAGE.md](PROTOCOL_COVERAGE.md). The generic sequencer has 16 configurable rows of
 16 bits, eight selectable event inputs and four action outputs. Each row selects
 an event, a true/false successor and a halt flag. The table is held in
 configuration registers, with no instruction SRAM or runtime instruction fetch.
