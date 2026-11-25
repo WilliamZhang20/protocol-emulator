@@ -42,6 +42,8 @@ jobs:
         run: |
           make grid-coder-reuse-test SIM=icarus
           ! grep failure experiments/grid_fabric/reuse/results.xml
+          make grid-stream-coder-test SIM=icarus
+          ! grep failure experiments/grid_fabric/reuse/results.xml
 
       - name: Test Summary
         uses: test-summary/action@v2.4
