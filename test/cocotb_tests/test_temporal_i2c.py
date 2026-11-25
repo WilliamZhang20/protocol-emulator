@@ -9,8 +9,45 @@ from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from cocotb.utils import get_sim_time
 
 
+PAGE_BASE = 512
+
+
+def paged_program(image):
+    """Split the temporal I2C program across two SRAM pages.
+
+    Rows 0-7 stay in page 0 and row 8 becomes a page row that holds row 8's
+    action while page 1 loads, then enters row 9 there. Page 1 keeps rows
+    9-15 at the same indices. Both pages carry the same alternate contexts.
+    Returns the SRAM bytes as {address: value}.
+    """
+    rows = image[96:112]
+    contexts = image[112:117]
+    filler = 0x8007  # halt with error; unreachable
+    action8 = rows[8] & 15
+    assert rows[8] >> 4 & 7 == 0, 'row 8 must be an always row'
+    page0 = rows[:8] + [0xC000 | 1 << 8 | 9 << 4 | action8] + [filler] * 7
+    page1 = [filler] * 9 + rows[9:]
+    out = {}
+    for page, page_rows in enumerate((page0, page1)):
+        words = page_rows + contexts
+        for k, word in enumerate(words):
+            out[PAGE_BASE + 64 * page + 2 * k] = word & 255
+            out[PAGE_BASE + 64 * page + 2 * k + 1] = word >> 8
+    return out
+
+
 @cocotb.test()
 async def programmed_i2c_write(dut):
+    await _temporal_i2c(dut, paged=False)
+
+
+@cocotb.test()
+async def programmed_i2c_write_paged(dut):
+    """The same transaction with its program fetched from SRAM pages."""
+    await _temporal_i2c(dut, paged=True)
+
+
+async def _temporal_i2c(dut, paged):
     cocotb.start_soon(Clock(dut.clk, 20, unit='ns').start())
     dut.ena.value = 1; dut.rst_n.value = 0; dut.ui_in.value = 0
     state = {'op':0, 'strobe':0, 'scl':1, 'sda':1}
@@ -53,10 +90,15 @@ async def programmed_i2c_write(dut):
     await command(4, 8)
     for address, word in enumerate(image):
         await config(address, word)
+    if paged:
+        await config(94, 0x8000 | PAGE_BASE)
     await command(4, 0); await command(4, 4)
     assert int(dut.uio_oe.value) & 0x80, 'temporal configuration did not arm'
     for offset, value in enumerate(payload):
         await write_byte(100 + offset, value)
+    if paged:
+        for address, value in paged_program(image).items():
+            await write_byte(address, value)
 
     async def peer(nack_index=None, stretch=False):
         prev_scl = prev_sda = 1

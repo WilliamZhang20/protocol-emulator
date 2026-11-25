@@ -102,7 +102,9 @@ all 185 words (0–184):
   Word 88 supplies their starting banks; a stream may cross from bank 0 into
   bank 1 but cannot wrap beyond the two-bank capacity.
 * 91–92: temporal sequencer enable and entry/idle actions; 93 selects the
-  generic coded-stream path. Words 96–111 hold its 16 rows, 112–116 hold
+  generic coded-stream path; 94 enables sequencer paging from SRAM and sets
+  the page base ([paged programs](TEMPORAL_CONTROL.md#paged-programs)).
+  Words 96–111 hold its 16 rows (page 0 when not paged), 112–116 hold
   sparse alternate-context selectors, 117–122 configure the coded shifter,
   and 123 controls temporal gating of output enables.
 * 128–184 (extension, reset to zero; configuration addresses are 8 bits):

@@ -75,7 +75,7 @@ module grid_unified #(parameter USE_MACRO=0)(
   assign tx_active=tx_live;
   grid_core grid(clk,rst_n,arm && adapter_valid,cfg_leaves,
       fabric_fire,pin_in,txword,spi_txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,tile_configured,
-      1'b0,4'b0,1'b0,,,,1'b0,1'b0,1'b0,8'b0,1'b0,,,,,,);
+      1'b0,4'b0,1'b0,,,,1'b0,1'b0,1'b0,8'b0,1'b0,,,,,,,1'b0,80'b0);
   grid_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm_in,bank_cfg_we,bank_routes,
       {actor_req,host_req},{actor_we,host_we},{actor_addr,host_addr},{actor_data,host_wdata},ready,rvalid,mem_data);
   assign host_ready=ready[0];assign host_rvalid=rvalid[0];assign host_rdata=mem_data[7:0];

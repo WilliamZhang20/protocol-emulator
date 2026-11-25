@@ -5,11 +5,38 @@ This was the stage 4 experiment on the original 3×3 grid (now rows 0–2 of the
 routed event inputs (sinks 41/42, word 184); see
 [PROTOCOL_COVERAGE.md](PROTOCOL_COVERAGE.md). The generic sequencer has 16 configurable rows of
 16 bits, eight selectable event inputs and four action outputs. Each row selects
-an event, a true/false successor and a halt flag. The table is held in
-configuration registers, with no instruction SRAM or runtime instruction fetch.
-Unwritten state transitions, frame errors and overlapping frame requests fail
-closed. Its configuration words and event assignments are in
-[the hardware contract](../../architecture/grid_3x3.json).
+an event, a true/false successor and a halt flag. The table is one page of the
+program. Without paging it is loaded from configuration and there is no
+runtime memory access. Unwritten state transitions, frame errors and
+overlapping frame requests fail closed. Its configuration words and event
+assignments are in [the hardware contract](../../architecture/grid_3x3.json).
+
+## Paged programs
+
+Every protocol program fit in 16 rows until `i2c-write-read` filled all 16
+(Ethernet session and temporal I²C use 15). Word 94 bit 15 enables paging:
+the program and its alternate contexts then live in the host SRAM bank as up
+to 16 pages at `base + 64*page` (base in word 94 bits 9:0). Each page is 16
+rows followed by the 5 context words, little-endian (42 bytes). Start loads
+page 0. A halt row with bit 14 set is a page row,
+`{1,1,00,page[3:0],entry[3:0],action[3:0]}`: it holds its action while the
+page loads and then continues at `entry`. All existing halt rows have bit 14
+clear, so unpaged images are unchanged.
+
+Rows always execute from the register table, so timing inside a page is exact
+and never waits on memory; only a page change takes time (42 reads, about 45
+clocks plus any wait for the host port, which the loader borrows). The
+compiler should therefore place page rows where a phase can stretch, such as
+before a STOP. The five contexts commit together after the last byte, so
+validity checks never see a partly loaded set, and each page can carry its
+own five contexts. A page row without paging, or with bits 13:12 set, halts
+with an error.
+
+`make grid-sequencer-test` loads two pages from a modelled SRAM with random
+port stalls, checks held actions, contexts, return to page 0 and cancel on
+abort. The pin-level `programmed_i2c_write_paged` test runs the I²C
+transaction with its STOP sequence on page 1, through clock stretch and both
+NACK cases. The compiler does not emit paged programs yet.
 
 Five independently programmed sparse context overrides can redirect any five
 eligible tile-input selectors between two runtime contexts; the four tracks

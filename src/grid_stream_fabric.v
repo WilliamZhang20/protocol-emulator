@@ -73,10 +73,20 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire [3:0] temporal_state,sequencer_actions;
   wire [1:0] seq_events,seq_event_enable;
   wire [3:0] temporal_actions=temporal_active ? sequencer_actions : temporal_idle;
+  // Word 94: {paging enable, 5'b0, page base[9:0]}. Pages live in the host
+  // bank (word 88 bit 0) at base + 64*page: 16 rows, then 5 context words.
+  reg [15:0] page_cfg;
+  always @(posedge clk) begin
+    if(!rst_n) page_cfg<=0;
+    else if(seq_valid && seq_addr==94) page_cfg<=seq_data;
+  end
+  wire paging=page_cfg[15];
+  wire seq_loading,page_row_we,page_ctx_we,page_done,page_owns_port,page_resp_pending,page_req;
+  wire [3:0] seq_load_page,page_row_addr;wire [15:0] page_row_data;wire [79:0] page_ctx_data;wire [9:0] page_addr;
   wire temporal_ready=!temporal_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
-    contexts_configured && temporal_programmed[temporal_entry] && !rx_autostart);
+    contexts_configured && (paging || temporal_programmed[temporal_entry]) && !rx_autostart);
   wire packet_ready=!packet_mode || (packet_mode_valid && !rx_autostart && packet_configured);
-  wire configured_now=format_valid && grid_configured && route_valid && temporal_ready && packet_ready;
+  wire configured_now=format_valid && grid_configured && route_valid && temporal_ready && packet_ready && page_cfg[14:10]==0;
   reg configured_q;
   always @(posedge clk) if(!rst_n) configured_q<=0; else configured_q<=configured_now;
   assign configured=configured_q;
@@ -162,13 +172,17 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
     seq_valid && seq_addr>=96 && seq_addr<=111,seq_addr[3:0],seq_data,
     seq_valid && seq_addr==91 && seq_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
-    sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed);
+    sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed,
+    paging,temporal_idle,seq_loading,seq_load_page,page_row_we,page_row_addr,page_row_data,page_done);
+  grid_page_loader page_loader(clk,rst_n,seq_loading,seq_load_page,page_cfg[9:0],
+    page_req,mem_ready[0] && page_owns_port,page_addr,mem_rvalid[0],mem_rdata[7:0],
+    page_row_we,page_row_addr,page_row_data,page_ctx_we,page_ctx_data,page_done,page_owns_port,page_resp_pending);
   grid_core grid(clk,rst_n,arm && format_valid && route_valid && temporal_ready,
     cfg_leaves,
     fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
     temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
     packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
-    seq_events,seq_event_enable);
+    seq_events,seq_event_enable,page_ctx_we,page_ctx_data);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
   wire writer_valid=rx_autostart ? rx_event : frame_write;
@@ -189,8 +203,10 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire stream_route_write=leaf_valid && (leaf_bank || leaf_addr==88);
   wire [2:0] stream_routes=leaf_bank ? {leaf_data[1],leaf_data[1],leaf_data[0]} : leaf_data[2:0];
   grid_stream_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,stream_route_write,stream_routes,{wr_addr[10],rd_addr[10]},
-    {wr_req,rd_req,host_req},{1'b1,1'b0,host_we},{wr_addr[9:0],rd_addr[9:0],host_addr},{wr_data,8'b0,host_wdata},mem_ready,mem_rvalid,mem_rdata);
-  assign host_ready=mem_ready[0];assign host_rvalid=mem_rvalid[0];assign host_rdata=mem_rdata[7:0];
+    {wr_req,rd_req,page_owns_port ? page_req : host_req},{1'b1,1'b0,!page_owns_port && host_we},
+    {wr_addr[9:0],rd_addr[9:0],page_owns_port ? page_addr : host_addr},{wr_data,8'b0,host_wdata},mem_ready,mem_rvalid,mem_rdata);
+  // A page load borrows the host port; the host link waits on ready.
+  assign host_ready=mem_ready[0] && !page_owns_port;assign host_rvalid=mem_rvalid[0] && !page_resp_pending;assign host_rdata=mem_rdata[7:0];
   // Compatibility outputs share the same generic transfer status.
   always @(posedge clk) begin
     if(!rst_n || !arm || !configured) begin

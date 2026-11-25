@@ -16,7 +16,9 @@ module grid_core(
   output wire temporal_tick,output wire [1:0] temporal_pins,output wire contexts_configured,
   input wire packet_mode,packet_running,packet_grant,input wire [7:0] packet_data,input wire packet_eop,
   output wire packet_request,packet_stop,packet_configured,packet_tick,
-  output wire [1:0] seq_events,seq_event_enable);
+  output wire [1:0] seq_events,seq_event_enable,
+  // Sequencer page loads commit all five alternate-context words at once.
+  input wire ctx_load_we,input wire [79:0] ctx_load_data);
   localparam CELLS=15;
   // Configuration storage is distributed: every register is written only from
   // its own cell's leaf of grid_config_tree, so no configuration bus spans the
@@ -126,8 +128,9 @@ module grid_core(
     reg done;
     wire hit=leaf_we[6] && la[6]==ADDR;
     always @(posedge clk) begin
-      if(!rst_n) done<=0;else if(hit) done<=1;
-      if(hit) value<=ld[6];
+      if(!rst_n) done<=0;else if(hit || ctx_load_we) done<=1;
+      if(ctx_load_we) value<=ctx_load_data[ci*16+:16];
+      else if(hit) value<=ld[6];
     end
     assign context_routes[ci]=value;
     assign context_written[ci]=done;

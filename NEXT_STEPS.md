@@ -508,12 +508,17 @@ corner (fix in CI), sequencer rows full for I²C.
    Then remove the ~6.9k hold-fix delay cells at their source and the tie
    cell per no-reset flop.
 4. **Temporal sequencer capacity.** I²C `write_read` uses all 16 rows;
-   Ethernet session and temporal I²C use 15. Move the row program into
-   SRAM (descriptors, not instructions) and keep only the current row and
-   its two prefetched successors in registers, integrating the tested
-   two-alternative prefetch block. Give sequencer fetches a bounded-latency
-   slot in bank arbitration and prove the reply-window latency (I²C ACK,
-   USB turnaround) under stream contention.
+   Ethernet session and temporal I²C use 15. Decoding the programs showed
+   no unrolled loops: rows go to timed pin waveforms (I²C START/STOP/restart,
+   8 rows), multi-way decisions (3 rows each) and "pulse, then wait" pairs
+   (Ethernet, 7 pairs). **Done in RTL:** paged programs. Up to 16 pages of
+   16 rows plus 5 contexts each live in the host SRAM bank and load on a page
+   row; rows still execute from registers, so timing inside a page is
+   exact ([paged programs](experiments/grid_fabric/TEMPORAL_CONTROL.md#paged-programs)).
+   Cost: +119 flops, +13.7k µm² in local synthesis. Remaining: the compiler
+   must split programs into pages at stretchable points, and a later
+   encoding change ("pulse on entry, then wait") would halve Ethernet-style
+   programs.
 5. **Protocol bring-up at the pins.** Agree the demo set (SPI, UART, I²C,
    JTAG, USB low-speed TX, 10BASE-T TX). For each, report parsed, mapped,
    RTL-pin, gate-level and physical status in PROTOCOL_COVERAGE.md, with

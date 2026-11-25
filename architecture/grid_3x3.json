@@ -68,6 +68,7 @@
     "crc_words": [69, 80], "bank_routes_word": 88, "tx_base_word": 89, "rx_base_word": 90,
     "bank_routes_fields": {"host": 0, "reader": 1, "writer": 2}, "base_offset_bits": 10,
     "temporal_mode_word": 91, "temporal_entry_idle_word": 92, "coded_stream_mode_word": 93,
+    "sequencer_page_word": 94, "sequencer_page_fields": {"enable": [15, 15], "reserved": [14, 10], "base": [9, 0]},
     "temporal_rows": [96, 111], "alternate_context_words": [112, 116], "temporal_oe_gate_word": 123,
     "extension_words": [128, 184], "extension_reset_to_zero": true, "extension_switch_words": [128, 151],
     "lut4_truth_words": [152, 155], "lut4_input_words": [156, 171], "timer23_words": [172, 175],
@@ -88,7 +89,15 @@
     "row_encoding": {"action": [3, 0], "event": [6, 4], "true_next": [10, 7], "false_next": [14, 11], "halt": [15, 15]},
     "halt_error_action_bit": 2, "alternate_context_slots": 5,
     "context_encoding": {"sink_index": [4, 0], "selector": [9, 5], "enable": [10, 10], "reserved": [15, 11]},
-    "operations": ["branch_on_event", "wait_by_self_branch", "set_actions", "switch_context", "request_frame", "halt"],
-    "general_branching": true, "program_storage": "configuration_registers", "sram_instruction_fetch": false
+    "operations": ["branch_on_event", "wait_by_self_branch", "set_actions", "switch_context", "request_frame", "halt", "load_page"],
+    "general_branching": true, "program_storage": "configuration_registers_or_sram_pages", "sram_instruction_fetch": false,
+    "paging": {"rows_per_page": 16, "pages": 16, "page_bytes": 42, "page_stride_bytes": 64, "bank": "host bank (word 88 bit 0)",
+      "layout": "16 rows then 5 alternate-context words, little-endian, at base + 64*page (10-bit wrap)",
+      "page_row": {"halt": [15, 15], "page_flag": [14, 14], "reserved": [13, 12], "page": [11, 8], "entry": [7, 4], "action": [3, 0]},
+      "start": "with paging enabled, start loads page 0 and holds the idle actions until it is in",
+      "load": "a page row holds its action while the page loads, then continues at entry; rows execute from registers, never waiting on memory",
+      "contexts": "the five alternate-context words commit together after the last byte",
+      "port": "the loader borrows the host SRAM port; host accesses wait",
+      "fails_closed": "a page row without paging or with reserved bits set halts with error"}
   }
 }
