@@ -1,0 +1,44 @@
+{
+  "checks": [
+    {
+      "bit_offset": 9,
+      "value": 119,
+      "width": 8
+    },
+    {
+      "bit_offset": 17,
+      "value": 4,
+      "width": 8
+    },
+    {
+      "bit_offset": 25,
+      "value": 160,
+      "width": 8
+    },
+    {
+      "bit_offset": 33,
+      "value": 27,
+      "width": 8
+    }
+  ],
+  "limitations": "Static test with literal step/scan8 calls; idle padding adds clocks. Not a general JTAG program compiler.",
+  "padding_idle_cycles": 5,
+  "payload_bytes": [
+    0,
+    95,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3
+  ],
+  "peer_checks": [],
+  "rx_capacity": 6,
+  "source_cycles": 43,
+  "source_test": "reset and read a 32-bit IDCODE"
+}

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 `default_nettype none
-// Experimental spatial-grid SPI / UART fabric. The host command link uses ui_in as
+// Experimental programmable spatial-grid protocol fabric. The host link uses ui_in as
 // data, uio[4:2] as opcode and uio[1] as strobe; uio[0] is serial input.
 module tt_um_protocol_emulator (
     input wire [7:0] ui_in, output wire [7:0] uo_out,

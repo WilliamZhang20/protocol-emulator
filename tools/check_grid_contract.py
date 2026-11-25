@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
            'grid_core.v', 'grid_sequencer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
-           'memory_tiles.v', 'program_memory.v']
+           'fabric_shifter.v', 'config_bank.v', 'memory_tiles.v', 'program_memory.v']
 
 
 def check(contract, modules):
@@ -39,7 +39,7 @@ def check(contract, modules):
         assert switch['connections']['local_out'] == modules['grid_core']['netnames'][f'local_signal[{index}]']['bits']
     for name, kind in [('timer0', 'fabric_v2_timer'), ('timer1', 'fabric_v2_timer'),
                        ('shifter0', 'fabric_v2_shift'), ('shifter1', 'fabric_v2_shift'),
-                       ('crc', 'fabric_crc')]:
+                       ('crc', 'fabric_crc'), ('coded_shifter', 'fabric_shifter')]:
         assert core[contract['resources'][name]['instance']]['type'] == kind
     sinks = modules['grid_core']['netnames']['sink']['bits']
     for name, first in [('timer0', 0), ('shifter0', 3), ('timer1', 12), ('shifter1', 15)]:

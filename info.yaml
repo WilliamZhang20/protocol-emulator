@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "Configurable SPI and UART Fabric"      # Project title
+  title:        "Programmable Protocol Fabric"      # Project title
   author:       "William Zhang"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Configurable SPI and UART fabric with two SRAM banks"      # One line description of what your project does
+  description:  "Configurable grid fabric with two SRAM banks and coded streaming"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
@@ -30,6 +30,8 @@ project:
     - "grid_stream_memory.v"
     - "grid_stream_fabric.v"
     - "fabric_crc.v"
+    - "fabric_shifter.v"
+    - "config_bank.v"
     - "spi_tiles.v"
     - "memory_tiles.v"
     - "memory_shift.v"
@@ -50,7 +52,7 @@ pinout:
   ui[7]: "command data[7]"
 
   # Last SRAM read result
-  uo[0]: "read data[0]"
+  uo[0]: "read data[0] or third protocol output"
   uo[1]: "read data[1]"
   uo[2]: "read data[2]"
   uo[3]: "read data[3]"
@@ -65,8 +67,8 @@ pinout:
   uio[2]: "command opcode[0]"
   uio[3]: "command opcode[1]"
   uio[4]: "command opcode[2]"
-  uio[5]: "serial clock output"
-  uio[6]: "serial data output"
+  uio[5]: "configurable protocol output 1"
+  uio[6]: "configurable protocol output 0"
   uio[7]: "transfer done output"
 
 # Do not change!

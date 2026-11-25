@@ -1,0 +1,11 @@
+SIM ?= verilator
+TOPLEVEL_LANG = verilog
+TOPLEVEL = stream_coder_probe
+COCOTB_TEST_MODULES = test_stream_coder
+ROOT := $(abspath ../../..)
+export PYTHONPATH := $(ROOT)/test:$(CURDIR):$(PYTHONPATH)
+VERILOG_SOURCES = $(CURDIR)/stream_coder.v $(ROOT)/src/grid_stream_tiles.v $(ROOT)/src/config_bank.v $(ROOT)/src/fabric_shifter.v $(ROOT)/src/fabric_crc.v
+ifeq ($(SIM),verilator)
+COMPILE_ARGS += --timing -Wno-fatal
+endif
+include $(shell cocotb-config --makefiles)/Makefile.sim

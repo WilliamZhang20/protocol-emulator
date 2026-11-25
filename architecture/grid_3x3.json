@@ -14,7 +14,7 @@
       {"id": 5, "row": 1, "column": 2, "resources": ["timer1"], "local_outputs": ["tick", "rise", "fall", "level"]},
       {"id": 6, "row": 2, "column": 0, "resources": ["sram0"], "local_outputs": ["trigger_or_action0", "action1", "action2", "frame_fire"]},
       {"id": 7, "row": 2, "column": 1, "resources": ["shifter1"], "local_outputs": ["busy", "done", "serial", "serial_or_idle"]},
-      {"id": 8, "row": 2, "column": 2, "resources": ["sram1", "crc"], "local_outputs": ["crc_out", "crc_ok"]}
+      {"id": 8, "row": 2, "column": 2, "resources": ["sram1", "crc", "coded_shifter"], "local_outputs": ["crc_out", "crc_ok", "coded_serial", "coded_active"]}
     ]
   },
   "bit_network": {
@@ -39,6 +39,7 @@
     "output_io": {"kind": "output_io", "cell": 1, "pins": 3, "open_drain": true, "physical_pin_access": "outputs 0 and 1 on uio; output 2 is visible on uo[0] only when opcode 7 is idle", "config_words": [4]},
     "sram0": {"kind": "memory", "cell": 6, "bytes": 1024, "data_width_bits": 8, "ports": 1},
     "sram1": {"kind": "memory", "cell": 8, "bytes": 1024, "data_width_bits": 8, "ports": 1},
+    "coded_shifter": {"kind": "coded_shifter", "cell": 8, "instance": "coded_tile", "config_words": [117, 118, 119, 120, 121, 122], "control_selectors": [77, 78, 79, 80], "outputs": ["coded_serial", "coded_active"], "stream": "reader", "crc_link": "crc"},
     "crc": {"kind": "crc", "cell": 8, "instance": "crc_tile", "width_bits_min": 1, "width_bits_max": 32, "inputs": ["absorb", "emit", "init", "data"], "config_words": [69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80]}
   },
   "memory": {"bank_count": 2, "total_bytes": 2048, "arbitration": "round_robin_per_bank", "clients": ["host", "reader", "writer"], "read_response_backpressure": false, "reader_fifo_bytes": 2, "writer_fifo_bytes": 2, "reader_start_requires_drained_responses": true, "cross_bank_ordered": true, "cross_bank_wrap": false, "word_links": "combinational_dedicated", "word_link_cycles": 0, "physical_locality_verified": false},
@@ -52,13 +53,13 @@
     "tx_length_word": 66, "rx_capacity_word": 67, "pad_feedback_word": 68,
     "crc_words": [69, 80], "bank_routes_word": 88, "tx_base_word": 89, "rx_base_word": 90,
     "bank_routes_fields": {"host": 0, "reader": 1, "writer": 2}, "base_offset_bits": 10,
-    "temporal_mode_word": 91, "temporal_entry_idle_word": 92,
-    "temporal_rows": [96, 111], "alternate_context_words": [112, 116]
+    "temporal_mode_word": 91, "temporal_entry_idle_word": 92, "coded_stream_mode_word": 93,
+    "temporal_rows": [96, 111], "alternate_context_words": [112, 116], "temporal_oe_gate_word": 123
   },
   "temporal": {
     "kind": "register_table_sequencer_with_frame_scheduler", "programmable_sequencer": true,
     "runtime_context_switching": true, "configuration_static_while_armed": true,
-    "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_done", "tx_stream_empty"],
+    "rows": 16, "actions": 4, "events": ["always", "timer0_tick", "shifter0_done", "input0_level", "input1_level", "shifter0_rx_bit0", "frame_or_coded_stream_done", "tx_stream_empty"],
     "row_encoding": {"action": [3, 0], "event": [6, 4], "true_next": [10, 7], "false_next": [14, 11], "halt": [15, 15]},
     "halt_error_action_bit": 2, "alternate_context_slots": 5,
     "context_encoding": {"sink_index": [4, 0], "selector": [9, 5], "enable": [10, 10], "reserved": [15, 11]},

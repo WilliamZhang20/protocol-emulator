@@ -8,10 +8,17 @@ module grid_core(
   output wire [15:0] rx,rx1,output wire busy,done,busy1,done1,
   output wire [2:0] pin_out,pin_oe,output wire configured,
   input wire temporal_enable,input wire [3:0] temporal_actions,input wire temporal_context,
-  output wire temporal_tick,output wire [1:0] temporal_pins,output wire contexts_configured);
+  output wire temporal_tick,output wire [1:0] temporal_pins,output wire contexts_configured,
+  input wire packet_mode,packet_running,packet_grant,input wire [7:0] packet_data,input wire packet_eop,
+  output wire packet_request,packet_stop,packet_configured,packet_tick);
   reg [15:0] cfg[0:62];
   reg [62:0] written;
   reg [11:0] crc_written;
+  reg [5:0] coder_written;
+  reg [5:0] coder_tick_select;
+  reg coder_tail_required,crc_link_valid;
+  reg [2:0] temporal_oe_gate;
+  reg temporal_oe_gate_valid;
   reg [15:0] crc_routes[0:3];
   // Five sparse overrides form a second routing context. Each word is
   // {reserved[4:0], enable, alternate_selector[4:0], sink_index[4:0]}.
@@ -29,26 +36,36 @@ module grid_core(
   wire [3:0] crc_route_valid;
   wire crc_out,crc_tail,crc_ok;
   wire [31:0] crc_value;
+  wire coder_serial,coder_active,coder_absorb,coder_bit,coder_emit;
+  wire coder_pulls,coder_rx_request,coder_rx_eop,coder_rx_err,coder_word;
+  wire [7:0] coder_rx_byte;wire [15:0] coder_rx_data,coder_status;
+  assign packet_configured=(&coder_written) && (!coder_tail_required ||
+    (cfg[4][8] && (&crc_written) && crc_shape_valid && crc_link_valid));
   wire [35:0] switch_valid;
   wire [18:0] sink_valid;
   wire tick,running,tvalid,level,rise,fall,serial;
   wire tick1,running1,tvalid1,level1,rise1,fall1,serial1;
   wire live=arm && rst_n && configured;
-  assign configured=(&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
+  assign configured=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
     (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid));
-  assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) : 0;
+  assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
+    ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
   always @(posedge clk) begin
-    if(!rst_n) begin written<=0;crc_written<=0;context_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;end
+    if(!rst_n) begin written<=0;crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;temporal_oe_gate<=0;temporal_oe_gate_valid<=1;context_written<=0;crc_shape_valid<=0;meta<=0;sync<=0;prev<=0;end
     else begin
       meta<=pin_in;sync<=meta;prev<=sync;
       if(!arm && cfg_we && cfg_addr<=62) begin cfg[cfg_addr[5:0]]<=cfg_data;written[cfg_addr[5:0]]<=1;end
       if(!arm && cfg_we && cfg_addr>=112 && cfg_addr<=116) begin
         context_routes[cfg_addr-112]<=cfg_data;context_written[cfg_addr-112]<=1;
       end
+      if(!arm && cfg_we && cfg_addr==118) coder_tick_select<=cfg_data[5:0];
+      if(!arm && cfg_we && cfg_addr==121) coder_tail_required<=|cfg_data[14:9];
+      if(!arm && cfg_we && cfg_addr==123) begin temporal_oe_gate<=cfg_data[2:0];temporal_oe_gate_valid<=cfg_data[15:3]==0;end
+      if(!arm && cfg_we && cfg_addr>=117 && cfg_addr<=122) coder_written[cfg_addr-117]<=1;
       if(!arm && cfg_we && cfg_addr>=69 && cfg_addr<=80) begin
         crc_written[cfg_addr-69]<=1;
-        if(cfg_addr==75) crc_shape_valid<=cfg_data[15:6]==0;
+        if(cfg_addr==75) begin crc_shape_valid<=cfg_data[15:7]==0;crc_link_valid<=cfg_data[6];end
         if(cfg_addr>=77) crc_routes[cfg_addr-77]<=cfg_data;
       end
     end
@@ -63,7 +80,7 @@ module grid_core(
   assign local_signal[5]={level1,fall1,rise1,tick1};
   assign local_signal[6]=temporal_enable ? {trigger,temporal_actions[2:0]} : {3'b0,trigger};
   assign local_signal[7]={serial1 | !busy1,serial1,done1,busy1};
-  assign local_signal[8]={2'b0,crc_ok,crc_out};
+  assign local_signal[8]={packet_mode && coder_active,packet_mode && coder_serial,crc_ok,crc_out};
   genvar x;
   generate for(x=0;x<9;x=x+1) begin: mesh
     if(x<3) assign n_in[x]=0; else assign n_in[x]=s_out[x-3];
@@ -100,8 +117,17 @@ module grid_core(
   // selectors (absorb, emit, init, data). Direct legacy shifter links are not
   // exposed by this grid revision.
   wire [63:0] crc_lines={31'b0,crc_in[3],29'b0,crc_in[2],crc_in[1],crc_in[0]};
-  fabric_crc crc_tile(clk,rst_n,live && cfg[4][8],cfg_we && !arm && cfg_addr>=69 && cfg_addr<=76,
-    cfg_addr[2:0]-3'd5,cfg_data,crc_lines,2'b0,2'b0,2'b0,crc_out,crc_tail,crc_ok,crc_value);
+  assign packet_tick=crc_lines[coder_tick_select];
+  fabric_crc crc_tile(clk,rst_n,live && cfg[4][8] && (!packet_mode || packet_running),cfg_we && !arm && cfg_addr>=69 && cfg_addr<=76,
+    cfg_addr[2:0]-3'd5,cfg_data,crc_lines,{1'b0,coder_absorb},{1'b0,coder_bit},
+    {1'b0,coder_emit},crc_out,crc_tail,crc_ok,crc_value);
+  fabric_shifter coded_tile(clk,rst_n,live && packet_mode && packet_running,
+    cfg_we && !arm && cfg_addr>=117 && cfg_addr<=122,cfg_addr[2:0]-3'd4,cfg_data,
+    2'b11,1'b0,crc_lines,coder_pulls,packet_request,packet_grant,packet_data,packet_eop,1'b0,
+    coder_rx_request,1'b0,crc_tail,coder_rx_byte,coder_rx_eop,coder_rx_err,coder_serial,
+    coder_active,coder_word,packet_stop,coder_rx_data,coder_status,coder_absorb,coder_bit,coder_emit);
+  wire unused_coder=&{1'b0,coder_pulls,coder_rx_request,coder_rx_eop,coder_rx_err,coder_word,
+                       coder_rx_byte,coder_rx_data,coder_status};
   // Timer inputs 0..2, shifter inputs 3..6, IO outputs 7..9, LUT inputs 10..11.
   genvar z;
   generate for(z=0;z<5;z=z+1) begin: context_checks

@@ -1,0 +1,53 @@
+{
+  "checks": [
+    {
+      "bit_offset": 10,
+      "value": 1,
+      "width": 1
+    },
+    {
+      "bit_offset": 11,
+      "value": 0,
+      "width": 1
+    },
+    {
+      "bit_offset": 19,
+      "value": 0,
+      "width": 8
+    },
+    {
+      "bit_offset": 32,
+      "value": 90,
+      "width": 8
+    }
+  ],
+  "limitations": "Static test with literal step/scan8 calls; idle padding adds clocks. Not a general JTAG program compiler.",
+  "padding_idle_cycles": 6,
+  "payload_bytes": [
+    0,
+    223,
+    40,
+    96,
+    208,
+    1,
+    2,
+    44,
+    195,
+    128,
+    0,
+    1
+  ],
+  "peer_checks": [
+    {
+      "bit_offset": 29,
+      "value": 90
+    },
+    {
+      "bit_offset": 42,
+      "value": 195
+    }
+  ],
+  "rx_capacity": 6,
+  "source_cycles": 42,
+  "source_test": "select IR and write and read the user DR"
+}

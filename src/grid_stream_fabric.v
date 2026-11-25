@@ -21,19 +21,24 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   reg frame_tx_done,frame_tx_error,frame_spi_done,frame_spi_error;
   wire frame_tx_active,frame_spi_active;
   reg temporal_mode,temporal_mode_valid,temporal_settings_valid,temporal_settings_written;
+  reg packet_mode,packet_mode_valid,packet_running,packet_done,packet_error;
+  reg [10:0] packet_left;
+  reg packet_started;
+  wire packet_request,packet_stop,packet_configured,packet_grant,packet_tick;
   reg [3:0] temporal_entry,temporal_idle;
   wire format_valid=(&format_written) && descriptor_written && !format[15] &&
     (!format[14] || format[13]) && (format[1:0]==1 || format[1:0]==2) &&
     (format[3:2]==1 || format[3:2]==2);
   always @(posedge clk) begin
     if(!rst_n) begin format<=0;ormask<=0;format_written<=0;rx_autostart<=0;descriptor_written<=0;route_valid<=1;route_sel<=0;
-      temporal_mode<=0;temporal_mode_valid<=1;temporal_settings_valid<=0;temporal_settings_written<=0;temporal_entry<=0;temporal_idle<=0;end
+      packet_mode<=0;packet_mode_valid<=1;temporal_mode<=0;temporal_mode_valid<=1;temporal_settings_valid<=0;temporal_settings_written<=0;temporal_entry<=0;temporal_idle<=0;end
     else if(!arm && cfg_we) begin
       if(cfg_addr==63) begin format<=cfg_data;format_written[0]<=1;end
       if(cfg_addr==64) begin ormask<=cfg_data;format_written[1]<=1;end
       if(cfg_addr==65) begin rx_autostart<=cfg_data[0];descriptor_written<=cfg_data[15:1]==0;end
       if(cfg_addr==88) begin route_valid<=cfg_data[15:3]==0;route_sel<=cfg_data[2:0];end
       if(cfg_addr==91) begin temporal_mode<=cfg_data[0];temporal_mode_valid<=cfg_data[15:2]==0;end
+      if(cfg_addr==93) begin packet_mode<=cfg_data[0];packet_mode_valid<=cfg_data[15:1]==0;end
       if(cfg_addr==92) begin temporal_entry<=cfg_data[3:0];temporal_idle<=cfg_data[7:4];
         temporal_settings_valid<=cfg_data[15:8]==0;temporal_settings_written<=1;end
     end
@@ -47,13 +52,14 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire [3:0] temporal_actions=temporal_active ? sequencer_actions : temporal_idle;
   wire temporal_ready=!temporal_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
     contexts_configured && temporal_programmed[temporal_entry] && !rx_autostart);
-  assign configured=format_valid && grid_configured && route_valid && temporal_ready;
-  assign tx_done=temporal_mode ? temporal_done : frame_tx_done;
-  assign spi_done=temporal_mode ? temporal_done : frame_spi_done;
-  assign tx_error=temporal_mode ? temporal_error : frame_tx_error;
-  assign spi_error=temporal_mode ? temporal_error : frame_spi_error;
-  assign tx_active=temporal_mode ? temporal_active : frame_tx_active;
-  assign spi_active=temporal_mode ? temporal_active : frame_spi_active;
+  wire packet_ready=!packet_mode || (packet_mode_valid && !rx_autostart && packet_configured);
+  assign configured=format_valid && grid_configured && route_valid && temporal_ready && packet_ready;
+  assign tx_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
+  assign spi_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_spi_done;
+  assign tx_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
+  assign spi_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_spi_error;
+  assign tx_active=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
+  assign spi_active=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_spi_active;
   wire [1:0] busy,finished;wire [15:0] rx0,rx1;
   reg [15:0] txword0,txword1,received;
   wire rd_valid,rd_req,rd_active,rd_done,rd_error;wire [10:0] rd_addr;
@@ -73,13 +79,13 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   assign frame_tx_active=state!=IDLE;
   assign tx_queued={1'b0,rd_queued};assign rx_queued={1'b0,wr_queued};
   wire host_start=(tx_start || spi_start) && state==IDLE;
-  wire temporal_request=temporal_active && sequencer_actions[3] && sequencer_actions[2] && !temporal_request_prev && !temporal_halting;
-  wire start=(temporal_mode ? temporal_request : host_start) && state==IDLE;
+  wire temporal_request=!packet_mode && temporal_active && sequencer_actions[3] && sequencer_actions[2] && !temporal_request_prev && !temporal_halting;
+  wire start=!packet_mode && (temporal_mode ? temporal_request : host_start) && state==IDLE;
   wire [2:0] frame_bytes={1'b0,format[1:0]}+(format[13] ? (format[14] ? 3'd2 : 3'd1) : 3'd0);
-  wire [10:0] selected_tx_base=temporal_mode ? temporal_tx_cursor : {route_sel[1],tx_base};
-  wire [10:0] selected_rx_base=temporal_mode ? temporal_rx_cursor : {route_sel[2],rx_base};
-  wire [10:0] selected_tx_length=temporal_mode ? {8'b0,frame_bytes} : tx_length;
-  wire [10:0] selected_rx_capacity=temporal_mode ? {9'b0,format[3:2]} : rx_capacity;
+  wire [10:0] selected_tx_base=temporal_mode && !packet_mode ? temporal_tx_cursor : {route_sel[1],tx_base};
+  wire [10:0] selected_rx_base=temporal_mode && !packet_mode ? temporal_rx_cursor : {route_sel[2],rx_base};
+  wire [10:0] selected_tx_length=temporal_mode && !packet_mode ? {8'b0,frame_bytes} : tx_length;
+  wire [10:0] selected_rx_capacity=temporal_mode && !packet_mode ? {9'b0,format[3:2]} : rx_capacity;
   wire [11:0] source_end={1'b0,selected_tx_base}+{1'b0,selected_tx_length};
   wire [11:0] receive_end={1'b0,selected_rx_base}+{1'b0,selected_rx_capacity};
   wire temporal_capacity_ok=!temporal_mode || (temporal_tx_left>=selected_tx_length && temporal_rx_left>=selected_rx_capacity);
@@ -101,20 +107,41 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
       end
     end
   end
-  wire reader_start=arm && configured && start && start_valid;
-  wire writer_start=arm && configured && ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid));
-  wire reader_consume=state>=READ0 && state<=READ3 && rd_valid;
+  wire packet_start=packet_mode && host_start && !packet_running;
+  wire packet_start_valid=tx_length!=0 && ({1'b0,route_sel[1],tx_base}+{1'b0,tx_length}<=2048);
+  assign packet_grant=packet_running && packet_request && rd_valid && (packet_started || packet_tick);
+  always @(posedge clk) begin
+    if(!rst_n || !arm || !configured || !packet_mode) begin
+      packet_running<=0;packet_done<=0;packet_error<=0;packet_left<=0;packet_started<=0;
+    end else begin
+      packet_done<=0;
+      if(packet_start) begin
+        packet_error<=!packet_start_valid;packet_left<=tx_length;packet_started<=0;
+        packet_running<=packet_start_valid;
+        if(!packet_start_valid) packet_done<=1;
+      end else if(packet_running) begin
+        if(packet_grant) begin packet_left<=packet_left-1'b1;packet_started<=1;end
+        if((rd_done && rd_error) || (packet_started && packet_request && !rd_valid && packet_left!=0)) begin
+          packet_running<=0;packet_done<=1;packet_error<=1;
+        end else if(packet_stop) begin packet_running<=0;packet_done<=1;packet_error<=packet_left!=0;end
+      end
+    end
+  end
+  wire reader_start=arm && configured && (packet_mode ? packet_start && packet_start_valid : start && start_valid);
+  wire writer_start=arm && configured && !packet_mode && ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid));
+  wire reader_consume=packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
   wire fire=state==FIRE;
-  wire [7:0] temporal_events={temporal_tx_left==0,frame_tx_done,rx0[0],temporal_pins[1],temporal_pins[0],finished[0],temporal_tick,1'b1};
-  wire temporal_abort=(frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
+  wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],temporal_pins[1],temporal_pins[0],finished[0],temporal_tick,1'b1};
+  wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
     cfg_we && cfg_addr>=96 && cfg_addr<=111,cfg_addr[3:0],cfg_data,
     cfg_we && cfg_addr==91 && cfg_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
     sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed);
   grid_core grid(clk,rst_n,arm && format_valid && route_valid && temporal_ready,
-    cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80) || (cfg_addr>=112 && cfg_addr<=116)),cfg_addr,cfg_data,
+    cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80) || (cfg_addr>=112 && cfg_addr<=123)),cfg_addr,cfg_data,
     fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
-    temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured);
+    temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
+    packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
   wire writer_valid=rx_autostart ? rx_event : frame_write;
@@ -127,7 +154,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   grid_stream_link #(.WIDTH(1)) shifter_to_reader(reader_consume,reader_consume_local);
   grid_stream_link #(.WIDTH(9)) shifter_to_writer({writer_valid,writer_input},{writer_valid_local,writer_input_local});
   grid_stream_link #(.WIDTH(1)) writer_to_shifter(wr_ready_local,wr_ready);
-  grid_stream_reader #(.DEPTH(2)) reader(clk,rst_n,arm && configured && !cancel,reader_start,selected_tx_base,selected_tx_length,
+  grid_stream_reader #(.DEPTH(2)) reader(clk,rst_n,arm && configured && !cancel && (!packet_mode || !packet_error || packet_start),reader_start,selected_tx_base,selected_tx_length,
     rd_req,mem_ready[1],rd_addr,mem_rvalid[1],mem_rdata[15:8],rd_valid_local,reader_consume_local,rd_data_local,
     rd_active,rd_done,rd_error,rd_queued,rd_outstanding);
   grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,arm && configured && !cancel,writer_start,selected_rx_base,selected_rx_capacity,
@@ -199,6 +226,16 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
       endcase
     end
   end
+`ifdef GRID_STREAM_ASSERT
+  // Start a coded stream on its selected shift event, and report a missing
+  // byte at a burst boundary rather than silently ending the packet.
+  assert property (@(posedge clk) disable iff(!rst_n || !arm || !configured || !packet_mode)
+    packet_grant && !packet_started |-> packet_tick);
+  assert property (@(posedge clk) disable iff(!rst_n || !arm || !configured || !packet_mode)
+    packet_running && packet_started && packet_request && !rd_valid && packet_left!=0 |=> packet_error && packet_done);
+  assert property (@(posedge clk) disable iff(!rst_n || !arm || !configured || !packet_mode)
+    packet_grant |-> packet_left!=0);
+`endif
   wire unused=&{1'b0,spi_source_addr,spi_dest_addr,rd_active,rd_error,rd_outstanding,wr_active,wr_error,temporal_state};
 endmodule
 `default_nettype wire
