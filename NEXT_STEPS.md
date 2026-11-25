@@ -487,3 +487,43 @@ at their required pin timings within the area budget. For every workload report
 separately whether it is parsed, mapped, validated at RTL pins, and validated
 at gate level or physically. Physical checks should run alongside development
 without blocking unrelated compiler and functional work.
+
+## Path to replacing the submitted design with the 5 × 3 grid (2026-11-25)
+
+The grid becomes the submission only when every gate below holds on one
+commit; until then `main` stays the fallback. Status at `4b71ece`/`18fd40a`:
+DRC/LVS/antenna clean, gate-level test passed, setup −1.13 ns at the slow
+corner (fix in CI), sequencer rows full for I²C.
+
+1. **Timing closure.** Setup and hold slack ≥ 0 at all three corners. The
+   −1.13 ns paths ran from reserved config bits through the combinational
+   `configured` check; `18fd40a` registers validity and delays arm. Treat any
+   path that starts at a configuration register as a structural defect, not
+   a resizer problem.
+2. **Repeatable layout.** Two consecutive GDS runs finish with detailed
+   routing converging (no stalls), plus precheck and post-layout GL passing.
+   Track routed wirelength, overflowed tiles and runtime per commit.
+3. **Routing headroom.** Measure per-net routed length from the final
+   database (the earlier reach-based estimate overstated the config bus).
+   Then remove the ~6.9k hold-fix delay cells at their source and the tie
+   cell per no-reset flop.
+4. **Temporal sequencer capacity.** I²C `write_read` uses all 16 rows;
+   Ethernet session and temporal I²C use 15. Move the row program into
+   SRAM (descriptors, not instructions) and keep only the current row and
+   its two prefetched successors in registers, integrating the tested
+   two-alternative prefetch block. Give sequencer fetches a bounded-latency
+   slot in bank arbitration and prove the reply-window latency (I²C ACK,
+   USB turnaround) under stream contention.
+5. **Protocol bring-up at the pins.** Agree the demo set (SPI, UART, I²C,
+   JTAG, USB low-speed TX, 10BASE-T TX). For each, report parsed, mapped,
+   RTL-pin, gate-level and physical status in PROTOCOL_COVERAGE.md, with
+   compiler-generated images only.
+6. **Compiler.** Lower the demo functions from source without hand-written
+   images; report resource use (tracks, sinks, cells, rows, contexts) per
+   program so capacity limits show up before hardware changes.
+7. **Head-to-head with `main`.** One table: area by function, slack, layout
+   runtime, protocols covered at gate level, host-interface changes. The
+   decision is recorded here with that table.
+8. **Submission packaging.** Tiny Tapeout `info.yaml`, pinout and datasheet
+   for the host link and configuration words; GL-safe cocotb tests at
+   top-level pins only; final precheck on the merge commit.
