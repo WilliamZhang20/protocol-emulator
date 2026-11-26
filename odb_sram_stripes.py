@@ -28,9 +28,13 @@ SRAM_PINS = {
 
 # IHP SRAM Metal4 supply pitch between adjacent opposite-polarity columns.
 PAIR_PITCH_UM = 5.62
-MACRO_NAME = "RM_IHPSG13_1P_1024x8_c2_bm_bist"
 HERE = os.path.dirname(os.path.abspath(__file__))
-LEF_PATH = os.path.join(HERE, "macro", MACRO_NAME, f"{MACRO_NAME}.lef")
+
+
+def lef_path(macro_name):
+    """Each SRAM type's LEF (macro/<name>/<name>.lef): the 1024x8 banks and
+    the lane controller's 64x16 program store differ in Metal4 lattice."""
+    return os.path.join(HERE, "macro", macro_name, f"{macro_name}.lef")
 
 
 def is_sram(master):
@@ -40,26 +44,35 @@ def is_sram(master):
     )
 
 
-def lef_tall_metal4_obs():
+def lef_tall_metal4_obs(macro_name):
     """Master-frame (x0, x1) for tall Metal4 OBS rects, from the LEF text.
 
     Parsing the LEF avoids depending on odb's getObstructions() polygon
     decomposition across LibreLane / OpenROAD versions.
     """
-    if not os.path.isfile(LEF_PATH):
-        raise click.ClickException(f"SRAM LEF not found: {LEF_PATH}")
-    text = open(LEF_PATH, encoding="utf-8", errors="replace").read()
+    path = lef_path(macro_name)
+    if not os.path.isfile(path):
+        raise click.ClickException(f"SRAM LEF not found: {path}")
+    text = open(path, encoding="utf-8", errors="replace").read()
     match = re.search(r"LAYER Metal4 SPACING.*?(?=\n\s*END)", text, re.S)
     if match is None:
-        raise click.ClickException(f"{LEF_PATH}: no Metal4 OBS block")
+        raise click.ClickException(f"{path}: no Metal4 OBS block")
     tall = []
     for r in re.findall(
         r"RECT\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", match.group(0)
     ):
         x0, y0, x1, y1 = map(float, r)
-        if y1 - y0 > 50.0:
+        if y1 - y0 > 0.75 * macro_height(text):
             tall.append((x0, x1))
     return sorted(set(tall))
+
+
+def macro_height(lef_text):
+    """The macro's SIZE height (um): a tall OBS spans most of it."""
+    m = re.search(r"SIZE\s+[\d.]+\s+BY\s+([\d.]+)", lef_text)
+    if m is None:
+        raise click.ClickException("SRAM LEF has no SIZE")
+    return float(m.group(1))
 
 
 @click.command()
@@ -185,7 +198,7 @@ def extend(reader, layer, min_pairs):
         """Die-frame (x0, x1) for each Metal4 OBS gap that looks like a pin
         corridor (~pin width), plus the declared PIN boxes themselves."""
         ox = inst.getBBox().xMin()
-        obs = lef_tall_metal4_obs()  # master um
+        obs = lef_tall_metal4_obs(inst.getMaster().getName())  # master um
         # Declared pin width (fallback 2.81 um) for synthetic corridors.
         pin_w_um = 2.81
         for nn_pins in declared_pins(inst).values():

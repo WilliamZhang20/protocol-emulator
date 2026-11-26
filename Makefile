@@ -115,7 +115,7 @@ one-hop-check:
 	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 t:RM_IHPSG13_1P_64x16_c2; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 t:RM_IHPSG13_1P_64x16_c2; select -assert-count 1 tt_um_protocol_emulator/fabric.lane_core.ctl.store.macro.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py

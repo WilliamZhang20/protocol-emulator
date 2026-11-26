@@ -101,13 +101,47 @@
       "spice": [
         "pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_1024x8_c2_bm_bist.cdl"
       ]
+    },
+    "RM_IHPSG13_1P_64x16_c2": {
+      "//": "The lane controller's program store (LANE_CORE.md, Program store): 236.8 x 64.36 um, signal pins on the bottom edge, every supply column a declared Metal4 pin. In the empty right half, on the banks' baseline.",
+      "instances": {
+        "fabric.lane_core.ctl.store.macro.sram": {
+          "location": [700, 81],
+          "orientation": "R0"
+        }
+      },
+      "gds": [
+        "pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_64x16_c2.gds"
+      ],
+      "lef": [
+        "pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_64x16_c2.lef"
+      ],
+      "lib": {
+        "nom_typ_1p20V_25C": [
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_typ_1p20V_25C.lib"
+        ],
+        "nom_fast_1p32V_m40C": [
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_fast_1p32V_m55C.lib"
+        ],
+        "nom_slow_1p08V_125C": [
+          "pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_64x16_c2_slow_1p08V_125C.lib"
+        ]
+      },
+      "nl": [
+        "dir::./RM_IHPSG13_1P_64x16_c2.v"
+      ],
+      "spice": [
+        "pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_64x16_c2.cdl"
+      ]
     }
   },
   "PDN_MACRO_CONNECTIONS": [
     "fabric.memory.row2_col0.bank.macro_bank.memory.sram VPWR VGND VDD! VSS!",
     "fabric.memory.row2_col0.bank.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!",
     "fabric.memory.row2_col2.bank.macro_bank.memory.sram VPWR VGND VDD! VSS!",
-    "fabric.memory.row2_col2.bank.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!"
+    "fabric.memory.row2_col2.bank.macro_bank.memory.sram VPWR VGND VDDARRAY! VSS!",
+    "fabric.lane_core.ctl.store.macro.sram VPWR VGND VDD! VSS!",
+    "fabric.lane_core.ctl.store.macro.sram VPWR VGND VDDARRAY! VSS!"
   ],
 
   "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only. The body rectangles block Metal2-4 over both SRAMs (prism SRAM guide), from y=82 so the bottom-edge pin connections (y<=81.13) stay free: run 45498815170 (6397ff6) routed net6416 on Metal3 across SRAM1 at y=165.48 and failed with 126 M3.b violations.",
@@ -119,14 +153,19 @@
     ["Metal4", 42.0, 82.0, 188.88, 417.46],
     ["Metal2", 480.0, 82.0, 626.88, 417.46],
     ["Metal3", 480.0, 82.0, 626.88, 417.46],
-    ["Metal4", 480.0, 82.0, 626.88, 417.46]
+    ["Metal4", 480.0, 82.0, 626.88, 417.46],
+    ["Metal2", 700.0, 82.0, 936.8, 145.36],
+    ["Metal3", 700.0, 82.0, 936.8, 145.36],
+    ["Metal4", 700.0, 82.0, 936.8, 145.36]
   ],
 
   "// FP_OBSTRUCTIONS": "Keep cells clear of the first SRAM's left-side routing trap and both edges of the second SRAM. The initial two-bank CI run had 284 M1.b spacing violations at x=480 and x=626.88, where cells abutted the second macro.",
   "FP_OBSTRUCTIONS": [
     [0.0, 78.5, 42.0, 417.5],
     [477.0, 78.5, 480.0, 417.5],
-    [626.88, 78.5, 630.0, 417.5]
+    [626.88, 78.5, 630.0, 417.5],
+    [697.0, 78.5, 700.0, 145.5],
+    [936.8, 78.5, 939.8, 145.5]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",
