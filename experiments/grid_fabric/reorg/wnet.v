@@ -22,6 +22,10 @@ module wnet(
   input wire gate_open,                   // bit from the mesh
   output wire cmp_match,                  // bit onto the mesh
   input wire split_msb_first,
+  // Compare tap: observes source `tap_sel`'s handshakes (it takes nothing)
+  // and pulses match or mismatch, one clock after each word, against
+  // cmp_value/cmp_mask.
+  input wire [3:0] tap_sel, output reg tap_match, output reg tap_mismatch,
   // External endpoints.
   input wire [15:0] rd_data, input wire rd_valid, output wire rd_ready,
   input wire [15:0] rx_data, input wire rx_valid, output wire rx_ready,
@@ -158,5 +162,12 @@ module wnet(
     end
   end
   assign sd[9]=i_q; assign sv[9]=i_v;
+
+  wire t_take=tap_sel!=0 && tap_sel<NSRC && sv[tap_sel] && sr[tap_sel];
+  wire t_hit=((sd[tap_sel]^cmp_value)&cmp_mask)==0;
+  always @(posedge clk) begin
+    tap_match<=rst_n && t_take && t_hit;
+    tap_mismatch<=rst_n && t_take && !t_hit;
+  end
 endmodule
 `default_nettype wire

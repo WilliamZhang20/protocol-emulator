@@ -23,7 +23,8 @@ module wnet_tb;
   reg wr_rdy=0, tx_rdy=0;
   wire rd_ready, rx_ready, st_ready, cap_ready, wr_valid, tx_valid; wire [15:0] wr_data, tx_data;
   wire rd_valid=rdi<rdn, rx_valid=rxi<rxn, st_valid=sti<stn, cap_valid=cpi<cpn;
-  wnet dut(clk,rst_n,sel,m0,m1,eb,r0,r1,cv,cm,gate,match,msb,
+  wire tm, tmm;
+  wnet dut(clk,rst_n,sel,m0,m1,eb,r0,r1,cv,cm,gate,match,msb,4'd0,tm,tmm,
     rdq[rdi],rd_valid,rd_ready, rxq[rxi],rx_valid,rx_ready, stq[sti],st_valid,st_ready, cpq[cpi],cap_valid,cap_ready,
     wr_data,wr_valid,wr_rdy, tx_data,tx_valid,tx_rdy, ok);
   integer seed=1;

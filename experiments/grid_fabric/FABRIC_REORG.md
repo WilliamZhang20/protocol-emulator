@@ -35,6 +35,189 @@ What is ruled out is a private network: an all-to-all or
 many-to-many selector set among a group of resources that bypasses the
 mesh, which is what the lane core's 64-line crossbar was.
 
+## Active plan (the only current meaning; everything under "History" is superseded where it differs)
+
+**Thesis (user, 2026-11-26).**
+- Coarse-grained protocol tiles (timers, shifters/coders, CRCs, SRAM
+  streams, I/O) are the foundation. The work is to find the smallest
+  distributed control and interconnect that coordinates them.
+- A little programmable logic connects blocks and makes decisions ("if
+  START occurs, enable the receiver"). It never rebuilds a protocol
+  datapath, and the fabric is not redesigned around LUTs.
+- Event and route-latency guarantees are made only after verification.
+  (Control: in the interconnect, below.)
+
+**Fixed (kept from v2):**
+- **Tiles.** Timers (`grid_timer`), coded shifters (`fabric_shifter`;
+  it also does plain frames, so the two plain shifters go), the CRC
+  (`fabric_crc`), and I/O. Pads grow towards 8.
+- **Bit mesh.** The 5 x 3 grid, one tile plus one switch per cell:
+  - 1-bit tracks, 4 per direction;
+  - today's switch (straight, two turns, no track change), with the
+    width and turn rules still to be measured;
+  - tiles drive their cell's 4 local outputs.
+- **Word network beside the mesh** (`reorg/wnet.v`, tested):
+  - valid/ready flow control and per-sink reach lists (not all-to-all);
+  - stages: escape, compare -> bit, gate <- bit, split, interleave;
+  - two readers and two writers (one pair per SRAM bank);
+  - the shifter -> CRC fast path.
+
+  Words cross into the bit mesh only through compare -> bit and gate <-
+  bit.
+- **Configuration** is loaded by the host and static during a run.
+  Runtime changes come only where a protocol and a test need them.
+- **Removed** as protocols migrate, never while a test depends on them:
+  - the lane core (controller, private crossbar, duplicated tiles);
+  - the page loader;
+  - the frame and packet FSMs;
+  - the plain shifters and the LUT2.
+
+**Control lives in the interconnect (2026-11-26, after re-reading Betz,
+ICCAD'26 keynote, slides 27-44).** The keynote's spatio-temporal model:
+- each tile is a router plus compute, and the router holds a route table
+  ("each router programmed with per-colour table", slide 41);
+- static routes "can [be modified] over time -> like partial
+  reconfiguration" (slide 44);
+- computation is "triggered by data arrival" (slide 42).
+
+Here this means:
+1. **Contexted switches.** A switch holds a few routing contexts (its
+   track and sink selections) and a small local state that changes
+   context on events arriving at that switch (two event -> next rows per
+   context). A protocol phase is a routing context; a condition is
+   whether a route exists in the current context. Prototype:
+   `reorg/ctx_switch.v` (today's `grid_switch` semantics, 4 contexts).
+2. **Dataflow triggering.** Tiles start, shift and stop on arriving
+   events; words move on valid/ready. Nothing needs a sequencer to say
+   *when*.
+3. **I/O tiles have configurable outputs.** Each of 4 outputs is any
+   pin's level, rise or fall, optionally qualified by another pin's
+   level: I2C START = SDA fall while SCL high, or SPI SCK edge while CS
+   low.
+4. **Word stages tap channels.** Compare observes a channel's
+   handshakes and emits match and mismatch pulses without sitting in the
+   chain. In a chain, the I2C address byte would reach the gate after
+   the context had already changed.
+
+There is no sequencer, no controller and no LUT logic for control.
+
+The I2C target as worked on paper (to be tested in the slice):
+
+| Switch | Contexts (transitions) | Routing that changes |
+|---|---|---|
+| I/O cell | RELEASE -(ACK-GO)-> WAIT -(SCL fall)-> DRIVE -(SCL fall)-> RELEASE | DRIVE: SDA enable sink = 1 |
+| shifter cell | IDLE -(START)-> ADDR -(match)-> ON / -(mismatch)-> OFF; ON, OFF -(START)-> ADDR, -(STOP)-> IDLE | ADDR: match pulse -> ACK-GO track; ON: word -> ACK-GO, gate sink = 1 |
+
+The shifter does bits, frames, the byte loop (burst) and abort on STOP.
+
+**Area (IHP liberty from a CI artifact; one cell's switch, 5 sink
+selectors and their configuration flops):**
+
+| Contexts | Area (µm²) |
+|---|---|
+| 1 (today) | 8,180 |
+| 2 | 17,512 |
+| 4 | 31,000 |
+
+Configuration storage dominates.
+
+Extrapolated synth area (at about 0.11% utilisation per 1k µm²):
+- **Without contexts.** About 377k (about 41%):
+  - switches 123k;
+  - timers 4 x 16.4k;
+  - coded shifters 2 x 34k;
+  - CRC 24k;
+  - word network 21k (measured);
+  - streams about 20k;
+  - configuration tree, host link and glue about 55k.
+- **With contexts.**
+  - 4 temporal cells at 4 contexts: +91k, about 51%;
+  - every cell at 2 contexts: +140k, about 57%;
+  - every cell at 4 contexts: +342k, about 79%;
+  - every cell at 4 contexts with latch configuration: about 65%.
+
+Proposal: contexts on a few cells (4-6 temporal cells, the way FPGAs put
+hard blocks in columns), about 51-55%. This leaves headroom even if the
+placement density target rises (the user suggested 60 -> 80).
+Concurrency tests decide whether more cells need contexts.
+
+**Promotion criteria (user, 2026-11-26).** The contexted switch is a
+prototype until all six hold, each with its evidence recorded here:
+
+1. **Correctness.** The real shifter and word network pass I2C START,
+   address, ACK/NAK, STOP, back-to-back transactions, and simultaneous
+   or closely spaced events, across the timing sweep.
+2. **Concurrency.** Two protocols run together without one switch's
+   context changes disrupting the other's routes or state.
+3. **Compiler support.** The compiler assigns contexts, detects
+   conflicts, routes the design and emits a working configuration from
+   source, not by reproducing a hand-authored mapping.
+4. **Broader coverage.** At least one other control-heavy protocol
+   (JTAG) is mapped and tested, with a streaming protocol alongside it.
+   Each failure is classified as hardware, compiler, or insufficient
+   resources.
+5. **Physical viability.** With the logic it replaces removed, the design
+   routes and meets timing and physical checks. Configuration storage,
+   transition logic and area are measured at the intended scale.
+6. **Advantage over the sequencer.** On the same workloads and
+   constraints, it gains meaningfully in flexibility, area, timing or
+   protocol coverage, without a material regression elsewhere.
+
+**Criterion 1 evidence (2026-11-26): `reorg/slice_i2c_tb.sv`, `make reorg-proto-test`.**
+The I2C target runs on a 1 x 3 strip of the mesh with:
+- two contexted switches (`ctx_switch.v`) and one static switch;
+- two I/O tiles (`io_tile.v`: qualified outputs, START = SDA fall while
+  SCL high);
+- the **real `fabric_shifter`** (8-bit receive frames on SCL rise, auto
+  push, abort on STOP);
+- the word network: rx -> gate -> writer, with compare as a tap on rx.
+
+There is no sequencer, controller or LUT. The routes and contexts:
+- The I/O switch steps RELEASE -> WAIT -> DRIVE. DRIVE pulls SDA low and
+  puts SCL fall on the START track as ACK-END, which restarts the shifter
+  for the next byte. The track is shared in time, as the keynote's
+  colours are.
+- The shifter switch steps IDLE -> ADDR -> ON/OFF. It routes the match
+  pulse (ADDR) or the word pulse (ON) as ACK-GO and opens the gate in ON.
+
+Passed:
+- a NAK for another address, with nothing stored;
+- 0x48 with 4 bytes: 5 ACKs and 4 bytes stored, the address byte dropped;
+- back-to-back transactions, including a data byte equal to the address,
+  then a transaction for another device;
+- contexts back at idle after every STOP.
+
+Timing sweep, 245 points: **215 pass**. Every failure has SCL low for
+4 clocks or fewer, where the ACK (about 5 clocks after the SCL fall)
+cannot be driven in time. That is the same envelope as the best
+sequencer variant (the LUT-qualified program B), so control in the
+interconnect costs no timing. A 1-clock SDA setup passes, because
+qualification happens in the I/O tile in the same clock.
+
+Found on the way:
+- The shifter pushes and pulses its word only at frame end, after any
+  post bit. The mapping therefore uses 8-bit frames and handles the ACK
+  clock in the contexts.
+- A context's sink entry placed at the wrong context index drove SDA
+  during a data bit. Context tables need the compiler's conflict and
+  order checks (criterion 3).
+
+Not yet covered:
+- a repeated START inside a transaction (ON has no START transition,
+  because the START track carries ACK-END there);
+- simultaneous events by construction (two events into one transition
+  row in the same clock: priority A over B, untested);
+- the existing pin-level cocotb test against a chip build.
+
+**Targets to verify, not guarantees:**
+- **Timing.** Every tile output is a register, so tile to tile is one
+  clock, whatever the route. To verify: Fmax across the longest
+  combinational mesh path, and every route's latency in simulation.
+- **Events.** Pulses are one clock wide, and every always-active
+  consumer sees every pulse. The I2C prototype sweep found no case where
+  event latches changed a result. To verify: on JTAG, USB, Ethernet and
+  concurrent runs before latches are ruled out.
+
 ## Steps (in order; each sturdy, with its own evidence, before the next)
 
 1. **Inventory**: the existing tiles, switch boxes, SRAM paths and
@@ -51,11 +234,11 @@ mesh, which is what the lane core's 64-line crossbar was.
      - reset;
      - the latency of a route (which hops are registered);
      - configuration ownership.
-   - **3b. A logic+state resource** (LUT4 + register + sticky event)
-     attached to the existing switches, reusable and independently
-     assignable.
-   - **3c. Map the I2C target** onto 3b's resources, a timer/shifter and
-     the SRAM stream path: START, address match, ACK, byte reception,
+   - **3b. Contexted switch** (`reorg/ctx_switch.v`) and the
+     primitive features the I2C mapping needs (I/O output qualification,
+     compare as a tap, the shifter's word event before the ACK bit).
+   - **3c. Map the I2C target** onto contexted switches, the real
+     shifter, an I/O tile and the SRAM stream path: START, address match, ACK, byte reception,
      STOP. Test it at the pins.
    - **3d. Compare** against:
      - the existing lane-core implementation (pin behaviour, resources,
@@ -76,6 +259,8 @@ Workflow (user, 2026-11-26): RTL changes do not wait for review; RTL
 experiments settle decisions, and the evidence is recorded here. Existing
 protocol tests move over one at a time, and nothing old is deleted while
 a test depends on it.
+
+# History (superseded where it differs from the Active plan)
 
 ## Step 1: inventory (2026-11-26, branch experiment/two-sram-placement @ 4470df8)
 
@@ -219,7 +404,7 @@ mesh, and lane designs bypass it entirely (`grid_lane.py` never routes).
 
 ## Step 2: where the lane-core functions go
 
-### Decisions (hardened 2026-11-26, user direction)
+### Decisions D1-D6 (SUPERSEDED by the Active plan; kept for the record)
 
 Target picture (illustrative; the real arrangement is the 5 x 3 grid,
 drawn in step 5):
@@ -349,7 +534,7 @@ routes 9 nets in 2 tracks.
    protocols (for example an I2C target and a UART) already need 4
    inputs and 3 outputs. The I/O tile has to grow (step 3's eight pads).
 
-### Refined decisions (hardened)
+### Refined decisions (SUPERSEDED: the table tile and the LUT-tile turns were both withdrawn; see the Active plan)
 
 - **D1** as above. In addition, every logic+state cell output and
   every tile output is registered (step 3 fixes the per-hop rule).
@@ -414,7 +599,7 @@ lane controller mixes the two in one 16-bit CPU-like engine with a 64-entry
 program buffer. That is why it ended up beside the mesh: it needs every
 tile's words *and* every tile's bits.
 
-### Proposal: split bit control from word processing
+### Proposal: split bit control from word processing (the word split stands, in the Active plan; the control placement is open there)
 
 | Lane-core function | Goes to | Reason |
 |---|---|---|
@@ -594,12 +779,12 @@ Under random backpressure on every endpoint (9 seeds) these all pass:
   sources, **losing words**. Each source's ready is now gated by
   validity.
 
-**Step 2 status: done.** Decisions D1, D3-D6 and the D2 baseline
-(distributed logic+state) stand. They have prototype evidence for
-sequencing semantics, I2C timing and the word stages. The table tile is
-a comparison in step 3d.
+**Step 2 status:** the word network and the coarse-tile foundation are
+settled (Active plan). Control is an open comparison in step 3. This
+paragraph previously called the distributed-logic baseline decided; that
+is superseded.
 
-### Open questions (settled by experiment, recorded here with evidence)
+### Open questions (SUPERSEDED list; the open items are in the Active plan)
 
 1. ~~Sequencer size~~ (two-event rows, 16 rows, above). **Paging: not
    carried over.** No shipped program needs more than 16 rows:
