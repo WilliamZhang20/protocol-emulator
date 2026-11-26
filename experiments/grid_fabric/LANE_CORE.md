@@ -259,3 +259,43 @@ the exact RTL test data.
 Also fixed: the tile experiment's timer testbench still expected the old
 non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
 (target phase + period) and the near-edge cases.
+
+## 2.5 plan: two lane cores, ownership by construction, per-lane status
+
+Decisions (each with its reason):
+
+- **Ownership is structural, not a table.** A core's WCFG reaches only its
+  own words (timer shadows, `live_write_accepted`) through a port inside
+  the core; there is no shared live-write path, so no lane can write
+  another's words and nothing needs checking at run time. Lane writes into
+  soft-tile contexts are not added to this grid: the fabric-wide lane
+  wiring of 7193f31 (readback gathered from cells, WCFG into grid
+  contexts) is what stopped detailed routing converging, and step 4.2
+  rebuilds soft tiles with per-cell leaves and an arbiter for the host
+  plus three clients per lane, which is where such writes belong. The
+  contract states, per lane, the words its WCFG reaches.
+- **Lane 1 is a second `grid_lane_core`** on page 1 words 64-101 (lane k
+  at 64k, as the leaf already decodes), with its own leaf from the tree
+  root, so page-1 validity is per lane. Lane 1 reaches SRAM through the
+  same port arbiter as lane 0 (its program load is one client more).
+  PULL/PUSH are stream operations (the controller has no load/store), so
+  lane 1 needs its own stream pair: a reader and a writer over host words
+  of its own (base, length, capacity on page 1), arbitrated with lane 0's
+  on the SRAM port. Each lane's stream faults fail only that lane.
+- **Pins.** Lane 0 keeps in0/in1 (uio5/uio6) and the three outputs.
+  Lane 1 reads uio0 and lane 0's in0/in1 as its pad inputs, and lane 0's
+  outputs as its mesh inputs; its outputs drive a pin only where a page-1
+  pin-owner word gives it that pin (one owner per pin, checked by the
+  validity rule). Step 3's eight pads replace this.
+- **Host.** Command 5's data selects the lanes to start (bit k lane k;
+  0 keeps today's behavior: lane 0). Status view (opcode 4) gains lane 1
+  done (sticky until its next start), error and active in bits 2:0; the
+  finish pin stays lane 0's (and the merged completion goes in 2.7).
+- **Tests.** Formal: lane 1's validity proof is the same proof (one core
+  module); a new bounded check that a lane-1 WCFG never changes a lane-0
+  word and vice versa. Pins: two programs at once, each finishing on its
+  own and reporting its own error; start masks; status bits.
+
+Gate before writing RTL: the 9a3e66e GDS must show whether one core
+routes. If detailed routing still does not converge, placement regions
+per lane core (step 4.3) come before a second core.

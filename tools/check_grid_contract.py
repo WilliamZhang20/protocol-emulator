@@ -391,8 +391,11 @@ def prove_switch(contract, yosys, tmp):
     classes = network['turn_classes']
     assert sorted(t for group in classes for t in group['tracks']) == list(range(tracks))
     assert values['zero'] == 0 and values['local_last'] == values['local_first'] + 3
-    outputs = [('north', 'south', 'west', 'east'), ('south', 'north', 'west', 'east'),
-               ('west', 'east', 'north', 'south'), ('east', 'west', 'north', 'south')]
+    # Each output's inputs (straight, turn_first, turn_last) as the contract
+    # states them: the compiler's routing graph reads the same table.
+    inputs = network['switch_inputs']
+    assert sorted(inputs) == sorted(network['directions'])
+    outputs = [(d, *inputs[d]) for d in network['directions']]
     lines = ['module contract_switch_check(input [3:0] north_in,south_in,west_in,east_in,local_out,',
              'input [11:0] north_cfg,south_cfg,west_cfg,east_cfg, output mismatch);',
              'wire [3:0] north_out,south_out,west_out,east_out;',

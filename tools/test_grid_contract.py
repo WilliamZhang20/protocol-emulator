@@ -17,6 +17,8 @@ bad = copy.deepcopy(contract)
 bad['bit_network']['turn_classes'][0]['tracks'] = [2, 3]
 bad['bit_network']['turn_classes'][1]['tracks'] = [0, 1]
 mutations.append(('switch turns', bad))
+bad = copy.deepcopy(contract); bad['bit_network']['switch_inputs']['north'] = ['south', 'east', 'west']
+mutations.append(('switch inputs', bad))
 with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     for name, bad in mutations:
         path = Path(tmp) / 'contract.json'
@@ -26,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         if result.returncode == 0:
             raise SystemExit(f'ERROR: {name} mutation was accepted')
-        if name == 'switch turns' and 'proof did fail' not in result.stdout.lower():
+        if name in ('switch turns', 'switch inputs') and 'proof did fail' not in result.stdout.lower():
             raise SystemExit(f'ERROR: switch mutation failed for an unexpected reason: {result.stdout}')
     # Mutate the elaborated direct CRC-to-coder link rather than just the
     # metadata: accepting this would produce silently wrong packet FCS.

@@ -28,7 +28,7 @@
     "tracks_per_direction": 4, "width_bits": 1, "hop_cycles": 0,
     "switch_words": {"first": 5, "words_per_cell": 4, "selector_bits": 3, "extension_first_cell": 9, "extension_first": 128},
     "selector_values": {"zero": 0, "local_first": 1, "local_last": 4, "straight": 5, "turn_first": 6, "turn_last": 7},
-    "turn_classes": [{"tracks": [0, 1], "order": "horizontal_then_vertical"}, {"tracks": [2, 3], "order": "vertical_then_horizontal"}],
+    "turn_classes": [{"tracks": [0, 1], "order": "horizontal_then_vertical"}, {"tracks": [2, 3], "order": "vertical_then_horizontal"}], "switch_inputs": {"north": ["south", "west", "east"], "south": ["north", "west", "east"], "west": ["east", "north", "south"], "east": ["west", "north", "south"]},
     "track_changes": false, "u_turns": false,
     "input_selector": {"constant_zero": 0, "constant_one": 1, "local_first": 2, "north_first": 6, "south_first": 10, "west_first": 14, "east_first": 18, "last": 21},
     "sink_cells": [2, 2, 2, 3, 3, 3, 3, 1, 1, 1, 4, 4, 5, 5, 5, 7, 7, 7, 7, 10, 10, 10, 13, 13, 13, 9, 9, 9, 9, 11, 11, 11, 11, 12, 12, 12, 12, 14, 14, 14, 14, 6, 6],

@@ -293,6 +293,7 @@ mesh (minimum channel width) and timing of long unregistered routes.
 **5. Compiler.**
 
 Replace protocol-specific recipes with general CIRCT lowering, placement, routing and scheduling against the architecture contract.
+Design (2026-11-26): protocol-emulator-compiler `circt_lab/PLACE_ROUTE.md` — RRG from the contract, PathFinder with latency constraints, annealing placement, min-channel-width sweep feeding step 4.2; milestones R1-R7 (R6 before 4.2).
 
 1. New encoder for the lane controller; lowering kept from the existing
    backend.
