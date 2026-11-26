@@ -407,3 +407,56 @@ async def sample_latency_matches_contract(dut):
         dut._log.info('first %d: the sample lands %s clocks after the fall', first, landed)
         offsets.append(landed - first)
     assert len(set(offsets)) == 1 and offsets[0] == EDGE_TO_SAMPLE, (offsets, EDGE_TO_SAMPLE)
+
+
+@cocotb.test()
+async def start_to_shift_matches_contract(dut):
+    """The start-to-shift latency the compiler compensates for transmit is
+    the RTL's.
+
+    The controller's SHIFT starts the coded shifter on a frame [0, data(2),
+    1] with tx word 0b01. timer0 runs while the shifter is active (start
+    coder.active, stop coder.stop) and shifts it on its tick. At the output
+    the start bit lasts first + latency clocks (the output path delays both
+    of its edges alike, so the width is the width at the pin); the next bit
+    lasts exactly the period. The latency must be the same for every first
+    and equal the contract's start_to_shift_cycles."""
+    core = Core(dut)
+    await core.reset()
+    period = 12
+    latencies = []
+    for first in (3, 6, 9):
+        words = {
+            W_T0: first, W_T0 + 1: period,
+            W_TSEL: pair(C_ACTIVE, C_STOP), W_TSEL + 1: pair(NEVER, NEVER), W_TSEL + 2: pair(NEVER, NEVER),
+            W_CODER + 0: frame_word(2, pre=1, pre_val=0, post=1, post_val=1, idle=1),
+            W_CODER + 1: pair(T0_TICK, NEVER),
+            W_CODER + 2: SHIFT,
+            W_EV: pair(C_STOP, NEVER),
+            W_OUT: pair(C_SERIAL, HIGH),
+        }
+        await core.configure(words, 'LDI 1\nSHIFT\nWAIT 0\nHALT')
+        edges = []
+
+        async def watch():
+            last, cycle = 1, 0
+            while len(edges) < 3:
+                await FallingEdge(dut.clk)
+                cycle += 1
+                v = int(dut.out_value.value[0])
+                if v != last:
+                    edges.append(cycle)
+                    last = v
+        watcher = cocotb.start_soon(watch())
+        _, error = await core.run(20 * period)
+        await ClockCycles(dut.clk, 2)
+        watcher.cancel()
+        assert not error and len(edges) == 3, (first, error, edges)
+        start_bit, data_bit = edges[1] - edges[0], edges[2] - edges[1]
+        dut._log.info('first %d: start bit %d clocks, data bit %d', first, start_bit, data_bit)
+        assert data_bit == period, (first, data_bit, period)
+        latencies.append(start_bit - first)
+    contract = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_3x3.json')
+                          .read_text())['lane_core']
+    assert len(set(latencies)) == 1, latencies
+    assert latencies[0] == contract.get('start_to_shift_cycles'), (latencies, contract.get('start_to_shift_cycles'))

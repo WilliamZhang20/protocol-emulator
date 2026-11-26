@@ -92,3 +92,60 @@ async def slip_random_packets(dut):
     for _ in range(3):
         packet = [rng.choice([END, ESC, ESC_END, ESC_ESC, rng.randrange(256)]) for _ in range(rng.randint(0, 9))]
         await send_packet(chip, packet)
+
+
+
+async def pin_trace(dut, stop):
+    """The line (uio 6) every clock; 1 while not driven (idle high)."""
+    trace = []
+    while not stop:
+        await FallingEdge(dut.clk); await Timer(1, unit='ns')
+        driven = int(dut.uio_oe.value) & LINE
+        trace.append(1 if not driven else (int(dut.uio_out.value) & LINE and 1 or 0))
+    return trace
+
+
+def frames_from_trace(trace, bit):
+    """8N1 frames with every bit exactly `bit` clocks wide: after each fall
+    from idle, bit k must hold one level over [fall + k*bit, fall + (k+1)*bit)."""
+    frames, c = [], 1
+    while c < len(trace):
+        if trace[c - 1] == 1 and trace[c] == 0:
+            levels = []
+            for k in range(10):
+                window = trace[c + k * bit: c + (k + 1) * bit]
+                assert len(window) == bit and len(set(window)) == 1, \
+                    f'bit {k} of the frame at clock {c} is not {bit} clocks of one level: {window}'
+                levels.append(window[0])
+            assert levels[0] == 0 and levels[9] == 1, levels
+            frames.append(sum(b << k for k, b in enumerate(levels[1:9])))
+            c += 10 * bit
+        else:
+            c += 1
+    return frames
+
+
+@cocotb.test()
+async def uart_tx_lowered_from_source(dut):
+    """A UART transmitter lowered from source by rule (compiler
+    circt_lab/lanes/uart_tx_8n1.spt -> grid_lower.py -> grid_lane.py), with
+    times written at the pins: every bit, the start bit included, lasts
+    exactly BIT = 64 clocks at uio 6. The compiler took the contract's
+    start_to_shift_cycles off the start bit; a wrong value shows here as a
+    start bit of the wrong width."""
+    bit = 64
+    chip = Chip(dut)
+    await chip.reset()
+    payload = [0x55, 0xA5, 0x0F, 0x81]
+    await chip.load_design('uart-tx-lowered', {66: len(payload), 67: 0, 89: TX_BASE})
+    for offset, value in enumerate(payload):
+        await chip.write_byte(TX_BASE + offset, value)
+    stop = []
+    watcher = cocotb.start_soon(pin_trace(dut, stop))
+    await chip.start_and_wait(limit=bit * 11 * (len(payload) + 2) + 2000)
+    await ClockCycles(dut.clk, 2 * bit)
+    stop.append(True)
+    trace = await watcher
+    status = await chip.status()
+    assert not status & 0x40, f'error status {status:#x}'
+    assert frames_from_trace(trace, bit) == payload, ([hex(v) for v in frames_from_trace(trace, bit)], payload)
