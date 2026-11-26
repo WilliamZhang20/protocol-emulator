@@ -23,7 +23,9 @@
 //   6 AND  A &= arg           9 J    pc = arg       C LOOP C -= 1; if C != 0: pc = arg
 //   D SETC C = arg[7:0]
 //   E WCFG configuration word arg[7:0] = A; only lane-owned words (the five
-//          alternate-context words 112-116); any other address fails
+//          alternate-context words 112-116); any other address fails, and
+//          so does a value the fabric refuses (cfg_ok low: the word would
+//          break the rules static configuration is checked against)
 //   F reserved: fails
 // A is 16 bits (immediates zero-extend); C is 8 bits. Jumps and execution
 // beyond the loaded program fail. Abort fails. Everything fails closed.
@@ -40,7 +42,7 @@ module grid_lane_controller #(parameter ABITS=6)(
   output wire [3:0] actions,output wire fire,output reg [15:0] tx_word,output wire tx_load,
   input wire rd_valid,input wire [7:0] rd_data,output wire rd_consume,
   output wire wr_valid,output wire [7:0] wr_data,input wire wr_ready,
-  output wire cfg_we,output wire [7:0] cfg_addr,output wire [15:0] cfg_data,
+  output wire cfg_we,output wire [7:0] cfg_addr,output wire [15:0] cfg_data,input wire cfg_ok,
   output reg active,output reg loading,output reg done,output reg error,
   output reg [5:0] pc,output reg [15:0] acc,output reg [7:0] count
 `ifdef FORMAL
@@ -89,7 +91,7 @@ module grid_lane_controller #(parameter ABITS=6)(
   // shifter latches the new word.
   assign fire=(exec && op==4'h3) || shift_fire;
   assign tx_load=exec && op==4'h0 && sys==4'd4;
-  assign cfg_we=exec && op==4'hE && owned;
+  assign cfg_we=exec && op==4'hE && owned && cfg_ok;
   assign cfg_addr=arg[7:0];
   assign cfg_data=acc;
   assign actions=(enable && active) ? act : idle_actions;
@@ -148,7 +150,7 @@ module grid_lane_controller #(parameter ABITS=6)(
             end
           end
           4'hD: count<=arg[7:0];
-          4'hE: if(!owned) begin active<=0;done<=1;error<=1;end
+          4'hE: if(!owned || !cfg_ok) begin active<=0;done<=1;error<=1;end
           default: begin active<=0;done<=1;error<=1;end
         endcase
       end

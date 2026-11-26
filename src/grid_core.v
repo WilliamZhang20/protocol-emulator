@@ -22,7 +22,10 @@ module grid_core(
   // Lane B sequencer (cell 13). It starts with the host start, sees lane A's
   // activity as an event, and its actions are fabric sources in cells 12/14.
   input wire lane_b_start,lane_b_abort,lane_a_running,
-  output wire lane_b_active,lane_b_done,lane_b_error);
+  output wire lane_b_active,lane_b_done,lane_b_error,
+  // Lane controller: pin edge events, and live writes of one alternate-context word.
+  output wire [1:0] pin_edges,
+  input wire ctx_word_we,input wire [2:0] ctx_word_idx,input wire [15:0] ctx_word_data,output wire ctx_word_ok);
   localparam CELLS=15;
   // Configuration storage is distributed: every register is written only from
   // its own cell's leaf of grid_config_tree, so no configuration bus spans the
@@ -134,8 +137,9 @@ module grid_core(
     reg done;
     wire hit=leaf_we[6] && la[6]==ADDR;
     always @(posedge clk) begin
-      if(!rst_n) done<=0;else if(hit || ctx_load_we) done<=1;
+      if(!rst_n) done<=0;else if(hit || ctx_load_we || (ctx_word_we && ctx_word_idx==ci)) done<=1;
       if(ctx_load_we) value<=ctx_load_data[ci*16+:16];
+      else if(ctx_word_we && ctx_word_idx==ci) value<=ctx_word_data;
       else if(hit) value<=ld[6];
     end
     assign context_routes[ci]=value;
@@ -254,6 +258,23 @@ module grid_core(
   assign context_unique[8]=!context_routes[2][10] || !context_routes[4][10] || context_routes[2][4:0]!=context_routes[4][4:0];
   assign context_unique[9]=!context_routes[3][10] || !context_routes[4][10] || context_routes[3][4:0]!=context_routes[4][4:0];
   wire contexts_configured_now=(&context_written) && (&context_valid) && (&context_unique);
+  // A live write is checked against the same rules before it is accepted:
+  // the word itself, and no other override may already claim its sink. The
+  // controller fails closed on a refused write, so the armed configuration
+  // never leaves the validity it was armed with.
+  wire [4:0] live_target=ctx_word_data[4:0];
+  wire [4:0] live_selection=ctx_word_data[9:5];
+  wire live_word_valid=ctx_word_data[15:11]==0 && (!ctx_word_data[10] || (live_target<19 && live_selection<=21 &&
+    ((live_target!=10 && live_target!=11) || live_selection<=1 || live_selection>=6)));
+  wire [4:0] live_clash;
+  genvar lc;
+  generate for(lc=0;lc<5;lc=lc+1) begin: live_clash_check
+    localparam [31:0] SLOT_FULL=lc;
+    localparam [2:0] SLOT=SLOT_FULL[2:0];
+    assign live_clash[lc]=ctx_word_idx!=SLOT && ctx_word_data[10] && context_routes[lc][10] &&
+      context_routes[lc][4:0]==live_target;
+  end endgenerate
+  assign ctx_word_ok=ctx_word_idx<=3'd4 && live_word_valid && !(|live_clash);
   // Validity is a deep function of static configuration. It is registered
   // here and again in the scheduler; grid_config_tree holds arm off until
   // both stages reflect the last accepted write.
@@ -266,6 +287,7 @@ module grid_core(
   assign contexts_configured=contexts_configured_q;
   assign packet_configured=packet_configured_q;
   assign temporal_tick=tick;
+  assign pin_edges=local_signal[0][3:2];
   assign temporal_pins=sync;
   genvar q;
   generate for(q=0;q<19;q=q+1) begin: inputs

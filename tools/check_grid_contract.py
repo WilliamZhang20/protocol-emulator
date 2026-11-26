@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
-           'grid_core.v', 'grid_sequencer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
+           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
            'fabric_shifter.v', 'config_bank.v', 'memory_tiles.v', 'program_memory.v']
 
 

@@ -17,7 +17,7 @@ module lane_controller_properties (input wire clk);
   (* anyconst *) reg [9:0] base;
   (* anyconst *) reg [1:0] last2;
   (* anyconst *) reg [3:0] idle;
-  (* anyseq *) reg enable, start, abort, mem_ready, rd_valid, wr_ready;
+  (* anyseq *) reg enable, start, abort, mem_ready, rd_valid, wr_ready, cfg_ok;
   (* anyseq *) reg [7:0] events, levels, rd_data;
   (* anyseq *) reg [255:0] readback;
   wire [5:0] last = {4'b0, last2};
@@ -48,7 +48,7 @@ module lane_controller_properties (input wire clk);
     mem_req, mem_ready, mem_addr, mem_rvalid, mem_rdata, owns_port, resp_pending,
     events, levels, readback, idle, actions, fire, tx_word, tx_load,
     rd_valid, rd_data, rd_consume, wr_valid, wr_data, wr_ready,
-    cfg_we, cfg_addr, cfg_data, active, loading, done, error, pc, acc, count,
+    cfg_we, cfg_addr, cfg_data, cfg_ok, active, loading, done, error, pc, acc, count,
     d_latched, d_act, d_sent, d_got, d_low, d_shift_fire, d_prog);
   wire [7:0] d_latched, d_sent, d_got, d_low; wire [3:0] d_act; wire d_shift_fire; wire [63:0] d_prog;
 
@@ -77,7 +77,9 @@ module lane_controller_properties (input wire clk);
   wire ready_wait = level_wait ? levels[k[2:0]] : (m_seen[k[2:0]] | events[k[2:0]]);
   wire blocked = (is_wait && !ready_wait) || (is_pull && !rd_valid) || (is_push && !wr_ready);
   wire step = in_run && !off_end && !blocked;
-  wire may_write = k[11:8] == 4'd0 && k[7:0] >= 8'd112 && k[7:0] <= 8'd116;
+  wire owned = k[11:8] == 4'd0 && k[7:0] >= 8'd112 && k[7:0] <= 8'd116;
+  // The fabric's check of the value (cfg_ok) is arbitrary here.
+  wire may_write = owned && cfg_ok;
   wire jump_ok = k[11:6] == 6'd0 && k[5:0] <= last;
   wire taken = (o == 4'h9) || (o == 4'hA && m_a == 16'd0) || (o == 4'hB && m_a != 16'd0) ||
                (o == 4'hC && m_c != 8'd1);
@@ -110,8 +112,9 @@ module lane_controller_properties (input wire clk);
     assert (active == (mode != IDLE));
     assert (loading == (mode == LOAD));
   end
-  // The write fence holds whatever the program does.
-  always @(*) if (cfg_we) assert (cfg_addr >= 8'd112 && cfg_addr <= 8'd116);
+  // The write fence holds whatever the program does, and a refused value is
+  // never written.
+  always @(*) if (cfg_we) assert (cfg_addr >= 8'd112 && cfg_addr <= 8'd116 && cfg_ok);
   always @(*) if (rst_n) begin
     assert (fire == e_fire);
     assert (done == m_done);

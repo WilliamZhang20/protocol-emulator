@@ -213,6 +213,18 @@ Every step ends with: regression, local area (reported), push, GDS,
 
 **1. Lane controller in today's grid (one lane).**
 
+Status (2026-11-26), one sub-step at a time; the next starts only when the
+previous one is sturdy:
+
+| Sub-step | Status |
+|---|---|
+| 1.1 `src/grid_lane_controller.v` | **Done.** 16-bit instructions, 64-instruction local buffer loaded at start (no fetch at run time, so decision time is fixed), 8 latched pulse events + 8 live levels, 16 readback words, live writes fenced to context words 112-116; buffer depth is a parameter. The proof found three bugs, all fixed: outputs live while disabled, FIRE fell to the fail case, outputs decoded past the program end. |
+| 1.2 formal reference model | **Done.** `formal/lane_controller/`: an independent ISA model over a symbolic 4-instruction program at a symbolic base, arbitrary start/abort/enable, events, levels, readback, stream handshakes and port stalls. Every controller register is asserted equal to the model's, so k-induction proves every output prediction for all time (8 s); 6 covers reached; 6 injected RTL bugs all give counterexamples (`make -C formal lane_controller-mutations`). Bounded checking alone did not scale (1.6x per step, 3 engines timed out at 10 min), hence induction. CI: `grid formal` job on every push (30-minute limit) runs this, the mutations, `fabric_shifter` (6 min) and `fabric_crc` (12 s). |
+| 1.3 fabric select | **Done.** Full regression green (lint, contract, synth, gds-config, all grid tests, 24/24 cocotb on Verilator and Icarus). Word 91 bit 2 selects the lane controller instead of the row sequencer (bits 0 and 2 together are invalid); word 95 = `{last[5:0], base[9:0]}`. The lane drives the grid's actions, start and tx word, borrows memory client 0 for its program load, pulls/pushes through the stream reader and writer, and writes context words 112-116 live. `test_lane_controller.py` (pins only): XOR-transform stream of 6 bytes (51 clocks after load, rerun on new data), a live write releasing SDA mid-run then restored, a refused write, a fenced write, and the row sequencer still selectable. Found and fixed: a live write that duplicated a sink or set reserved bits dropped grid validity, which silently disabled the whole fabric mid-run. Now grid_core checks each live write against the static rules (`ctx_word_ok`: word valid, no other override on its sink); a refused write fails the transfer and nothing changes. Formal: `cfg_ok` is an arbitrary input in the model, plus a sixth mutation (refused value still written), all caught. Follow-up: sequencer page loads write contexts unchecked the same way (pre-existing; dropped with the row sequencer in step 3, so not fixed there). Assembler: `test/cocotb_tests/lane_asm.py`. |
+| 1.4 pin tests | Not started. |
+| 1.5 fetch/decision measurement | Not started. |
+| 1.6 mesh vs signal space | Not started. |
+
 1. `src/grid_lane_controller.v`: the 16-bit instruction set above, built
    from `controller.v`'s datapath; fetch through the host-bank client with
    ready/valid stall and a local instruction buffer; 16 sticky events;
@@ -262,6 +274,8 @@ Every step ends with: regression, local area (reported), push, GDS,
    checked by its own peer.
 
 **5. Compiler.**
+
+Replace protocol-specific recipes with general CIRCT lowering, placement, routing and scheduling against the architecture contract.
 
 1. New encoder for the lane controller; lowering kept from the existing
    backend.

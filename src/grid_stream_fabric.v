@@ -43,6 +43,9 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   reg frame_tx_done,frame_tx_error,frame_spi_done,frame_spi_error;
   wire frame_tx_active,frame_spi_active;
   reg temporal_mode,temporal_mode_valid,temporal_settings_valid,temporal_settings_written;
+  // Word 91 bit 2: the lane controller drives the lane instead of the row
+  // sequencer and frame engine (bits 0 and 2 together are invalid).
+  reg lane_mode;
   reg packet_mode,packet_mode_valid,packet_running,packet_done,packet_error;
   reg [10:0] packet_left;
   reg packet_started;
@@ -53,13 +56,14 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     (format[3:2]==1 || format[3:2]==2);
   always @(posedge clk) begin
     if(!rst_n) begin format<=0;ormask<=0;format_written<=0;rx_autostart<=0;descriptor_written<=0;route_valid<=1;route_sel<=0;
-      packet_mode<=0;packet_mode_valid<=1;temporal_mode<=0;temporal_mode_valid<=1;temporal_settings_valid<=0;temporal_settings_written<=0;temporal_entry<=0;temporal_idle<=0;end
+      packet_mode<=0;packet_mode_valid<=1;temporal_mode<=0;lane_mode<=0;temporal_mode_valid<=1;temporal_settings_valid<=0;temporal_settings_written<=0;temporal_entry<=0;temporal_idle<=0;end
     else if(leaf_we) begin
       if(leaf_addr==63) begin format<=leaf_data;format_written[0]<=1;end
       if(leaf_addr==64) begin ormask<=leaf_data;format_written[1]<=1;end
       if(leaf_addr==65) begin rx_autostart<=leaf_data[0];descriptor_written<=leaf_data[15:1]==0;end
       if(leaf_addr==88) begin route_valid<=leaf_data[15:3]==0;route_sel<=leaf_data[2:0];end
-      if(leaf_addr==91) begin temporal_mode<=leaf_data[0];temporal_mode_valid<=leaf_data[15:2]==0;end
+      if(leaf_addr==91) begin temporal_mode<=leaf_data[0];lane_mode<=leaf_data[2];
+        temporal_mode_valid<=leaf_data[15:3]==0 && !(leaf_data[0] && leaf_data[2]);end
       if(leaf_addr==93) begin packet_mode<=leaf_data[0];packet_mode_valid<=leaf_data[15:1]==0;end
       if(leaf_addr==92) begin temporal_entry<=leaf_data[3:0];temporal_idle<=leaf_data[7:4];
         temporal_settings_valid<=leaf_data[15:8]==0;temporal_settings_written<=1;end
@@ -72,30 +76,42 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire temporal_active,temporal_done,temporal_error,temporal_halting;
   wire [3:0] temporal_state,sequencer_actions;
   wire [1:0] seq_events,seq_event_enable;
-  wire [3:0] temporal_actions=temporal_active ? sequencer_actions : temporal_idle;
+  wire [3:0] lane_actions;
+  wire [3:0] temporal_actions=lane_mode ? lane_actions : temporal_active ? sequencer_actions : temporal_idle;
+  wire control_mode=temporal_mode || lane_mode;
   // Word 94: {paging enable, 5'b0, page base[9:0]}. Pages live in the host
   // bank (word 88 bit 0) at base + 64*page: 16 rows, then 5 context words.
   reg [15:0] page_cfg;
+  // Word 95: lane controller program {last instruction index[5:0], base[9:0]}
+  // in the host bank.
+  reg [15:0] lane_prog;
   always @(posedge clk) begin
-    if(!rst_n) page_cfg<=0;
-    else if(seq_valid && seq_addr==94) page_cfg<=seq_data;
+    if(!rst_n) begin page_cfg<=0;lane_prog<=0;end
+    else begin
+      if(seq_valid && seq_addr==94) page_cfg<=seq_data;
+      if(seq_valid && seq_addr==95) lane_prog<=seq_data;
+    end
   end
   wire paging=page_cfg[15];
   wire seq_loading,page_row_we,page_ctx_we,page_done,page_owns_port,page_resp_pending,page_req;
   wire [3:0] seq_load_page,page_row_addr;wire [15:0] page_row_data;wire [79:0] page_ctx_data;wire [9:0] page_addr;
-  wire temporal_ready=!temporal_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
-    contexts_configured && (paging || temporal_programmed[temporal_entry]) && !rx_autostart);
+  wire temporal_ready=!control_mode || (temporal_mode_valid && temporal_settings_valid && temporal_settings_written &&
+    contexts_configured && (lane_mode || paging || temporal_programmed[temporal_entry]) && !rx_autostart);
   wire packet_ready=!packet_mode || (packet_mode_valid && !rx_autostart && packet_configured);
   wire configured_now=format_valid && grid_configured && route_valid && temporal_ready && packet_ready && page_cfg[14:10]==0;
   reg configured_q;
-  always @(posedge clk) if(!rst_n) configured_q<=0; else configured_q<=configured_now;
+  // Validity is evaluated while disarmed; armed configuration changes only by
+  // the lane controller's live writes, which grid_core checks against the
+  // same rules before accepting (ctx_word_ok), so it is held while armed.
+  always @(posedge clk) if(!rst_n) configured_q<=0; else if(!arm) configured_q<=configured_now;
   assign configured=configured_q;
   // Lane A is the frame, packet or temporal engine. Lane B (grid_core cell
   // 13) runs beside it from the same start. The host sees one transfer: done
   // waits until both lanes have finished, and either lane's error is reported.
-  wire lane_a_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
-  wire lane_a_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
-  wire lane_a_running=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
+  wire lane_ctl_active,lane_ctl_done,lane_ctl_error;
+  wire lane_a_done=lane_mode ? lane_ctl_done : temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
+  wire lane_a_error=lane_mode ? lane_ctl_error : temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
+  wire lane_a_running=lane_mode ? lane_ctl_active : temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
   wire lane_b_active,lane_b_done,lane_b_error,host_start;
   reg lane_a_held,lane_a_held_error,lane_b_failed,finished_error;
   wire finish_now=(lane_a_done && !lane_b_active) || (lane_a_held && lane_b_done);
@@ -134,7 +150,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   assign tx_queued={1'b0,rd_queued};assign rx_queued={1'b0,wr_queued};
   assign host_start=arm && start_request && state==IDLE;
   wire temporal_request=!packet_mode && temporal_active && sequencer_actions[3] && sequencer_actions[2] && !temporal_request_prev && !temporal_halting;
-  wire start=!packet_mode && (temporal_mode ? temporal_request : host_start) && state==IDLE;
+  wire start=!packet_mode && !lane_mode && (temporal_mode ? temporal_request : host_start) && state==IDLE;
   wire [2:0] frame_bytes={1'b0,format[1:0]}+(format[13] ? (format[14] ? 3'd2 : 3'd1) : 3'd0);
   wire [10:0] selected_tx_base=temporal_mode && !packet_mode ? temporal_tx_cursor : {route_sel[1],tx_base};
   wire [10:0] selected_rx_base=temporal_mode && !packet_mode ? temporal_rx_cursor : {route_sel[2],rx_base};
@@ -181,33 +197,63 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
       end
     end
   end
-  wire reader_start=arm && configured && (packet_mode ? packet_start && packet_start_valid : start && start_valid);
-  wire writer_start=arm && configured && !packet_mode && ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid));
-  wire reader_consume=packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
+  // Lane mode: the host start opens the reader and writer on the host's
+  // bases and lengths; the lane controller pulls and pushes bytes.
+  wire lane_reader_go=host_start && tx_length!=0 && source_end<=2048;
+  wire lane_writer_go=host_start && rx_capacity!=0 && receive_end<=2048;
+  wire lane_rd_consume;
+  wire reader_start=arm && configured && (lane_mode ? lane_reader_go : packet_mode ? packet_start && packet_start_valid : start && start_valid);
+  wire writer_start=arm && configured && !packet_mode && (lane_mode ? lane_writer_go :
+    ((rx_autostart && !armed_seen) || (!rx_autostart && start && start_valid)));
+  wire reader_consume=lane_mode ? lane_rd_consume : packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
   wire fire=state==FIRE;
   wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],(seq_event_enable[1] ? seq_events[1] : temporal_pins[1]),(seq_event_enable[0] ? seq_events[0] : temporal_pins[0]),(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
   wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active) ||
     (lane_b_done && lane_b_error);
-  grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
+  grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && !lane_mode && configured,
     seq_valid && seq_addr>=96 && seq_addr<=111,seq_addr[3:0],seq_data,
     seq_valid && seq_addr==91 && seq_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
     sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed,
     paging,temporal_idle,seq_loading,seq_load_page,page_row_we,page_row_addr,page_row_data,page_done);
+  // ---- lane controller
+  wire lane_owns_port,lane_resp_pending,lane_mem_req,lane_fire,lane_tx_load,lane_wr_valid,lane_cfg_we,lane_cfg_ok,lane_ctl_loading;
+  wire [9:0] lane_mem_addr;wire [7:0] lane_wr_data,lane_cfg_addr,lane_count;wire [15:0] lane_tx_word,lane_cfg_data,lane_acc;
+  wire [5:0] lane_pc;wire [1:0] pin_edges;
+  reg [10:0] lane_left;
+  always @(posedge clk) begin
+    if(!rst_n || !arm) lane_left<=0;
+    else if(lane_mode && host_start) lane_left<=lane_reader_go ? tx_length : 11'd0;
+    else if(lane_rd_consume) lane_left<=lane_left-1'b1;
+  end
+  // Pulse events latch in the controller; levels are live.
+  wire [7:0] lane_events={lane_b_done,seq_events[1],seq_events[0],finished[1],pin_edges[1],pin_edges[0],finished[0],temporal_tick};
+  wire [7:0] lane_levels={busy[1],busy[0],lane_left==0,rd_valid,!temporal_pins[1],!temporal_pins[0],temporal_pins[1],temporal_pins[0]};
+  wire [255:0] lane_readback={160'b0,{12'b0,busy[1],busy[0],rd_valid,wr_ready},{5'b0,rx_written},{5'b0,lane_left},
+    {14'b0,temporal_pins},rx1,rx0};
+  grid_lane_controller lane_ctl(clk,rst_n,arm && configured && lane_mode,host_start,lane_b_done && lane_b_error,
+    lane_prog[9:0],lane_prog[15:10],
+    lane_mem_req,mem_ready[0] && lane_owns_port,lane_mem_addr,mem_rvalid[0],mem_rdata[7:0],lane_owns_port,lane_resp_pending,
+    lane_events,lane_levels,lane_readback,temporal_idle,
+    lane_actions,lane_fire,lane_tx_word,lane_tx_load,
+    rd_valid,rd_data,lane_rd_consume,lane_wr_valid,lane_wr_data,wr_ready,
+    lane_cfg_we,lane_cfg_addr,lane_cfg_data,lane_cfg_ok,lane_ctl_active,lane_ctl_loading,lane_ctl_done,lane_ctl_error,
+    lane_pc,lane_acc,lane_count);
   grid_page_loader page_loader(clk,rst_n,seq_loading,seq_load_page,page_cfg[9:0],
     page_req,mem_ready[0] && page_owns_port,page_addr,mem_rvalid[0],mem_rdata[7:0],
     page_row_we,page_row_addr,page_row_data,page_ctx_we,page_ctx_data,page_done,page_owns_port,page_resp_pending);
   grid_core grid(clk,rst_n,arm && format_valid && route_valid && temporal_ready,
     cfg_leaves,
-    fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
-    temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
+    lane_mode ? lane_fire : fire,pin_in,lane_mode ? lane_tx_word : txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
+    control_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
     packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
     seq_events,seq_event_enable,page_ctx_we,page_ctx_data,
-    host_start,lane_a_done && lane_a_error,lane_a_running,lane_b_active,lane_b_done,lane_b_error);
+    host_start,lane_a_done && lane_a_error,lane_a_running,lane_b_active,lane_b_done,lane_b_error,
+    pin_edges,lane_cfg_we,lane_cfg_addr[2:0],lane_cfg_data,lane_cfg_ok);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
-  wire writer_valid=rx_autostart ? rx_event : frame_write;
+  wire writer_valid=lane_mode ? lane_wr_valid : rx_autostart ? rx_event : frame_write;
   wire [15:0] decoded_rx=(format[4] ? rx1 : rx0) >> format[12:9];
-  wire [7:0] writer_input=rx_autostart ? decoded_rx[7:0] :
+  wire [7:0] writer_input=lane_mode ? lane_wr_data : rx_autostart ? decoded_rx[7:0] :
     state==WRITE0 && format[3:2]==2 ? received[15:8] : received[7:0];
   // Explicit local stream links between the bank-adjacent FIFOs and the
   // shifter-side scheduler. They are combinational in this prototype.
@@ -223,10 +269,11 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire stream_route_write=leaf_valid && (leaf_bank || leaf_addr==88);
   wire [2:0] stream_routes=leaf_bank ? {leaf_data[1],leaf_data[1],leaf_data[0]} : leaf_data[2:0];
   grid_stream_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,arm,stream_route_write,stream_routes,{wr_addr[10],rd_addr[10]},
-    {wr_req,rd_req,page_owns_port ? page_req : host_req},{1'b1,1'b0,!page_owns_port && host_we},
-    {wr_addr[9:0],rd_addr[9:0],page_owns_port ? page_addr : host_addr},{wr_data,8'b0,host_wdata},mem_ready,mem_rvalid,mem_rdata);
+    {wr_req,rd_req,page_owns_port ? page_req : lane_owns_port ? lane_mem_req : host_req},{1'b1,1'b0,!page_owns_port && !lane_owns_port && host_we},
+    {wr_addr[9:0],rd_addr[9:0],page_owns_port ? page_addr : lane_owns_port ? lane_mem_addr : host_addr},{wr_data,8'b0,host_wdata},mem_ready,mem_rvalid,mem_rdata);
   // A page load borrows the host port; the host link waits on ready.
-  assign host_ready=mem_ready[0] && !page_owns_port;assign host_rvalid=mem_rvalid[0] && !page_resp_pending;assign host_rdata=mem_rdata[7:0];
+  assign host_ready=mem_ready[0] && !page_owns_port && !lane_owns_port;
+  assign host_rvalid=mem_rvalid[0] && !page_resp_pending && !lane_resp_pending;assign host_rdata=mem_rdata[7:0];
   // Compatibility outputs share the same generic transfer status.
   always @(posedge clk) begin
     if(!rst_n || !arm || !configured) begin
