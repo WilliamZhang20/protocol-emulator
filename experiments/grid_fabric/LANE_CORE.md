@@ -279,6 +279,16 @@ non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
 | DRT violations | 10,827 -> 0 by iteration 4 | 122,615 -> 100,434 in 2 iterations (about 4 h) |
 | global-route overflow | cleared | 24,724 |
 
+Global-routing congestion (GRT-0096, Metal2 / Metal3 / Metal4 use and overflow):
+
+| Run | Metal2 | Metal3 | Metal4 | Total overflow |
+|---|---|---|---|---|
+| d628e18 | 45.5%, 7 | 45.0%, 29 | 4.7%, 0 | 36 |
+| 9a3e66e | 85.5%, 1,148 | 94.5%, 23,255 | 42.8%, 321 | 24,724 |
+| 73e765d | 85.5%, 748 | 111.1%, 57,579 | 39.4%, 219 | 58,546 (reached DetailedRouting after 4 h; iteration 0 unfinished at 6 h) |
+
+Demand roughly doubles on every layer, with Metal3 at or over capacity across the die. That is the signature of total logic (44k instances, 67%), not of one congested region.
+
 Utilisation follows synth area linearly on this die (about 0.11% per
 1k um2: 350k gives 38.4%, 614k predicts 67.4%). The lane core
 (224k; 145k plus a 15k macro with the program store) duplicates
