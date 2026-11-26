@@ -164,7 +164,12 @@ module grid_core(
       if(la[8]>=117 && la[8]<=122) coder_written[la[8]-117]<=1;
       if(la[8]>=69 && la[8]<=80) begin
         crc_written[la[8]-69]<=1;
-        if(la[8]==75) begin crc_shape_valid<=ld[8][15:7]==0;crc_link_valid<=ld[8][6];end
+        if(la[8]==75) begin
+          // Shape: width, init, linked, link 0 only, additive and its two's
+          // complement option (only with additive); 15:10 reserved.
+          crc_shape_valid<=ld[8][15:10]==0 && !ld[8][7] && !(ld[8][9] && !ld[8][8]);
+          crc_link_valid<=ld[8][6];
+        end
         if(la[8]>=77) crc_routes[la[8]-77]<=ld[8];
       end
     end

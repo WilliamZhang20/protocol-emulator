@@ -49,3 +49,31 @@ Manchester check, no half-bit sample, no stuff check) each fail it.
 | Lanes use the plain `fabric_v2_shift`, which has no parity | UART 8E1, PS/2, SWD, LIN on lanes | 2.4: the lane's serializer is the coded shifter |
 | Duration from data (SENT nibbles, PWM bits) | SENT TX | 2.5: live writes of a lane's timer periods (the shadow is already in `grid_timer`) |
 | USB end-of-packet (SE0: both lines low) | USB RX | a pin-level event (LUT of the two pin levels), not the coder |
+
+## Checksums (step 2.3)
+
+The CRC tile gained an additive mode (shape word 75 bit 8; bit 9 selects
+two's complement): a bit-serial adder over words of the tile's width, fed
+LSB first in wire order, so it sits behind the same absorb/data lines or
+coder link as the polynomial mode. One's complement keeps the carry
+across words (LIN classic and enhanced checksums, the Internet checksum);
+two's complement drops it per word (modular sums such as the Modbus LRC
+before negation). `value` and the residue check use the folded sum; emit
+sends the complemented sum LSB first.
+
+- `formal/fabric_crc` `add_prove`: unbounded (PDR) proof against a
+  word-level model written the textbook way (add each byte, fold the carry
+  immediately), with arbitrary absorb, data, emit and init every cycle;
+  6 RTL mutations all caught (`fabric_crc-mutations`, in CI). The
+  polynomial-mode proofs are unchanged.
+- `experiments/fabric_v2/crc_additive_tb.sv`: 400 random sums at widths
+  1-32 with edge-heavy words, residue match and mismatch, emitted bits,
+  and a CRC-16 before and after to show polynomial mode is untouched.
+- The fold never needs a second carry (a word sum leaves the register all
+  ones with a carry only if it was already so, which init never starts):
+  the tile test's mutation of that case changed nothing, so the case was
+  removed and the argument recorded in the RTL.
+
+Not covered by the tile: the coder link gives the CRC tile every frame bit
+including start and stop bits, so a UART checksum on a lane needs the link
+to carry data bits only. That is a lane-core wiring choice (2.4).

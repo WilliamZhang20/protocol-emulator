@@ -14,6 +14,9 @@
 //       [6] linked: absorb, data and emit come from shifter [7]'s bit coder
 //       over a direct registered link instead of signal-space lines (the
 //       gates still apply)
+//       [8] additive: a checksum, not a CRC (below)
+//       [9] additive two's complement: drop the carry at each word end
+//           (else one's complement: the carry wraps into the next word)
 //   7   [4:0] absorb gate level  [5] absorb gated
 //       [10:6] emit gate level   [11] emit gated
 //
@@ -25,6 +28,18 @@
 // 32-bit compare never sits in front of a signal-space select.
 // `tail_out` predicts the CRC output after the current edge's update for a
 // linked shifter tail. The signal-space `out` keeps its current-state timing.
+//
+// Additive mode ([8]) sums words of `width` bits, fed LSB first in wire
+// order (UART byte order), with a bit-serial adder: each absorbed bit adds
+// into the register's bit 0 with the carry, and the register rotates right,
+// so after `width` bits it holds the sum, aligned. One's complement keeps
+// the carry across words (end-around carry: LIN's checksum, the Internet
+// checksum); two's complement drops it at each word end (a modular sum, the
+// Modbus LRC before negation). `value` and the check compare use the folded
+// sum (the pending carry added back), valid at word boundaries. Emit shifts
+// the folded sum out LSB first, complemented (`out` is its next bit): LIN
+// and the Internet checksum send the inverted sum. The polynomial is not
+// used.
 //
 // Priority per cycle: init, absorb, emit. While the fabric is disarmed the
 // register holds its init value, so a frame needs no explicit init pulse.
@@ -48,7 +63,9 @@ module fabric_crc (
   reg [31:0] check;
   reg [10:0] absorb_cfg;
   reg [10:0] emit_cfg;
-  reg [7:0]  shape;
+  reg [9:0]  shape;
+  reg        carry;           // additive: carry into the next bit
+  reg [4:0]  bit_pos;         // additive: bit position within the word
   reg [11:0] gate_cfg;
   reg [31:0] crc;
   reg        ok_r;
@@ -69,6 +86,8 @@ module fabric_crc (
     end
   end
   wire msb = |(crc & top);
+  wire additive = shape[8];
+  wire twos     = shape[9];
   wire linked = shape[6];
   wire data_in  = linked ? link_bit[shape[7]] : lines[{1'b1, absorb_cfg[10:6]}];
   wire feedback = msb ^ data_in;
@@ -88,10 +107,33 @@ module fabric_crc (
                   absorb_now ? shifted_msb ^ (feedback && poly_msb) :
                   emit_now ? shifted_msb : msb;
 
-  assign out   = !msb;
-  assign tail_out = linked ? !next_msb : out;
+  // ---- additive datapath
+  // One's complement fold: the pending carry added back. It never carries
+  // again: a word sum r + w + c is at most 2*(2^n - 1) + 1, so it leaves
+  // r all ones with a carry only if r was all ones with a carry before,
+  // which init (carry 0) never starts.
+  function automatic [31:0] fold(input [31:0] r, input c, input [31:0] m);
+    fold = c ? ((r + 32'd1) & m) : r;
+  endfunction
+  wire        sum_bit   = crc[0] ^ data_in ^ carry;
+  wire        sum_carry = (crc[0] & data_in) | (crc[0] & carry) | (data_in & carry);
+  wire        word_last = bit_pos == shape[4:0];
+  wire [31:0] add_crc   = ((crc >> 1) | (sum_bit ? top : 32'd0)) & mask;
+  wire        add_carry = sum_carry && !(twos && word_last);
+  wire [31:0] folded    = fold(crc, carry, mask);
+  wire [31:0] emit_crc  = folded >> 1;
+  wire        init_now  = !enable || lines[{1'b0, emit_cfg[10:6]}];
+  wire [31:0] add_next  = init_now ? (shape[5] ? mask : 32'd0) :
+                          absorb_now ? add_crc : emit_now ? emit_crc : crc;
+  wire        carry_next = init_now ? 1'b0 : absorb_now ? add_carry : emit_now ? 1'b0 : carry;
+  // Bit 0 of the next folded sum, for a linked tail (one bit, not a
+  // second 32-bit fold).
+  wire        folded_next0 = add_next[0] ^ carry_next;
+
+  assign out   = additive ? !folded[0] : !msb;
+  assign tail_out = additive ? (linked ? !folded_next0 : out) : (linked ? !next_msb : out);
   assign ok    = ok_r;
-  assign value = crc;
+  assign value = additive ? folded : crc;
 
   always @(posedge clk) begin
     if (!rst_n) begin
@@ -99,7 +141,7 @@ module fabric_crc (
       check      <= 32'd0;
       absorb_cfg <= 11'd0;
       emit_cfg   <= 11'd0;
-      shape      <= 8'd0;
+      shape      <= 10'd0;
       gate_cfg   <= 12'd0;
     end else if (cfg_we) begin
       case (cfg_addr)
@@ -109,7 +151,7 @@ module fabric_crc (
         3'd3: check[31:16] <= cfg_data;
         3'd4: absorb_cfg <= cfg_data[10:0];
         3'd5: emit_cfg   <= cfg_data[10:0];
-        3'd6: shape      <= cfg_data[7:0];
+        3'd6: shape      <= cfg_data[9:0];
         default: gate_cfg   <= cfg_data[11:0];   // 3'd7
       endcase
     end
@@ -119,18 +161,31 @@ module fabric_crc (
     if (!rst_n)
       ok_r <= 1'b0;
     else
-      ok_r <= ((crc ^ check) & mask) == 32'd0;
+      ok_r <= (((additive ? folded : crc) ^ check) & mask) == 32'd0;
   end
 
   always @(posedge clk) begin
-    if (!rst_n)
+    if (!rst_n) begin
       crc <= 32'd0;
-    else if (!enable || lines[{1'b0, emit_cfg[10:6]}])
-      crc <= shape[5] ? mask : 32'd0;
-    else if (absorb_now)
-      crc <= (shifted ^ (feedback ? poly : 32'd0)) & mask;
-    else if (emit_now)
-      crc <= shifted & mask;
+      carry <= 1'b0;
+      bit_pos <= 5'd0;
+    end else if (additive) begin
+      crc <= add_next;
+      carry <= carry_next;
+      if (init_now)
+        bit_pos <= 5'd0;
+      else if (absorb_now)
+        bit_pos <= word_last ? 5'd0 : bit_pos + 5'd1;
+    end else begin
+      carry <= 1'b0;
+      bit_pos <= 5'd0;
+      if (init_now)
+        crc <= shape[5] ? mask : 32'd0;
+      else if (absorb_now)
+        crc <= (shifted ^ (feedback ? poly : 32'd0)) & mask;
+      else if (emit_now)
+        crc <= shifted & mask;
+    end
   end
 endmodule
 

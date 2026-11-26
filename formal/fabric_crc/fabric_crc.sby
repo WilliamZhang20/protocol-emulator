@@ -2,23 +2,38 @@
 bmc
 prove
 cover
+add_prove
+add_cover
 
 [options]
 bmc: mode bmc
 prove: mode prove
 cover: mode cover
+add_prove: mode prove
+add_cover: mode cover
 depth 24
 
 [engines]
 bmc: smtbmc boolector
 prove: abc pdr
 cover: btor btormc
+add_prove: abc pdr
+add_cover: smtbmc boolector
 
 [script]
 read -formal -sv fabric_crc.v
-read -formal -sv fabric_crc_properties.sv
-prep -top fabric_crc_properties
+bmc: read -formal -sv fabric_crc_properties.sv
+bmc: prep -top fabric_crc_properties
+prove: read -formal -sv fabric_crc_properties.sv
+prove: prep -top fabric_crc_properties
+cover: read -formal -sv fabric_crc_properties.sv
+cover: prep -top fabric_crc_properties
+add_prove: read -formal -sv fabric_crc_additive_properties.sv
+add_prove: prep -top fabric_crc_additive_properties
+add_cover: read -formal -sv fabric_crc_additive_properties.sv
+add_cover: prep -top fabric_crc_additive_properties
 
 [files]
 ../../src/fabric_crc.v
 fabric_crc_properties.sv
+fabric_crc_additive_properties.sv

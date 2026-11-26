@@ -179,6 +179,11 @@ tile-fabric-v2-experiment:
 		--Mdir $(abspath $(BUILD_DIR)/verilator/coder_loopback) \
 		experiments/fabric_v2/coder_loopback_tb.sv src/fabric_shifter.v src/config_bank.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/coder_loopback/Vcoder_loopback_tb
+	mkdir -p $(BUILD_DIR)/verilator/crc_additive
+	$(VERILATOR) --binary --timing -Wno-fatal --top-module crc_additive_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/crc_additive) \
+		experiments/fabric_v2/crc_additive_tb.sv src/fabric_crc.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/crc_additive/Vcrc_additive_tb
 	$(VERILATOR) --binary --timing -Wno-fatal --top-module fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2) \
 		experiments/fabric_v2/fabric_tb.sv src/fabric_v2.v src/fabric_v2_tiles.v -MAKEFLAGS -j1

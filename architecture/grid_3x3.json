@@ -57,7 +57,9 @@
       "coder_word": 121, "coder_fields": {"stuff_run": [2, 0], "runs_of_ones": [3, 3], "nrzi": [4, 4], "receive": [5, 5], "arm_at_first_zero": [6, 6], "tail_invert": [7, 7], "bit_strobe": [8, 8], "tail_length": [14, 9], "manchester": [15, 15]},
       "coder_rules": ["stuff_run 1 requires runs_of_ones (an equal-bits stuff bit starts the next run)", "manchester excludes nrzi"],
       "coder_status_bits": {"post_capture": [3, 0], "stuff_error": [4, 4], "manchester_violation": [5, 5]}},
-    "crc": {"kind": "crc", "cell": 8, "instance": "crc_tile", "width_bits_min": 1, "width_bits_max": 32, "inputs": ["absorb", "emit", "init", "data"], "config_words": [69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80]}
+    "crc": {"kind": "crc", "cell": 8, "instance": "crc_tile", "width_bits_min": 1, "width_bits_max": 32, "inputs": ["absorb", "emit", "init", "data"], "config_words": [69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80],
+      "shape_word": 75, "shape_fields": {"width_minus_1": [4, 0], "init_ones": [5, 5], "linked": [6, 6], "link_select": [7, 7], "additive": [8, 8], "twos_complement": [9, 9], "reserved": [15, 10]},
+      "modes": {"polynomial": "bit-serial LFSR, MSB-first emit of the complemented register", "additive": "bit-serial sum of width-bit words fed LSB first; one's complement (carry wraps, LIN and RFC 1071) or two's complement (carry dropped per word); value and check use the folded sum; emit sends the complemented sum LSB first"}}
   },
   "memory": {"bank_count": 2, "total_bytes": 2048, "arbitration": "round_robin_per_bank", "clients": ["host", "reader", "writer"], "read_response_backpressure": false, "reader_fifo_bytes": 2, "writer_fifo_bytes": 2, "reader_start_requires_drained_responses": true, "cross_bank_ordered": true, "cross_bank_wrap": false, "word_links": "combinational_dedicated", "word_link_cycles": 0, "physical_locality_verified": false},
   "configuration": {

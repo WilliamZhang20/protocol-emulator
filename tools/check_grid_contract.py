@@ -128,6 +128,7 @@ def check(contract, modules):
     check_lane(contract, modules, top)
     check_timers(contract, modules)
     check_coder(contract)
+    check_crc_shape(contract)
     # Shifter configuration fields: the core's validity check and port wiring.
     core_text = (ROOT / 'src/grid_core.v').read_text()
     for name, instance in (('shifter0', 'shifter'), ('shifter1', 'shifter1')):
@@ -138,6 +139,23 @@ def check(contract, modules):
                   re.escape(f"cfg[{word}][{fields['width'][0]}:{fields['width'][1]}],cfg[{word}][{fields['msb_first'][0]}],"
                             f"cfg[{word}][{fields['restart'][0]}],"))
         assert re.search(wiring, core_text), name
+
+
+def check_crc_shape(contract):
+    """CRC shape word fields (additive mode) against the tile and the
+    grid_core validity rule."""
+    crc = contract['resources']['crc']
+    f = crc['shape_fields']
+    tile = (ROOT / 'src/fabric_crc.v').read_text()
+    assert f"wire additive = shape[{f['additive'][0]}];" in tile
+    assert f"wire twos     = shape[{f['twos_complement'][0]}];" in tile
+    assert f"wire linked = shape[{f['linked'][0]}];" in tile
+    assert f"3'd6: shape      <= cfg_data[{f['twos_complement'][0]}:0];" in tile
+    assert crc['shape_word'] == crc['config_words'][6]
+    core = (ROOT / 'src/grid_core.v').read_text()
+    rule = (f"crc_shape_valid<=ld[8][15:{f['reserved'][1]}]==0 && !ld[8][{f['link_select'][0]}] && "
+            f"!(ld[8][{f['twos_complement'][0]}] && !ld[8][{f['additive'][0]}]);")
+    assert f"if(la[8]=={crc['shape_word']}) begin" in core and rule in core
 
 
 def check_coder(contract):

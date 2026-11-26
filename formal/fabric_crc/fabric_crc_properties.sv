@@ -43,6 +43,8 @@ module fabric_crc_properties (input wire clk);   // one solver step = one clock 
 
   // Width fixed at 32 bits: the shape register is only ever written as such.
   always @(*) if (rst_n && cfg_we && cfg_addr == 3'd6) assume(cfg_data[4:0] == 5'd31);
+  // Polynomial mode (additive mode has its own model, fabric_crc_additive_properties).
+  always @(*) if (rst_n && cfg_we && cfg_addr == 3'd6) assume(cfg_data[9:8] == 2'd0);
   always @(*) if (rst_n && cfg_we) assume(!enable);
 
   wire absorb_m = linked_s ? link_absorb[link_k_s] : lines[absorb_s[5:0]];
