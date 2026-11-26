@@ -363,6 +363,68 @@ plan below (two fixed lane cores), which is kept only as history.
    - R7 lowering maps to resources, not fixed slots.
    - Two-shifter protocols (full-duplex UART, I2C) lower to one cluster.
 
+### Sub-step 1 status: inventory (2026-11-26, f233e68, local yosys + IHP liberty)
+
+Per-instance areas from the hierarchical synthesis, in um2 unflattened.
+Flattening merges logic across modules: 716k unflattened against 614k
+flattened, about 1.17x.
+
+| Block | Area | Contents |
+|---|---|---|
+| `grid_core` | 358k | own 177k (mesh, cell configuration: 1152 DFFE + 852 SDFFE, sink selectors); 4 `grid_timer` 65k; coded shifter + config banks 34k; CRC 24k; 15 switches 20k; `grid_sequencer` (lane B) 26k; 2 `fabric_v2_shift` 11k; 4 LUT4 1k |
+| lane core | 241k | own 53k (38 config words, 64-line selectors); controller 97k (about 78k of it the flop program buffer); 2 timers 32k; coded shifter 34k; CRC 24k |
+| top-level | 96k | stream fabric 30k; config tree 22k; `grid_sequencer` (lane A) 26k; page loader 7k; readers, writers and banks 11k |
+
+**Budget, first pass** (target about 365k flattened, about 425k
+unflattened):
+
+- One cluster: the lane core with the program-store macro (about 163k:
+  standard cells 145k + macro 15k flattened, or about 170k unflattened)
+  plus a second coded shifter (+34k), about 204k.
+- The fabric with its duplicates removed (4 timers, coded and CRC tiles,
+  both sequencers, the v2 shifters, the page loader): about
+  358 - 160 + 96 - 33 = 261k.
+- Fabric + one cluster: about 465k unflattened, about 397k flattened,
+  about 44% utilisation. Over budget; two clusters do not fit.
+- The largest remaining block is the mesh's own configuration and
+  selectors (177k). With two clusters each carrying a local crossbar,
+  a 3x3 mesh of 9 configurable cells is no longer the main bit network:
+  it only joins clusters and the LUT4 soft logic.
+
+The budget therefore closes only if the mesh shrinks with the
+clusters. Sub-step 1 continues:
+- the census of which lines each resource input uses (to size the sparse
+  local selectors);
+- what the mesh must still carry once clusters hold their own wiring
+  (inter-cluster bit nets, LUT4 inputs, pins), from the compiler's
+  channel-width study (2 tracks suffice for every shipped protocol).
+
+**Census of local-line use** (the 10 shipped lane designs, compiler
+`circt_lab/lanes/*.json`):
+
+| Input | Distinct lines used | Lines |
+|---|---|---|
+| timer0.start | 3 | coder.active, in0.fall, shift |
+| timer0.stop | 1 | coder.stop |
+| timer0.aux | 2 | in0.fall, in0.rise |
+| coder.start | 3 | fire, in0.fall, shift |
+| coder.shift / coder.sample | 2 each | in0.rise, timer0.tick |
+| coder.in | 2 | in0, in1 |
+| coder.abort | 1 | action1 |
+| outK.value / outK.enable | at most 2 | coder.serial, low / action0, high |
+| controller events | 6 kinds | coder.word, coder.stop, in0/in1 rise/fall |
+| timer1, CRC selectors | 0 | unused (LIN reaches the CRC through the shifter link) |
+
+No input uses more than 3 of its 64 lines. Ten designs are a small
+sample, and the migrated sequencer protocols (sub-step 4) will add more,
+so the subsets are typed rather than taken from this list alone:
+- timer start, stop and aux: pulses plus coder.active;
+- shifter shift and sample: timer ticks, pad edges, mesh edges;
+- data inputs: pad and mesh levels;
+- outputs: shifter serial outputs, actions, constants.
+That is a small fraction of 64 per input. Sizing these sets with the
+compiler's census tool is the next part of sub-step 1.
+
 ## 2.5 plan (superseded 2026-11-26 by clusters, above): two lane cores, ownership by construction, per-lane status
 
 Decisions (each with its reason):
