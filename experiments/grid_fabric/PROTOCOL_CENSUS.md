@@ -17,7 +17,7 @@ stateful, temporally constrained protocol patterns**: its processing elements
 descriptor sequencing over a registered event network.
 
 Corpus: the 22 pin-tested protocols of the earlier `arch/spatial` fabric
-(PX8 control loop plus tiles, `test/cocotb_tests/test_*.py`, from `02d0933`
+(a small controller, called PX8 there, plus tiles; `test/cocotb_tests/test_*.py`, from `02d0933`
 on), and 14 further protocol classes chosen from public specifications as a
 stand-in for held-out protocols. The held-out oracle
 (`protocol-emulator-oracle`) is deliberately not read; nothing here is tuned
@@ -130,16 +130,16 @@ capture.
    (`circt_lab/*.inc`). A held-out protocol cannot run until lowering is
    general.
 2. **The grid lost the "extended" half of the state machine, and with it
-   the PX8 thesis.** The PX8 lineage's thesis was that tiles time every bit
+   the earlier fabric's thesis.** That thesis was that tiles time every bit
    while a tiny controller only decides and never drives a pin or times a
    bit; it made data-dependent decisions and kept state variables in its
    registers (`XRC`/`JZ` compare, `DJNZ` counter, pointer), and covered all
    22 inherited protocols plus PPP and SLIP. The grid's sequencer has no data
    path, so anything that must decide on a received value is blocked. Either
-   a PX8-class data-capable controller per lane or a spatial match PE
-   (masked compare beside the shifter) restores it; the controller covers
+   a data-capable lane controller or a spatial match PE
+   (masked compare beside the shifter) restores it; the lane controller covers
    match, count and state at once, the match PE is faster for
-   respond-in-window. Decided (NEXT_STEPS.md): a PX8 controller per lane, measured at
+   respond-in-window. Decided (NEXT_STEPS.md): a lane controller per lane row, measured at
    11.4k um2 against 25.9k um2 for a row sequencer.
 3. **Pins are the next limit.** The host link occupies uio[4:0], leaving two
    bidirectional pads, one input and a multiplexed `uo[0]`. 4-wire protocols
@@ -171,9 +171,9 @@ event network and short word paths:
 | Serializer | F, S, P, Y | add parity generate/check in the frame engine |
 | Line coder | L | connect the receive decode path and edge resync |
 | Check | C | add an additive checksum mode |
-| **Match** (new) | M, R | masked compare of received word against 2-4 constants, events per hit; or folded into a PX8-class lane controller |
+| **Match** (new) | M, R | masked compare of received word against 2-4 constants, events per hit; or folded into the lane controller |
 | State | K | registered LUT4 cells as today |
-| Lane control | Q, R, A, K, M | per-lane controller that decides but never times a bit (the PX8 thesis): data-capable (compare, count, pointer), latched events, per-lane contexts (routing and tile parameters); descriptor rows where cheaper |
+| Lane control | Q, R, A, K, M | per-lane controller that decides but never times a bit (the earlier fabric's thesis): data-capable (compare, count, pointer), latched events, per-lane contexts (routing and tile parameters); descriptor rows where cheaper |
 | Stream | D | reader/writer per lane |
 | I/O | pins | uniform edge I/O tile; more pads once the host link moves |
 

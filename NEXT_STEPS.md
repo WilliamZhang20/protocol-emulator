@@ -27,11 +27,11 @@ compile from source and run at the pins. Method: Betz's research flow
 | Protocol coverage | 4 of 36 census protocols run at the pins, 7 more with workarounds, 12 need only compiler work, 13 are blocked by missing PEs. |
 | General compiler | Not started for the grid: every running image comes from a per-protocol lowering. |
 | Head-to-head, packaging | Not started. |
-| PX8 lineage (baseline) | 24 protocols at the pins, GDS passes; its data-capable controller is what the grid lacks. |
+| Earlier fabric (baseline) | `arch/spatial`: 24 protocols at the pins, GDS passes; its data-capable controller is what the grid lacks. |
 
 ### What "done" means
 
-0. At least the PX8 lineage's coverage: a replacement that runs fewer
+0. At least the earlier fabric's coverage: a replacement that runs fewer
    protocols than the design it replaces is not a replacement.
 1. Every census protocol that maps is compiled from `.spt` source by general
    lowering, with no per-protocol code, and passes its own tests at the pins
@@ -45,9 +45,10 @@ compile from source and run at the pins. Method: Betz's research flow
 4. A head-to-head table against the earlier fabric (area by function, slack,
    protocols at gate level, host interface) records the decision.
 
-### The PX8 thesis, and what the redesign lost
+### The lane-controller thesis, and what the redesign lost
 
-The earlier fabric (`arch/spatial`, PX8 lineage) stated its thesis plainly:
+The earlier fabric (`arch/spatial`; its controller was called PX8 there,
+`src/controller.v` here) stated its thesis plainly:
 tiles do all timing, and a tiny controller "loads the setup and makes the
 step-by-step decisions, but it never drives a pin or times a bit"; every
 block holds two setups. That is already the spatio-temporal middle Betz
@@ -55,24 +56,24 @@ argues for, and it covered 24 protocols at the pins (targets, receivers, CAN,
 USB receive, HDLC, PPP, SLIP among them) on eight `uio` pins, with the host
 link on `ui_in`, and it passes GDS (`016f736`; `arch/spatial8x4` `7dd2f41`).
 
-The 5 × 3 redesign replaced the PX8 with a row sequencer that has no data
+The 5 × 3 redesign replaced that controller with a row sequencer that has no data
 path, and moved the host link onto `uio[4:0]`. The census traces almost every
 blocked protocol to exactly what that removed: decisions on received values
-(PX8 `XRC`/`JZ`), counters and loops (`DJNZ`), data moves (`P`), per-block
+(`XRC`/`JZ`), counters and loops (`DJNZ`), data moves (`P`), per-block
 setups, byte tiles, counters, and six pins. Its real gains are structural:
 registered per-cell configuration distribution and registered validity
 (timing closed, layout repeatable), paging and descriptor rows, a lane placed
 in the fabric, credit-based streams, and a compiler routing model.
 
-**Decision (2026-11-26): keep the grid, put the PX8 back as each lane's
-controller.** Measured in local synthesis (same library): the PX8 controller
+**Decision (2026-11-26): keep the grid, give each lane a lane controller
+built from that controller.** Measured in local synthesis (same library): the controller
 is 11.4k um2, one lane sequencer 25.9k um2 (its 16 x 16 row flops), a timer
 4.8k, a shifter 5.2k, a switch box 1.4k per cell, the CRC tile 20.3k. The
-PX8 is the smaller and more capable control element: compare and branch on
+The controller is the smaller and more capable control element: compare and branch on
 received values, a loop counter, a data pointer, sticky events, block
 configuration writes. The grid keeps everything spatial: timing tiles,
 decentralized switch boxes, registered configuration tree. The row
-sequencer, descriptors and paging retire once the lanes run on PX8 control;
+sequencer, descriptors and paging retire once the lanes run on lane controllers;
 lane B's placement, merged completion and the page loader's port borrowing
 carry over.
 
@@ -89,13 +90,42 @@ area (about 45k um2 per lane, estimated; std cells are at 44% in layout).
 Target: two lanes, generated so a third is a parameter; three if area and
 routing allow.
 
+### What a lane is
+
+A lane is defined by ownership:
+
+1. One lane controller and the tiles it owns: 2 timers, 1 shifter, a reader
+   and writer stream port, latched event inputs and a readback window onto
+   those tiles.
+2. The configuration leaves of its cells; only its controller may rewrite
+   its dynamic words (contexts, timer periods) while armed.
+3. No shared state with other lanes: a controller drives only its own cells'
+   actions and reads only its own tiles; lanes meet only through mesh
+   signals (cross-lane events). This is what lets the compiler place
+   protocols independently and run them at once.
+4. Its own host interface: start, done and error per lane in the host status
+   (today the two lanes' completion is merged into one).
+5. Shared tiles (CRC, coded shifter, LUT4 cells) are borrowed, assigned to
+   one lane per program by the compiler.
+
+Floorplan: **a lane is a row of the grid**, three cells with dataflow in one
+direction, pins → controller and I/O (column 0) → timer pair (column 1) →
+shifter and stream port (column 2) → SRAM side. Intra-lane signals are one
+hop; vertical tracks carry shared tiles and cross-lane events, so lanes do
+not route through each other. Of the five rows, one holds the shared tiles,
+leaving three to four lane rows; pins and SRAM ports cap useful lanes at
+three to four. Columns would give five-cell lanes, only three of them, with
+lanes crossing each other's traffic. Physical coherence needs a placement
+region per lane row in the layout flow, since placement does not follow the
+logical grid by itself.
+
 ### Steps, in order (concrete)
 
 Each step ends with: regression, local area, push, GDS, 2-hour CI check.
 
-**1. PX8 lane controller in the grid (lane A first).**
+**1. Lane controller in the grid (lane A first).**
 
-1. New `src/grid_lane_controller.v`: instantiate `controller.v` (PX8 ISA
+1. New `src/grid_lane_controller.v`: instantiate `controller.v` (its instruction set
    unchanged) with grid adapters:
    - *Fetch:* `instruction_address/read/data` through the host-bank memory
      client with a ready/valid stall and a 4-byte prefetch buffer, borrowing
@@ -103,7 +133,7 @@ Each step ends with: regression, local area, push, GDS, 2-hour CI check.
      a new lane word (replaces word 94).
    - *Events:* 16 sticky lines per lane (the 8 current sequencer events,
      routed sinks 41/42, shifter done, rx-ready, lane B done, match spare),
-     PX8 `WEV`/`CLREV` semantics.
+     `WEV`/`CLREV` semantics.
    - *Readback* (`RD n`, 16 entries): shifter rx word, rx/tx counts, timer
      status, CRC low/high, pin levels, lane B status.
    - *Actions:* reserved opcode C becomes `ACT n`: set the lane's 4 action
@@ -116,24 +146,25 @@ Each step ends with: regression, local area, push, GDS, 2-hour CI check.
    - *Streams:* `PULL`/`TXP`/`PUSH` onto the lane's reader and writer.
    - `HALT` ends the transfer; an error flag (OPR spare) sets `tx_error`.
 2. `grid_stream_fabric.v`: lane A control select (word 91 bit 2: 0 =
-   sequencer, 1 = PX8), so every existing image and test keeps running
+   sequencer, 1 = lane controller), so every existing image and test keeps running
    unchanged.
 3. Bench `experiments/grid_fabric/lane_controller_tb.sv`: fetch under port
    stalls, sticky events, readback, live-config fencing, `ACT` timing.
 4. Pin test `test_i2c_target_grid.py`: I2C target with address match and ACK
-   in the window, written as a PX8 program (`RD` rx word, `XRC` address,
+   in the window, written as a lane-controller program (`RD` rx word, `XRC` address,
    `JZ`). This is the first census "blocked" protocol to run.
-5. Port two inherited PX8 programs unchanged in spirit (SPI target, PS/2
+5. Port two programs from the earlier fabric unchanged in spirit (SPI target, PS/2
    with parity check in software) to show the lineage's programs carry over.
 6. Measure: grid switch-box area versus the lineage's signal space (`arch/spatial`
    `016f736`) for the same tile count, and both at 3 lanes.
 
 **2. The lane as a replicated cluster.**
 
-1. New `src/grid_lane.v`: PX8 controller, 2 timers, 1 shifter, reader and
-   writer FIFOs, sticky events, readback, attached to 3 grid cells' switch
-   boxes. `grid_core` instantiates `LANES` copies; lane A uses today's cells
-   2/3/6, lane B 10/12/13 (shifter 1 and timer 1 move into lane B).
+1. New `src/grid_lane.v`: lane controller, 2 timers, 1 shifter, reader and
+   writer FIFOs, sticky events, readback, occupying one grid row (three
+   cells' switch boxes). `grid_core` instantiates `LANES` rows; one row
+   keeps the shared tiles (CRC, coded shifter, LUT4 cells). Per-lane start,
+   done and error in the host status.
 2. Memory arbiter: clients = host + per lane {fetch, reader, writer}, round
    robin per bank; record the worst grant wait in the contract and test it.
 3. Shared tiles stay mesh-reachable by any lane: CRC, coded shifter, LUT4
@@ -156,9 +187,9 @@ Each step ends with: regression, local area, push, GDS, 2-hour CI check.
 
 **4. Compiler retarget (start alongside step 1).**
 
-1. The compiler already lowers to the PX8 (8 x 4 backend). Retarget it:
+1. The compiler already lowers to this controller (8 x 4 backend). Retarget it:
    lane assignment, tile placement and routing on the grid mesh
-   (`grid_route`), PX8 code from `fn` bodies, configuration words from
+   (`grid_route`), controller code from `fn` bodies, configuration words from
    `architecture/grid_3x3.json`.
 2. `reg` expressions to LUT4 cells; `if received == K` to `RD`/`XRC`/`JZ`.
 3. Resource report and unmappable-construct diagnostics per program.
