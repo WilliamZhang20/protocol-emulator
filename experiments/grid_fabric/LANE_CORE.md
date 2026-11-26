@@ -209,8 +209,15 @@ Found and fixed on the way:
   close a loop through a selector. Edge to pad is now 5 + k clocks
   (LANE_TIMING.md).
 - **Sample timing rule:** a receiver's first count and resync phase are
-  half a bit less the 2-clock tick-to-sample latency; input latency
-  delays the edge and the sampled level alike and cancels.
+  the bit's centre clock, (bit - 1) // 2 after the edge, less the
+  edge-to-sample offset. *Corrected 2026-11-26 by measurement* (lane-core
+  test `sample_latency_matches_contract`): the offset is 1 clock, not the
+  2 stated here before. The tick and the sample are two registers, but
+  the edge path (edge detect) is one register longer than the level path,
+  so they do not cancel fully. The old `bit/2 - 2` gives the same counts
+  for even bits (8 for 20 clocks), so no design changed. The contract
+  states the measured value (`lane_core.edge_to_sample_cycles`) and the
+  compiler derives the counts from `sample_first`/`sample_phase`.
 
 ## 2.4c status: done locally (awaiting CI)
 
@@ -226,8 +233,8 @@ Three receive modes only the core can do, as compiled designs at the pins
   bytes arrive at 0 and +-5 % baud.
 - **Manchester receive** (`manchester_rx`): timer0 ticks every half bit
   (10 clocks), resyncs on every falling edge (always on a half-bit
-  boundary), first count and phase 3 (a quarter bit less the 2-clock
-  sample latency). Each frame is a sync 1 then 8 data bits. Equal halves
+  boundary), first count and phase 3 (the half bit's centre clock, 4,
+  less the 1-clock edge-to-sample offset). Each frame is a sync 1 then 8 data bits. Equal halves
   in a data bit tag the byte; good frames decode at 0 and +-5 %.
 - **LIN classic checksum in the CRC tile** (`lin_checksum`): 8N1 receive,
   the CRC tile additive one's complement over 8-bit words, linked to the

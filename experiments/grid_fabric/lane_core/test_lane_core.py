@@ -6,6 +6,9 @@ stream reader (bytes from a list) and writer (bytes to a list). Pads are
 driven directly as synchronized levels. Line numbers and word layouts are
 those documented in src/grid_lane_core.v.
 """
+import json
+from pathlib import Path
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, ReadOnly
@@ -27,7 +30,10 @@ W_T0, W_T1, W_TSEL, W_CODER, W_CRC, W_EV, W_LV, W_OUT, W_PROG, W_SET = 0, 4, 8, 
 # Readback.
 RB_RX, RB_STATUS, RB_CAP0, RB_CAP1, RB_CRC_LO, RB_CRC_HI, RB_PADS, RB_LEFT = range(8)
 PROG_BASE = 0
-SAMPLE_LATENCY = 2
+# Edge to sample, as the contract states it (the compiler subtracts the
+# same value); sample_latency_matches_contract measures it.
+EDGE_TO_SAMPLE = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_3x3.json')
+                            .read_text())['lane_core']['edge_to_sample_cycles']
 
 
 def frame_word(length, pre=0, pre_val=0, post=0, post_val=0, parity=0, msb=False, idle=0):
@@ -210,12 +216,12 @@ async def coder_uart_tx_auto_pull(dut):
 
 async def rx_config(core, bit, resync=True, program=None):
     words = {
-        # The sample lands SAMPLE_LATENCY clocks after a tick count ends (the
-        # tick and the coder's sample are registered), so both the first
-        # tick and the resync phase aim that much early to hit mid-bit.
-        W_T0: bit // 2 - SAMPLE_LATENCY, W_T0 + 1: bit,    # first sample mid start bit
+        # A count of `first` started by the edge samples first + EDGE_TO_SAMPLE
+        # clocks after it, so the first tick and the resync phase aim that
+        # much early to sample the bit's centre clock, (bit - 1) // 2.
+        W_T0: (bit - 1) // 2 - EDGE_TO_SAMPLE, W_T0 + 1: bit,   # first sample mid start bit
         W_T0 + 2: (3 | (4 << 8)) if resync else 0,         # resync, limit 4
-        W_T0 + 3: bit // 2 - SAMPLE_LATENCY,               # phase: mid bit after a fall
+        W_T0 + 3: (bit - 1) // 2 - EDGE_TO_SAMPLE,          # phase: mid bit after a fall
         W_TSEL: pair(IN0_FALL, C_STOP), W_TSEL + 1: pair(IN0_FALL if resync else NEVER, NEVER),
         W_TSEL + 2: pair(NEVER, NEVER),
         W_CODER + 0: frame_word(8, pre=1, pre_val=0, post=1, post_val=1, parity=1, idle=1),
@@ -356,3 +362,48 @@ async def invalid_configurations_refused(dut):
     d.cfg_we.value = 0
     await ClockCycles(d.clk, 2)
     assert int(d.configured.value)
+
+
+@cocotb.test()
+async def sample_latency_matches_contract(dut):
+    """The edge-to-sample offset the compiler compensates is the RTL's.
+
+    timer0 starts on in0's fall and ticks once after `first` clocks; the
+    coded shifter samples a one-bit frame on that tick. in0 falls, then
+    rises k clocks later: the frame reads 1 while the rise comes before
+    the sample, 0 once it comes after. The last k that reads 1 is where
+    the sample lands, measured from the fall; it must be first + the
+    contract's edge-to-sample offset for every first (the input path delays the
+    fall and the level alike), and every earlier k must read 1."""
+    core = Core(dut)
+    await core.reset()
+    offsets = []
+    for first in (3, 6, 9):
+        bits = []
+        for k in range(1, first + 8):
+            words = {
+                W_T0: first, W_T0 + 1: 200,
+                W_TSEL: pair(IN0_FALL, C_STOP), W_TSEL + 1: pair(NEVER, NEVER), W_TSEL + 2: pair(NEVER, NEVER),
+                W_CODER + 0: frame_word(1, idle=1),
+                W_CODER + 1: pair(T0_TICK, T0_TICK),
+                W_CODER + 2: ((IN0 - 32) << 6) | IN0_FALL,
+                W_EV: pair(C_WORD, NEVER),
+            }
+            dut.pad_in.value = 0b11
+            await core.configure(words, 'WAIT 0\nRD 0\nPUSH\nHALT')
+            core.sink = []
+            run = cocotb.start_soon(core.run(400))
+            await ClockCycles(dut.clk, 20)
+            await FallingEdge(dut.clk)
+            dut.pad_in.value = 0b10          # fall
+            for _ in range(k):
+                await FallingEdge(dut.clk)
+            dut.pad_in.value = 0b11          # rise k clocks later
+            _, error = await run
+            assert not error and len(core.sink) == 1, (first, k, error, core.sink)
+            bits.append(core.sink[0] & 1)
+        assert 0 in bits and bits == [1] * bits.index(0) + [0] * (len(bits) - bits.index(0)), (first, bits)
+        landed = bits.index(0)   # k = index + 1 is the first rise after the sample
+        dut._log.info('first %d: the sample lands %s clocks after the fall', first, landed)
+        offsets.append(landed - first)
+    assert len(set(offsets)) == 1 and offsets[0] == EDGE_TO_SAMPLE, (offsets, EDGE_TO_SAMPLE)
