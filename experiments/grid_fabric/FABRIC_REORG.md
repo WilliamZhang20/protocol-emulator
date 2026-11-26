@@ -209,6 +209,43 @@ Not yet covered:
   row in the same clock: priority A over B, untested);
 - the existing pin-level cocotb test against a chip build.
 
+**Criterion 2 evidence (2026-11-26): `reorg/slice_i2c_tb.sv +UART`, `make reorg-proto-test`.**
+A UART receive runs beside the I2C target on its own tiles:
+- cell 4: a `grid_timer` (start <- RX fall, stop <- shifter stop; the
+  shipped uart-rx-plain timer words, first 8, period 20);
+- cell 7: a second real `fabric_shifter` (uart-rx-plain's frame word
+  0x8297; shift = sample = timer tick, start <- RX fall, in <- RX level).
+
+Its RX level and RX fall come from I/O tile B in cell 0 and pass
+**through cell 1's contexted I/O switch** (west t0/t1 turn south), then
+straight through the timer's switch to the shifter. The UART's own
+switches are static; the I2C's context changes happen under its live
+route.
+
+Passed:
+- a continuous pseudo-random byte stream (1 stop bit, 0-3 idle bits)
+  for the whole I2C sequence: 26 bytes at the nominal point, with 396
+  DRIVE clocks inside UART frames, every byte correct;
+- the 245-point sweep with the UART running: **215 pass, the same points
+  as alone**; the UART changes no I2C outcome, and every passing run had
+  DRIVE overlapping a UART frame (a run without overlap fails, so the
+  test cannot pass vacuously);
+- the negative case `+BAD`: DRIVE drops the RX level route (south t0 = 0
+  in that one context). The UART corrupts (byte 6: 0x31 for 0x39) and
+  the I2C is intact. A route that is not identical in every context is
+  a real fault, so the compiler must check it.
+
+The rule this settles, for criterion 3: **a switch's context register
+belongs to one design.** Every other design may only use selectors of
+that switch that are identical in all its contexts (a pass-through or a
+static sink). Two designs that both need contexts in one switch need
+two switches; a product of their contexts is not offered.
+
+Not covered: two contexted designs in neighbouring switches exchanging
+events (both stepping contexts on shared tracks), and a second
+word-network writer (the UART's bytes are taken straight from its
+shifter's FIFO port here).
+
 **Targets to verify, not guarantees:**
 - **Timing.** Every tile output is a register, so tile to tile is one
   clock, whatever the route. To verify: Fmax across the longest
