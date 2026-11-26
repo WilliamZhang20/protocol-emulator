@@ -37,12 +37,12 @@
     "lut_sinks": [10, 11], "lut_local_feedback": false
   },
   "resources": {
-    "timer0": {"kind": "timer", "cell": 2, "instance": "timer", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [0, 1]},
-    "timer1": {"kind": "timer", "cell": 5, "instance": "timer1", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [53, 54]},
+    "timer0": {"kind": "timer", "cell": 2, "instance": "timer", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "aux"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [0, 1], "mode_words": [208, 209]},
+    "timer1": {"kind": "timer", "cell": 5, "instance": "timer1", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "aux"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [53, 54], "mode_words": [210, 211]},
     "shifter0": {"kind": "shifter", "cell": 3, "instance": "shifter", "width_bits_min": 1, "width_bits_max": 16, "inputs": ["start", "shift", "sample", "serial_in"], "outputs": ["busy", "done", "serial", "serial_or_idle"], "config_words": [2], "config_fields": {"width": [4, 0], "msb_first": [5, 5], "restart": [6, 6], "reserved": [15, 7]}},
     "shifter1": {"kind": "shifter", "cell": 7, "instance": "shifter1", "width_bits_min": 1, "width_bits_max": 16, "inputs": ["start", "shift", "sample", "serial_in"], "outputs": ["busy", "done", "serial", "serial_or_idle"], "config_words": [55], "config_fields": {"width": [4, 0], "msb_first": [5, 5], "restart": [6, 6], "reserved": [15, 7]}},
-    "timer2": {"kind": "timer", "cell": 10, "instance": "timer2", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [172, 173], "input_sinks": [19, 20, 21]},
-    "timer3": {"kind": "timer", "cell": 13, "instance": "timer3", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "hold"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [174, 175], "input_sinks": [22, 23, 24]},
+    "timer2": {"kind": "timer", "cell": 10, "instance": "timer2", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "aux"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [172, 173], "input_sinks": [19, 20, 21], "mode_words": [212, 213]},
+    "timer3": {"kind": "timer", "cell": 13, "instance": "timer3", "period_cycles_min": 1, "period_cycles_max": 65535, "inputs": ["start", "stop", "aux"], "outputs": ["tick", "rise", "fall", "level"], "config_words": [174, 175], "input_sinks": [22, 23, 24], "mode_words": [214, 215]},
     "lut4_0": {"kind": "lut4_register", "cell": 9, "instance": "lut4[0].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [152], "input_sinks": [25, 26, 27, 28], "local_feedback": true},
     "lut4_1": {"kind": "lut4_register", "cell": 11, "instance": "lut4[1].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [153], "input_sinks": [29, 30, 31, 32], "local_feedback": true},
     "lut4_2": {"kind": "lut4_register", "cell": 12, "instance": "lut4[2].tile", "inputs": ["a", "b", "c", "d"], "outputs": ["q", "q_n"], "registered_output": true, "config_words": [154], "input_sinks": [33, 34, 35, 36], "local_feedback": true},
@@ -73,6 +73,14 @@
     "extension_words": [128, 184], "extension_reset_to_zero": true, "extension_switch_words": [128, 151],
     "lut4_truth_words": [152, 155], "lut4_input_words": [156, 171], "timer23_words": [172, 175],
     "timer23_input_words": [176, 181], "sequencer_event_input_words": [182, 183], "sequencer_event_enable_word": 184,
+    "timer_mode_words": [208, 215], "timer_mode_reset_to_zero": true,
+    "timer_mode_fields": {"function": [1, 0], "reserved": [7, 2], "resync_limit": [15, 8]},
+    "timer_functions": {"hold": 0, "count": 1, "capture": 2, "resync": 3},
+    "timer_function_semantics": {
+      "hold": "aux high pauses counting; the reset value, so earlier images are unchanged",
+      "count": "remaining decrements on aux pulses instead of clocks",
+      "capture": "an aux pulse latches the clocks since the previous pulse (or arming) into the capture register, saturating, and restarts that count",
+      "resync": "an aux pulse while running moves remaining to the phase word, at most resync_limit clocks away (0: no limit); the next tick lands phase clocks after the edge"},
     "distribution": {"module": "grid_config_tree", "stages": ["root", "cell leaf"], "leaves": 16, "leaf_bits": 26,
       "leaf_fields": {"valid": [25, 25], "bank_route_command": [24, 24], "address": [23, 16], "data": [15, 0]},
       "leaf_cells": "leaves 0-14 are grid cells 0-14; leaf 15 is the stream scheduler",
@@ -242,7 +250,9 @@
       "inputs",
       "stream_bytes_left",
       "bytes_written",
-      "status_busy1_busy0_rdvalid_wrready"
+      "status_busy1_busy0_rdvalid_wrready",
+      "timer0_capture",
+      "timer1_capture"
     ]
   }
 }

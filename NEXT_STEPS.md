@@ -242,6 +242,23 @@ previous one is sturdy:
 
 **2. Lane core and soft tiles (two lanes).**
 
+Status (2026-11-26), one sub-step at a time, each sturdy (tile test,
+formal where the tile has state worth proving, full regression, pin test)
+before the next:
+
+| Sub-step | Status |
+|---|---|
+| 2.1 timer modes | Done. `grid_timer` replaces all four timers; mode/phase words 208-215 (hold, the reset value, keeps every image unchanged; count; capture; resync with a limit); first/period shadowed (live path tied off until 2.5). Formal reference-model proof + 8 mutations (CI), tile test (hold equals the old timer over 20k random clocks), contract fields and mutations, compiler `timer_modes`, pin tests: capture reads pulse periods exactly; UART receive with resync survives a 6% slow or fast sender, without it fails. See experiments/grid_fabric/TIMER_MODES.md. Found on the way: gate-level paging failure (synthesis dropped the scale of a computed part-select base), fixed by construction with a lint rule. |
+| 2.2 coded shifter inventory and gaps | Not started. What `fabric_shifter` already does (stuffing, NRZI, Manchester, CRC link) against the census needs (parity, receive decode); add the missing modes. |
+| 2.3 CRC additive mode | Not started. Sum and one's-complement checksums (LIN, SENT) beside the polynomial CRC. |
+| 2.4 `grid_lane_core.v` | Not started. Controller, timer pair, coded shifter, CRC, stream port as one replicated unit. |
+| 2.5 ownership and per-lane status | Not started. Configuration tree accepts live writes to the words a lane owns (its timers' shadowed periods, contexts); per-lane start/done/error. |
+| 2.6 two lanes at the pins | Not started. UART receive on lane B during I2C on lane A; USB low-speed receive; CAN receive; PS/2 with parity; SENT; LIN with autobaud and checksum. |
+| 2.7 remove the row sequencer | Not started. Row sequencer, descriptors, paging and merged completion go once lanes run every image. |
+
+Carried from 1.6 into step 4.1: routability of the corpus on a five-row
+mesh (minimum channel width) and timing of long unregistered routes.
+
 1. Timer: capture, resync (windowed), shadowed period, count mode.
 2. `src/grid_lane_core.v`: lane controller, timer pair, coded shifter
    (parity, stuffing, NRZI, Manchester, receive decode, CRC link), CRC tile

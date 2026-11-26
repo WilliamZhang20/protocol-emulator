@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [lane_controller, lane_controller-mutations, fabric_shifter, fabric_crc]
+        target: [lane_controller, lane_controller-mutations, grid_timer, grid_timer-mutations, fabric_shifter, fabric_crc]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

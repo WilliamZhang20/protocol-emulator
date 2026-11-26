@@ -53,10 +53,15 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     bad = copy.deepcopy(contract); bad['lane']['live_write_words'] = [112, 117]; lane_mutations.append(('write fence', bad))
     bad = copy.deepcopy(contract); bad['lane']['buffer_instructions'] = 32; lane_mutations.append(('buffer depth', bad))
     bad = copy.deepcopy(contract); bad['resources']['shifter0']['config_fields']['restart'] = [7, 7]; lane_mutations.append(('shifter restart bit', bad))
+    bad = copy.deepcopy(contract); bad['configuration']['timer_mode_words'] = [200, 207]; lane_mutations.append(('timer mode words', bad))
+    bad = copy.deepcopy(contract); bad['configuration']['timer_functions']['capture'] = 3; lane_mutations.append(('timer function code', bad))
+    bad = copy.deepcopy(contract); bad['configuration']['timer_mode_fields']['resync_limit'] = [15, 9]; lane_mutations.append(('resync limit field', bad))
+    bad = copy.deepcopy(contract); bad['resources']['timer2']['mode_words'] = [214, 215]; lane_mutations.append(('timer mode owner', bad))
+    bad = copy.deepcopy(contract); bad['lane']['readback'][6:8] = ['timer1_capture', 'timer0_capture']; lane_mutations.append(('capture readback slot', bad))
     for name, bad in lane_mutations:
         try:
             check(bad, modules)
         except AssertionError:
             continue
         raise SystemExit(f'ERROR: lane {name} mutation was accepted')
-print('PASS: contract checker rejects topology, FIFO, switch, CRC-link and lane-controller mutations')
+print('PASS: contract checker rejects topology, FIFO, switch, CRC-link, lane-controller and timer-mode mutations')

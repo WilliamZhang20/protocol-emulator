@@ -18,6 +18,7 @@ RTL_SOURCES := \
 	src/grid_core.v \
 	src/grid_sequencer.v \
 	src/grid_lane_controller.v \
+	src/grid_timer.v \
 	src/grid_memory.v \
 	src/grid_unified.v \
 	src/grid_stream_tiles.v \
@@ -168,6 +169,11 @@ tile-fabric-v2-experiment:
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2_tiles) \
 		experiments/fabric_v2/tiles_tb.sv src/fabric_v2_tiles.v -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/fabric_v2_tiles/Vtiles_tb
+	mkdir -p $(BUILD_DIR)/verilator/grid_timer
+	$(VERILATOR) --binary --timing -Wno-fatal --top-module timer_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_timer) \
+		experiments/fabric_v2/timer_tb.sv src/grid_timer.v src/fabric_v2_tiles.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/grid_timer/Vtimer_tb
 	$(VERILATOR) --binary --timing -Wno-fatal --top-module fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/fabric_v2) \
 		experiments/fabric_v2/fabric_tb.sv src/fabric_v2.v src/fabric_v2_tiles.v -MAKEFLAGS -j1
@@ -198,10 +204,10 @@ grid-fabric-experiment:
 	$(BUILD_DIR)/verilator/grid_crc_reuse/Vcrc_reuse_tb
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module grid_stream_fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_stream_fabric) \
-		experiments/grid_stream/grid_stream_fabric_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_switch.v \
+		experiments/grid_stream/grid_stream_fabric_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_timer.v src/grid_switch.v \
 		src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/grid_stream_fabric/Vgrid_stream_fabric_tb +SPI_IMAGE=$(abspath $(if $(GRID_SPI_IMAGE),$(GRID_SPI_IMAGE),test/data/grid-spi.mem)) +UART_IMAGE=$(abspath $(if $(GRID_UART_IMAGE),$(GRID_UART_IMAGE),test/data/grid-uart.mem))
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_stream_fabric -chparam USE_MACRO 1; synth -top grid_stream_fabric -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_timer.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_stream_fabric -chparam USE_MACRO 1; synth -top grid_stream_fabric -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
 
 grid-stream-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module stream_tb \
@@ -248,7 +254,7 @@ grid-stream-test:
 grid-coded-abort-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module coded_abort_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/coded_abort) \
-		experiments/grid_fabric/reuse/coded_abort_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_switch.v \
+		experiments/grid_fabric/reuse/coded_abort_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_timer.v src/grid_switch.v \
 		src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/coded_abort/Vcoded_abort_tb
 

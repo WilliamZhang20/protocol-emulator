@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
-           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
+           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_timer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
            'fabric_shifter.v', 'config_bank.v', 'memory_tiles.v', 'program_memory.v']
 
 
@@ -39,7 +39,7 @@ def check(contract, modules):
                 assert all(bit == '0' for bit in wires), (index, direction)
             assert len(switch['connections'][direction + '_cfg']) == network['tracks_per_direction'] * network['switch_words']['selector_bits']
         assert switch['connections']['local_out'] == modules['grid_core']['netnames'][f'local_signal[{index}]']['bits']
-    for name, kind in [('timer0', 'fabric_v2_timer'), ('timer1', 'fabric_v2_timer'),
+    for name, kind in [('timer0', 'grid_timer'), ('timer1', 'grid_timer'),
                        ('shifter0', 'fabric_v2_shift'), ('shifter1', 'fabric_v2_shift'),
                        ('crc', 'fabric_crc'), ('coded_shifter', 'fabric_shifter')]:
         assert core[contract['resources'][name]['instance']]['type'] == kind
@@ -53,7 +53,7 @@ def check(contract, modules):
     sinks = modules['grid_core']['netnames']['sink']['bits']
     for name, resource in contract['resources'].items():
         if resource['kind'] == 'timer' and 'input_sinks' in resource:
-            assert core[resource['instance']]['type'] == 'fabric_v2_timer'
+            assert core[resource['instance']]['type'] == 'grid_timer'
         if resource['kind'] == 'lut4_register':
             assert core[resource['instance']]['type'] == 'grid_lut4_cell'
             tile = core[resource['instance']]['connections']
@@ -126,6 +126,7 @@ def check(contract, modules):
     assert len(core_ports['cfg_leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     assert len(modules[tree['module']]['ports']['leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     check_lane(contract, modules, top)
+    check_timers(contract, modules)
     # Shifter configuration fields: the core's validity check and port wiring.
     core_text = (ROOT / 'src/grid_core.v').read_text()
     for name, instance in (('shifter0', 'shifter'), ('shifter1', 'shifter1')):
@@ -136,6 +137,47 @@ def check(contract, modules):
                   re.escape(f"cfg[{word}][{fields['width'][0]}:{fields['width'][1]}],cfg[{word}][{fields['msb_first'][0]}],"
                             f"cfg[{word}][{fields['restart'][0]}],"))
         assert re.search(wiring, core_text), name
+
+
+def check_timers(contract, modules):
+    """Timer mode words: addresses, owning cells, field layout, mode and
+    phase wiring, reserved-bit validity."""
+    cfg = contract['configuration']
+    fields = cfg['timer_mode_fields']
+    first, last = cfg['timer_mode_words']
+    names = ['timer0', 'timer1', 'timer2', 'timer3']
+    assert last - first + 1 == 2 * len(names)
+    timer = modules['grid_timer']
+    assert len(timer['ports']['mode']['bits']) == 16
+    text = (ROOT / 'src/grid_timer.v').read_text()
+    assert f"wire [1:0] fn = mode[{fields['function'][0]}:{fields['function'][1]}];" in text
+    assert f"wire [7:0] limit = mode[{fields['resync_limit'][0]}:{fields['resync_limit'][1]}];" in text
+    assert f"assign configured = valid && mode[{fields['reserved'][0]}:{fields['reserved'][1]}] == 0;" in text
+    for name, code in cfg['timer_functions'].items():
+        assert re.search(r'//\s+%d %s\b' % (code, name), text), name
+    core_text = (ROOT / 'src/grid_core.v').read_text()
+    cells = re.search(r'localparam integer CELL=\(ti==0\)\?(\d+):\(ti==1\)\?(\d+):\(ti==2\)\?(\d+):(\d+);', core_text)
+    assert cells and [int(x) for x in cells.groups()] == [contract['resources'][n]['cell'] for n in names]
+    assert f"localparam [7:0] MODE_ADDR=8'd{first}+2*ti;" in core_text
+    assert f"localparam [7:0] PHASE_ADDR=8'd{first + 1}+2*ti;" in core_text
+    assert f"assign timer_mode_ok[ti]=mode_q[{fields['reserved'][0]}:{fields['reserved'][1]}]==0;" in core_text
+    assert '&& (&timer_mode_ok);' in core_text
+    core = modules['grid_core']
+    netnames = core['netnames']
+    for index, name in enumerate(names):
+        resource = contract['resources'][name]
+        assert resource['mode_words'] == [first + 2 * index, first + 2 * index + 1], name
+        tile = core['cells'][resource['instance']]['connections']
+        assert tile['mode'] == netnames[f'timer_mode[{index}]']['bits'], name
+        assert tile['phase'] == netnames[f'timer_phase[{index}]']['bits'], name
+    # Lane readback slots 6 and 7 are the timer 0 and 1 capture registers.
+    lane = contract['lane']['readback']
+    for slot, (name, port) in enumerate([('timer0_capture', 'timer0_captured'), ('timer1_capture', 'timer1_captured')], 6):
+        assert lane[slot] == name
+        tile = core['cells'][contract['resources'][f'timer{slot - 6}']['instance']]['connections']
+        assert tile['captured'] == core['ports'][port]['bits'], name
+    fabric = (ROOT / 'src/grid_stream_fabric.v').read_text()
+    assert "lane_readback={128'b0,timer1_captured,timer0_captured," in fabric
 
 
 def check_lane(contract, modules, top):

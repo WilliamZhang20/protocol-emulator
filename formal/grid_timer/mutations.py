@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""The timer proof must fail on each of these RTL mutations.
+
+Each mutation is applied to a copy of src/grid_timer.v and the
+k-induction proof is rerun; a mutation that still passes means the proof
+lost its teeth.
+"""
+import pathlib, shutil, subprocess, sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+RTL = HERE.parents[1] / 'src' / 'grid_timer.v'
+MUTATIONS = [
+    ('live write cuts the running period', "end else remaining <= period;", "end else remaining <= live_we ? live_period : period;"),
+    ('hold ignored', "wire hold = fn == 2'd0 && aux;", "wire hold = 1'b0;"),
+    ('count mode steps on clocks', "wire step = fn == 2'd1 ? aux : !hold;", "wire step = !hold;"),
+    ('capture does not restart its count', "if (aux) begin captured <= elapsed; elapsed <= 1; end", "if (aux) begin captured <= elapsed; end"),
+    ('resync ignores its limit', "wire [W:0] clamped = want < lo ? lo : want > hi ? hi : want;", "wire [W:0] clamped = want;"),
+    ('zero period accepted', "valid <= (cfg_first != 0 && cfg_period != 0);", "valid <= (cfg_first != 0);"),
+    ('shadow kept after reload', "remaining <= next_period; first <= next_first; period <= next_period; pending <= 0;", "remaining <= next_period; first <= next_first; period <= next_period;"),
+    ('reserved mode bits accepted', "assign configured = valid && mode[7:2] == 0;", "assign configured = valid;"),
+]
+
+
+def main(sby, build):
+    build = pathlib.Path(build)
+    source = RTL.read_text()
+    failures = []
+    for name, before, after in MUTATIONS:
+        if source.count(before) != 1:
+            failures.append(f'{name}: pattern not found once')
+            continue
+        work = build / name.replace(' ', '_')
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True)
+        (work / 'grid_timer.v').write_text(source.replace(before, after))
+        shutil.copy(HERE / 'grid_timer_properties.sv', work)
+        sby_text = (HERE / 'grid_timer.sby').read_text().replace(
+            '../../src/grid_timer.v', 'grid_timer.v')
+        (work / 't.sby').write_text(sby_text)
+        subprocess.run([sby, '-f', '-d', 'run', 't.sby', 'prove'], cwd=work,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        log = (work / 'run' / 'logfile.txt').read_text()
+        status = 'FAIL' if 'DONE (FAIL' in log else 'PASS' if 'DONE (PASS' in log else 'OTHER'
+        print(f'{name}: proof {status}')
+        if status != 'FAIL':
+            failures.append(f'{name}: proof {status}, expected a counterexample')
+    if failures:
+        sys.exit('timer mutation check failed:\n  ' + '\n  '.join(failures))
+    print(f'Timer: all {len(MUTATIONS)} mutations caught')
+
+
+if __name__ == '__main__':
+    main(sys.argv[1], sys.argv[2])

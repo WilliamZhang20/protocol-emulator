@@ -25,7 +25,9 @@ module grid_core(
   output wire lane_b_active,lane_b_done,lane_b_error,
   // Lane controller: pin edge events, and live writes of one alternate-context word.
   output wire [1:0] pin_edges,
-  input wire ctx_word_we,input wire [2:0] ctx_word_idx,input wire [15:0] ctx_word_data,output wire ctx_word_ok);
+  input wire ctx_word_we,input wire [2:0] ctx_word_idx,input wire [15:0] ctx_word_data,output wire ctx_word_ok,
+  // Timer 0 and 1 capture registers (lane readback).
+  output wire [15:0] timer0_captured,timer1_captured);
   localparam CELLS=15;
   // Configuration storage is distributed: every register is written only from
   // its own cell's leaf of grid_config_tree, so no configuration bus spans the
@@ -71,12 +73,14 @@ module grid_core(
   wire [35:0] switch_valid;
   wire [18:0] sink_valid;
   wire tick2,running2,tvalid2,level2,rise2,fall2,tick3,running3,tvalid3,level3,rise3,fall3;
+  wire [15:0] timer_mode[0:3],timer_phase[0:3];  // words 208-215, see timer_words
+  wire [3:0] timer_mode_ok;
   wire [3:0] ble_q;
   wire tick,running,tvalid,level,rise,fall,serial;
   wire tick1,running1,tvalid1,level1,rise1,fall1,serial1;
   wire live=arm && rst_n && configured;
   wire configured_now=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:7]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:7]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
-    (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid) && lane_b_ready;
+    (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid) && lane_b_ready && (&timer_mode_ok);
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
@@ -310,14 +314,39 @@ module grid_core(
       assign sink[q]=route_input(choice,local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
     end
   end endgenerate
-  fabric_v2_timer timer(clk,rst_n,live,leaf_we[2] && (la[2]==0 || la[2]==1),
-    la[2]==0 ? ld[2] : cfg[0],la[2]==1 ? ld[2] : cfg[1],
-    sink[0],sink[1],sink[2],tick,running,tvalid,level,rise,fall);
+  // Timer mode words 208-215: {mode, phase} for timers 0-3, each written
+  // from its timer's cell (2, 5, 10, 13). Mode {limit[15:8], reserved[7:2],
+  // function[1:0]}: 0 hold (the reset value, so earlier images are
+  // unchanged), 1 count, 2 capture, 3 resync (see grid_timer). Reserved
+  // bits must be zero. Live first/period writes arrive with lane ownership
+  // (step 2.5); until then they are tied off.
+  genvar ti;
+  generate for(ti=0;ti<4;ti=ti+1) begin: timer_words
+    localparam integer CELL=(ti==0)?2:(ti==1)?5:(ti==2)?10:13;
+    localparam [7:0] MODE_ADDR=8'd208+2*ti;
+    localparam [7:0] PHASE_ADDR=8'd209+2*ti;
+    reg [15:0] mode_q,phase_q;
+    always @(posedge clk) begin
+      if(!rst_n) begin mode_q<=0;phase_q<=0;end
+      else begin
+        if(leaf_we[CELL] && la[CELL]==MODE_ADDR) mode_q<=ld[CELL];
+        if(leaf_we[CELL] && la[CELL]==PHASE_ADDR) phase_q<=ld[CELL];
+      end
+    end
+    assign timer_mode[ti]=mode_q;
+    assign timer_phase[ti]=phase_q;
+    assign timer_mode_ok[ti]=mode_q[7:2]==0;
+  end endgenerate
+  wire [15:0] captured2,captured3;
+  wire unused_captures=&{1'b0,captured2,captured3};
+  grid_timer timer(clk,rst_n,live,leaf_we[2] && (la[2]==0 || la[2]==1),
+    la[2]==0 ? ld[2] : cfg[0],la[2]==1 ? ld[2] : cfg[1],1'b0,16'b0,16'b0,timer_mode[0],timer_phase[0],
+    sink[0],sink[1],sink[2],tick,running,tvalid,level,rise,fall,timer0_captured);
   fabric_v2_shift shifter(clk,rst_n,live,sink[3],sink[4],sink[5],cfg[2][4:0],cfg[2][5],cfg[2][6],
     tx,sink[6],serial,rx,busy,done);
-  fabric_v2_timer timer1(clk,rst_n,live,leaf_we[5] && (la[5]==53 || la[5]==54),
-    la[5]==53 ? ld[5] : cfg[53],la[5]==54 ? ld[5] : cfg[54],
-    sink[12],sink[13],sink[14],tick1,running1,tvalid1,level1,rise1,fall1);
+  grid_timer timer1(clk,rst_n,live,leaf_we[5] && (la[5]==53 || la[5]==54),
+    la[5]==53 ? ld[5] : cfg[53],la[5]==54 ? ld[5] : cfg[54],1'b0,16'b0,16'b0,timer_mode[1],timer_phase[1],
+    sink[12],sink[13],sink[14],tick1,running1,tvalid1,level1,rise1,fall1,timer1_captured);
   fabric_v2_shift shifter1(clk,rst_n,live,sink[15],sink[16],sink[17],cfg[55][4:0],cfg[55][5],cfg[55][6],
     tx1,sink[18],serial1,rx1,busy1,done1);
   // Extension sinks 19-42 have no alternate-context overrides. Each selector
@@ -336,12 +365,12 @@ module grid_core(
   end endgenerate
   assign seq_events={sink[42],sink[41]};
   assign seq_event_enable=ext_value[56][1:0];
-  fabric_v2_timer timer2(clk,rst_n,live,leaf_we[10] && (la[10]==172 || la[10]==173),
-    la[10]==172 ? ld[10] : ext_value[44],la[10]==173 ? ld[10] : ext_value[45],
-    sink[19],sink[20],sink[21],tick2,running2,tvalid2,level2,rise2,fall2);
-  fabric_v2_timer timer3(clk,rst_n,live,leaf_we[13] && (la[13]==174 || la[13]==175),
-    la[13]==174 ? ld[13] : ext_value[46],la[13]==175 ? ld[13] : ext_value[47],
-    sink[22],sink[23],sink[24],tick3,running3,tvalid3,level3,rise3,fall3);
+  grid_timer timer2(clk,rst_n,live,leaf_we[10] && (la[10]==172 || la[10]==173),
+    la[10]==172 ? ld[10] : ext_value[44],la[10]==173 ? ld[10] : ext_value[45],1'b0,16'b0,16'b0,timer_mode[2],timer_phase[2],
+    sink[19],sink[20],sink[21],tick2,running2,tvalid2,level2,rise2,fall2,captured2);
+  grid_timer timer3(clk,rst_n,live,leaf_we[13] && (la[13]==174 || la[13]==175),
+    la[13]==174 ? ld[13] : ext_value[46],la[13]==175 ? ld[13] : ext_value[47],1'b0,16'b0,16'b0,timer_mode[3],timer_phase[3],
+    sink[22],sink[23],sink[24],tick3,running3,tvalid3,level3,rise3,fall3,captured3);
   genvar b;
   generate for(b=0;b<4;b=b+1) begin: lut4
     grid_lut4_cell tile(clk,rst_n,live,ext_value[24+b],{sink[28+4*b],sink[27+4*b],sink[26+4*b],sink[25+4*b]},ble_q[b]);

@@ -242,7 +242,10 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   // Pulse events latch in the controller; levels are live.
   wire [7:0] lane_events={lane_b_done,seq_events[1],seq_events[0],finished[1],pin_edges[1],pin_edges[0],finished[0],temporal_tick};
   wire [7:0] lane_levels={busy[1],busy[0],lane_left==0,rd_valid,!temporal_pins[1],!temporal_pins[0],temporal_pins[1],temporal_pins[0]};
-  wire [255:0] lane_readback={160'b0,{12'b0,busy[1],busy[0],rd_valid,wr_ready},{5'b0,rx_written},{5'b0,lane_left},
+  wire [15:0] timer0_captured,timer1_captured;
+  // Readback slots 0-7: shifter rx 0/1, pins, bytes left, bytes written,
+  // stream status, timer 0/1 capture.
+  wire [255:0] lane_readback={128'b0,timer1_captured,timer0_captured,{12'b0,busy[1],busy[0],rd_valid,wr_ready},{5'b0,rx_written},{5'b0,lane_left},
     {14'b0,temporal_pins},rx1,rx0};
   // A stream that can never deliver fails the lane instead of hanging it:
   // PUSH with the writer closed (capacity used), PULL with no bytes left.
@@ -266,7 +269,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
     seq_events,seq_event_enable,page_ctx_we,page_ctx_data,
     host_start,lane_a_done && lane_a_error,lane_a_running,lane_b_active,lane_b_done,lane_b_error,
-    pin_edges,lane_cfg_we,lane_cfg_addr[2:0],lane_cfg_data,lane_cfg_ok);
+    pin_edges,lane_cfg_we,lane_cfg_addr[2:0],lane_cfg_data,lane_cfg_ok,timer0_captured,timer1_captured);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
   wire writer_valid=lane_mode ? lane_wr_valid : rx_autostart ? rx_event : frame_write;
