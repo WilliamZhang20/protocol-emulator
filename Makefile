@@ -38,7 +38,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check grid-contract-check grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -83,6 +83,12 @@ verify: lint synth-check gds-config-check grid-contract-check memory-test sim ti
 grid-contract-check:
 	$(PYTHON) tools/check_grid_contract.py --yosys $(ROUTING_YOSYS)
 	$(PYTHON) tools/test_grid_contract.py $(ROUTING_YOSYS)
+
+# Mesh against signal-space interconnect area by lane count. Needs an IHP
+# liberty (from a GDS CI artifact): make interconnect-scaling LIBERTY=<lib>
+interconnect-scaling:
+	@test -n "$(LIBERTY)" || { echo "set LIBERTY=<path to the IHP .lib>"; exit 2; }
+	$(PYTHON) tools/interconnect_scaling.py --yosys $(ROUTING_YOSYS) --liberty $(LIBERTY) --lanes 1,3,5,8
 
 grid-sequencer-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_SEQUENCER_ASSERT --top-module sequencer_tb \
