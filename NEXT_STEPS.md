@@ -26,7 +26,7 @@ compile from source and run at the pins. Method: Betz's research flow
 | Sequencer capacity | Done: SRAM paging (`ffb3618`), descriptor rows (`f093ade`), second lane (`87f6674`). |
 | Protocol coverage | 4 of 36 census protocols run at the pins, 7 more with workarounds, 12 need only compiler work, 13 are blocked by missing PEs. |
 | General compiler | Not started for the grid: every running image comes from a per-protocol lowering. |
-| Head-to-head, packaging | Not started; the head-to-head moves to the front (step 0). |
+| Head-to-head, packaging | Not started. |
 | PX8 lineage (baseline) | 24 protocols at the pins, GDS passes; its data-capable controller is what the grid lacks. |
 
 ### What "done" means
@@ -64,110 +64,123 @@ registered per-cell configuration distribution and registered validity
 (timing closed, layout repeatable), paging and descriptor rows, a lane placed
 in the fabric, credit-based streams, and a compiler routing model.
 
-So the replacement question is no longer "is the grid ready" but "which base
-keeps the PX8 thesis and gains the grid's structure fastest". Step 0 settles
-it with evidence before more hardware is added.
+**Decision (2026-11-26): keep the grid, put the PX8 back as each lane's
+controller.** Measured in local synthesis (same library): the PX8 controller
+is 11.4k um2, one lane sequencer 25.9k um2 (its 16 x 16 row flops), a timer
+4.8k, a shifter 5.2k, a switch box 1.4k per cell, the CRC tile 20.3k. The
+PX8 is the smaller and more capable control element: compare and branch on
+received values, a loop counter, a data pointer, sticky events, block
+configuration writes. The grid keeps everything spatial: timing tiles,
+decentralized switch boxes, registered configuration tree. The row
+sequencer, descriptors and paging retire once the lanes run on PX8 control;
+lane B's placement, merged completion and the page loader's port borrowing
+carry over.
 
-### Steps, in order
+Why the grid rather than the lineage's 64-wire signal space: local switch
+boxes cost roughly per cell, a shared signal space roughly per tile times
+lines, so the mesh is what makes more lanes affordable and routable. Step
+1.6 measures this instead of assuming it.
 
-**0. Re-anchor on the PX8 thesis (decision first).**
+Lanes are the replicated unit (Cerebras-style: own control, datapath,
+memory port, local switches). More lanes means more simultaneous protocols,
+capped by eight pins (four two-wire protocols, two four-wire), two
+single-port SRAM banks (each lane adds fetch, reader and writer clients) and
+area (about 45k um2 per lane, estimated; std cells are at 44% in layout).
+Target: two lanes, generated so a third is a parameter; three if area and
+routing allow.
 
-1. Run the census on the PX8 lineage: which of the 36 protocols pass at the
-   pins there, and with what host-side help (the 22 inherited tests already
-   exist; the 14 held-out classes need status judgement). Add the lineage's
-   area, slack and layout runtime from its last GDS run.
-2. Compare two bases, each keeping the thesis "fabric times every bit; a
-   controller decides":
-   - **Grid with a PX8-class lane controller:** each lane's control PE becomes
-     a small data-capable controller (compare, count, pointer, setup switch)
-     that never times a bit; the row sequencer stays only where it is cheaper.
-     Restore the host link on `ui_in` for eight protocol pins. Then steps A-E
-     below, with A2-A4 largely subsumed by the controller.
-   - **PX8 lineage as base:** port the grid's structural wins (registered
-     configuration distribution and validity, paging, streams) and the
-     compiler into it.
-3. Decide by protocols at gate level per unit area and by the risk to timing
-   and layout, and record the table here. Recommendation until the numbers
-   say otherwise: keep the PX8 thesis as the control model either way; the
-   grid's sequencer-only control is the part to retire, not the controller.
+### Steps, in order (concrete)
 
-The steps below assume the grid base; if step 0 picks the PX8 lineage, B and
-E carry over unchanged and A/C become ports of the grid's structural fixes.
+Each step ends with: regression, local area, push, GDS, 2-hour CI check.
 
-Hardware steps are ordered by protocols unblocked per unit of area, each
-with a pin-level acceptance test, a local area measurement and a GDS run
-(2-hour CI stuck check after every push). Compiler work (B) is the long pole
-and runs in parallel from the start.
+**1. PX8 lane controller in the grid (lane A first).**
 
-**A. Make general lowering possible (small hardware).**
+1. New `src/grid_lane_controller.v`: instantiate `controller.v` (PX8 ISA
+   unchanged) with grid adapters:
+   - *Fetch:* `instruction_address/read/data` through the host-bank memory
+     client with a ready/valid stall and a 4-byte prefetch buffer, borrowing
+     the port as `grid_page_loader` does (`page_owns_port`). Program base from
+     a new lane word (replaces word 94).
+   - *Events:* 16 sticky lines per lane (the 8 current sequencer events,
+     routed sinks 41/42, shifter done, rx-ready, lane B done, match spare),
+     PX8 `WEV`/`CLREV` semantics.
+   - *Readback* (`RD n`, 16 entries): shifter rx word, rx/tx counts, timer
+     status, CRC low/high, pin levels, lane B status.
+   - *Actions:* reserved opcode C becomes `ACT n`: set the lane's 4 action
+     levels (today's sequencer actions into `local_signal[6]`, contexts on
+     bit 3); `FIRE` keeps its two pulse lines.
+   - *Live configuration:* `WCF`/`CFG` may write only lane-owned dynamic
+     words (the five context words and timer first/period of the lane's
+     timers) while armed; every other address is ignored and flagged. This
+     restores "two setups per block" for that lane.
+   - *Streams:* `PULL`/`TXP`/`PUSH` onto the lane's reader and writer.
+   - `HALT` ends the transfer; an error flag (OPR spare) sets `tx_error`.
+2. `grid_stream_fabric.v`: lane A control select (word 91 bit 2: 0 =
+   sequencer, 1 = PX8), so every existing image and test keeps running
+   unchanged.
+3. Bench `experiments/grid_fabric/lane_controller_tb.sv`: fetch under port
+   stalls, sticky events, readback, live-config fencing, `ACT` timing.
+4. Pin test `test_i2c_target_grid.py`: I2C target with address match and ACK
+   in the window, written as a PX8 program (`RD` rx word, `XRC` address,
+   `JZ`). This is the first census "blocked" protocol to run.
+5. Port two inherited PX8 programs unchanged in spirit (SPI target, PS/2
+   with parity check in software) to show the lineage's programs carry over.
+6. Measure: grid switch-box area versus the lineage's signal space (`arch/spatial`
+   `016f736`) for the same tile count, and both at 3 lanes.
 
-1. **Latched events.** Per lane, a sticky bit per event, set by the event and
-   cleared on row entry, selected per event by a configuration mask so
-   existing images stay cycle-exact. Accept: existing programs unchanged
-   (sequencer equivalence bench); a pulse arriving during a branch row is no
-   longer lost.
-2. **Match PE, one per lane, beside the shifter.** Masked compare of the
-   received word against 2-4 configured constants; each hit is an event, and
-   the hit index can select the next row. Unblocks or co-unblocks 9
-   protocols. Accept: I²C target address match and ACK in the window at the
-   pins; SWD ACK decode.
-3. **Per-lane contexts, including tile parameters.** Each lane switches its
-   own sink routes and timer/shifter parameters (bit-rate switch,
-   push-pull/open-drain switch); size the word count from the census
-   programs. Accept: a mid-frame bit-rate switch at the pins; I²C unchanged.
-4. **Completeness batch:** parity generate/check in the frame engine, an
-   additive checksum mode in the CRC tile, timer capture of elapsed count,
-   timer period from a stream byte. Accept: PS/2 parity checked on chip, LIN
-   checksum, SENT nibble timing.
+**2. The lane as a replicated cluster.**
 
-**B. General compiler (parallel with A).**
+1. New `src/grid_lane.v`: PX8 controller, 2 timers, 1 shifter, reader and
+   writer FIFOs, sticky events, readback, attached to 3 grid cells' switch
+   boxes. `grid_core` instantiates `LANES` copies; lane A uses today's cells
+   2/3/6, lane B 10/12/13 (shifter 1 and timer 1 move into lane B).
+2. Memory arbiter: clients = host + per lane {fetch, reader, writer}, round
+   robin per bank; record the worst grant wait in the contract and test it.
+3. Shared tiles stay mesh-reachable by any lane: CRC, coded shifter, LUT4
+   cells, I/O cells.
+4. Pin test: UART receive on lane B during an I2C transaction on lane A,
+   then I2C target on lane A with SPI controller on lane B.
+5. Remove `grid_sequencer` lane B and, after step 4.4, lane A (about -50k um2).
 
-1. **Contract-driven target.** The compiler reads PEs, sinks, rows, contexts
-   and pins from `architecture/grid_3x3.json`; no addresses in compiler code.
-2. **One lowering per construct.** `timer` → timer PE, shifter frames →
-   serializer and line coder, `crc` → check, `reg` expressions → LUT4 state
-   cells (tech-map), `if received == K` → match events, `fn` bodies → rows
-   (fire, wait, if, for, fail, reply), then descriptor folding
-   (`descriptor_fold.py` moves into the compiler), paging (merge
-   `work/sequencer-paging`) and contexts; routing with the existing grid router.
-3. **Diagnostics and resource report** per program (PEs, tracks, sinks, rows,
-   contexts, pins), and a precise reason for anything unmappable.
-4. Accept: the running protocols (UART, I²C, SPI, JTAG, USB TX, 10BASE-T TX)
-   compile through general lowering and pass their existing pin tests, then
-   the "mappable" census protocols one by one; the per-protocol `*.inc`
-   lowerings are deleted.
+**3. Eight protocol pins.**
 
-**C. Pins and receive.**
+1. `project.v`: move the host link to `ui_in` alone (nibble protocol as in
+   the lineage: `ui[7]` strobe, `ui[6:4]` opcode, `ui[3:0]` data), freeing
+   `uio[7:0]`; status on `uo_out`.
+2. Grid I/O cells for eight pads (uniform edge I/O tile: synchronizer, edge
+   events, open-drain, output enable).
+3. Update the host helpers (`command()` in the cocotb tests and
+   `test_compiled.py`), `info.yaml` pinout.
+4. Accept: SPI controller with CS on a pad, 4-wire JTAG, SPI target, the
+   74HC595/165 GPIO chain, two 2-pin protocols on two lanes at once.
 
-1. **Free pins from the host link.** It holds uio[4:0], leaving two pads,
-   one input and the multiplexed `uo[0]`. Move opcode and strobe onto `ui_in`
-   (or a narrower handshake) to reach about six protocol pads. This changes
-   every test's host helper; decide the pinout first. Accept: SPI with CS on
-   a pad, 4-wire JTAG on pads, the GPIO-expander chain.
-2. **Receive line decode in the grid.** Connect the coded shifter's receive
-   path (destuff, NRZI/Manchester decode) and edge resync. Accept, with the
-   match PE: USB low-speed receive, HDLC receive, CAN receive at the pins.
+**4. Compiler retarget (start alongside step 1).**
 
-**D. Concurrency (lower priority for coverage).** Give lane B its own
-datapath (shifter 1, timer 1, writer) and move both lanes onto the same
-descriptor and context machinery. Accept: two protocols at once at the pins
-(UART receive on lane B during an I²C transaction on lane A). Only full
-duplex UART needs two engines, so this is for demonstration, not coverage.
+1. The compiler already lowers to the PX8 (8 x 4 backend). Retarget it:
+   lane assignment, tile placement and routing on the grid mesh
+   (`grid_route`), PX8 code from `fn` bodies, configuration words from
+   `architecture/grid_3x3.json`.
+2. `reg` expressions to LUT4 cells; `if received == K` to `RD`/`XRC`/`JZ`.
+3. Resource report and unmappable-construct diagnostics per program.
+4. Accept: UART, I2C, SPI, JTAG, USB TX, 10BASE-T TX compile through this
+   path and pass their pin tests; delete the per-protocol `circt_lab/*.inc`
+   lowerings and `descriptor_fold.py`.
 
-**E. Evidence and submission.**
+**5. Receive and completeness.**
 
-1. Re-express the inherited 22 in `.spt`; record parsed, mapped, RTL, GL and
-   physical status per protocol in PROTOCOL_COVERAGE.md and regenerate the
-   census totals.
-2. Freeze the compiler, write the held-out classes from specifications, and
-   report pass/fail with classified causes.
-3. Head-to-head table and decision; Tiny Tapeout `info.yaml`, pinout and
-   datasheet (host link, configuration words, PE contract); GL-safe tests at
-   top-level pins only; final precheck on the merge commit.
+1. Connect the coded shifter's receive path (destuff, NRZI/Manchester decode)
+   and edge resync; accept USB low-speed receive, HDLC receive, CAN receive.
+2. Frame-engine parity, CRC-tile additive checksum, timer capture, timer
+   period from a stream byte; accept LIN, SENT, PS/2 parity on chip.
 
-Decision points: if the match PE plus contexts exceed the area budget,
-drop step A4 items with a single protocol each first; if the pin rework is
-rejected, the target becomes the census without the pin-blocked protocols.
+**6. Evidence and submission.**
+
+1. Port the 22 inherited tests to grid pins, compiled from source; record
+   per-protocol status in PROTOCOL_COVERAGE.md; regenerate the census.
+2. Freeze the compiler; held-out classes from specifications; report
+   pass/fail with classified causes.
+3. Head-to-head table against `arch/spatial`; Tiny Tapeout packaging; final
+   precheck on the merge commit.
 
 ## Foundations: spatial-architecture direction (2026-11-24)
 

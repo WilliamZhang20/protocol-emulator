@@ -139,8 +139,8 @@ capture.
    a PX8-class data-capable controller per lane or a spatial match PE
    (masked compare beside the shifter) restores it; the controller covers
    match, count and state at once, the match PE is faster for
-   respond-in-window. NEXT_STEPS.md step 0 decides this against the PX8
-   lineage's measured coverage and area.
+   respond-in-window. Decided (NEXT_STEPS.md): a PX8 controller per lane, measured at
+   11.4k um2 against 25.9k um2 for a row sequencer.
 3. **Pins are the next limit.** The host link occupies uio[4:0], leaving two
    bidirectional pads, one input and a multiplexed `uo[0]`. 4-wire protocols
    run only through the multiplexed output, and target-side or chain protocols
