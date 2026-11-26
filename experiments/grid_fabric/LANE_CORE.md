@@ -306,3 +306,21 @@ Decisions (each with its reason):
 Gate before writing RTL: the 9a3e66e GDS must show whether one core
 routes. If detailed routing still does not converge, placement regions
 per lane core (step 4.3) come before a second core.
+
+## First protocol from source by general lowering: PS/2 (step 5, R7)
+
+`examples/ps2.spt` (the compiler repository) lowers by rule, with no
+hand-written lane design, to `test/data/lane/ps2-rx.*`
+(`circt_lab/grid_lower.py`); the pin test `ps2_lowered_from_source`
+receives make/break codes and all-zero/all-one/alternating bytes at two
+clock rates, and a wrong parity bit fails the lane.
+
+Found on the way, fixed in the shifter: the receive readback
+(`coder.rx_word`) was the live shift register, which a frame restarting
+on its end clock (start held high, as PS/2's `start: 1` lowers) clears
+before a controller can read it, while the word's status bit (word_bad)
+was already latched at the word's end. The readback is now the word as
+of the last word pulse, latched with its status (live only with the bit
+strobe, where the pulse is per bit). New bmc property: the readback
+changes only on the clock after a word pulse; the old live readback is
+one of the shifter's CI mutations and is caught.

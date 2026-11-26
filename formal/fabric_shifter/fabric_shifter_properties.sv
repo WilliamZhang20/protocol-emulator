@@ -201,6 +201,19 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   reg past_check, past_push_check, past_overrun_case, past_rx_hold;
   reg past_eop_expect, past_err_check, past_err_expect;
   reg [15:0] past_word;
+  // The receive readback is the word as of the last word pulse: it may
+  // change only on the clock after a word pulse (the bit strobe is off in
+  // this harness), so a frame restarting on its end clock cannot clear it.
+  reg [15:0] past_rx_data;
+  reg        past_word_pulse, past_enable;
+  always @(posedge clk) begin
+    past_rx_data <= rx_data;
+    past_word_pulse <= word_pulse;
+    past_enable <= enable;
+  end
+  always @(posedge clk)
+    if (rst_n && past_valid && enable && past_enable && rx_data != past_rx_data)
+      assert(past_word_pulse);
   always @(posedge clk) begin
     past_valid <= rst_n;
     past_check <= word_pulse && (sampled_now & len_mask) == len_mask;

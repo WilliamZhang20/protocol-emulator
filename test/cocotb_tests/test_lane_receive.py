@@ -16,6 +16,9 @@ bad frame is kept and marked instead of ending the transfer.
   checksum) whose checksum the CRC tile sums over the coder link, data bits
   only (one's complement, end-around carry). The lane pushes the bytes and
   the sum (0xFF when good) and fails on a bad sum.
+- ps2_rx: PS/2 device-to-host receive lowered by the compiler's general
+  lowering (grid_lower.py) from examples/ps2.spt, with no hand-written
+  lane design: the device's clock on in0, data on in1, odd parity.
 """
 import os
 
@@ -180,3 +183,62 @@ async def coded_receive_gate_level(dut):
     await check_manchester(chip)
     finished, error, got = await check_lin(chip, LIN_DATA, lin_checksum(LIN_DATA))
     assert finished and not error and got[-1] == 0xFF, (finished, error, got)
+
+
+async def ps2_send(chip, frames, half, bad_parity=()):
+    """A PS/2 device: data changes while the clock is high, the host reads
+    it on the clock's falling edge; start 0, 8 data bits LSB first, odd
+    parity, stop 1; clock idles high."""
+    dut = chip.dut
+    for _ in range(300):
+        await FallingEdge(dut.clk)
+    for index, value in enumerate(frames):
+        parity = 1 ^ (bin(value).count('1') & 1) ^ (1 if index in bad_parity else 0)
+        for bit in [0] + [value >> i & 1 for i in range(8)] + [parity, 1]:
+            chip.state['sda'] = bit; chip.drive()
+            for _ in range(half // 2):
+                await FallingEdge(dut.clk)
+            chip.state['scl'] = 0; chip.drive()      # the host samples here
+            for _ in range(half):
+                await FallingEdge(dut.clk)
+            chip.state['scl'] = 1; chip.drive()
+            for _ in range(half - half // 2):
+                await FallingEdge(dut.clk)
+        for _ in range(4 * half):
+            await FallingEdge(dut.clk)
+
+
+async def check_ps2(chip, frames, half, bad_parity=()):
+    chip.state['scl'] = 1; chip.state['sda'] = 1; chip.drive()
+    await chip.load_design('ps2-rx', {67: len(frames), 90: RX_BASE})
+    for i in range(len(frames)):
+        await chip.write_byte(RX_BASE + i, 0xEE)
+    sender = cocotb.start_soon(ps2_send(chip, frames, half, bad_parity))
+    try:
+        await chip.start_and_wait(limit=half * 30 * len(frames) + 2000)
+        finished = True
+    except AssertionError:
+        finished = False
+    await sender
+    status = await chip.status()
+    got = [await chip.read_byte(RX_BASE + i) for i in range(len(frames))]
+    chip.dut._log.info('PS/2 half %d: finished %s error %s got %s', half, finished, bool(status & 0x40),
+                       [hex(b) for b in got])
+    return finished, bool(status & 0x40), got
+
+
+@cocotb.test()
+async def ps2_lowered_from_source(dut):
+    """PS/2 receive compiled from examples/ps2.spt by general lowering:
+    make and break codes and the all-zero/all-one/alternating bytes at two
+    clock rates; a byte with a wrong parity bit fails the lane after the
+    bytes before it. (The design's word count is 3.)"""
+    chip = Chip(dut)
+    await chip.reset()
+    for frames, half in (([0x1C, 0xF0, 0x1C], 20), ([0x00, 0xFF, 0x55], 33), ([0xAA, 0xA5, 0x5A], 20)):
+        finished, error, got = await check_ps2(chip, frames, half)
+        assert finished and not error and got == frames, (frames, half, finished, error, got)
+        if GATE_LEVEL:
+            return
+    finished, error, got = await check_ps2(chip, [0x12, 0x34, 0x56], 20, bad_parity={1})
+    assert finished and error and got[0] == 0x12 and got[1:] == [0xEE, 0xEE], (finished, error, got)

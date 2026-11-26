@@ -197,6 +197,7 @@ module fabric_shifter (
   reg       first_half;  // RX Manchester: the line in the bit's first half
   reg       manch_err;   // RX Manchester: a bit with equal halves
   reg       word_bad;    // RX: the last word ended with an error (status 6)
+  reg [15:0] last_word;  // RX: the last completed word (rx_data), latched with word_bad
   reg       crc_absorb_r, crc_bit_r, crc_emit_r;
 
   // Frame boundaries depend only on the frame register, so they are
@@ -329,7 +330,12 @@ module fabric_shifter (
   assign pulls      = enable && auto_pull;
 
   assign stop_pulse = done && !start;
-  assign rx_data    = rx_word;
+  // The word as of the last word pulse: latched at the word's end like its
+  // status (word_bad), so a frame that restarts on the same clock (start
+  // held high, back-to-back frames) cannot clear it before a controller
+  // reads it. With the bit strobe the word line pulses every bit, so the
+  // live register is the word as of the last pulse.
+  assign rx_data    = bit_strobe ? rx_word : last_word;
   assign status = {active_r, overrun, push_pending, 6'b0, word_bad, manch_err, stuff_err, post_cap};
   wire manch_bad = manch_rx && sample_raw && first_half == in_line;
   assign crc_absorb = crc_absorb_r;
@@ -531,6 +537,7 @@ module fabric_shifter (
       push_eop     <= 1'b0;
       push_err     <= 1'b0;
       word_bad     <= 1'b0;
+      last_word    <= 16'd0;
       overrun      <= 1'b0;
       burst_end_seen <= 1'b0;
       word_eop     <= 1'b0;
@@ -540,8 +547,10 @@ module fabric_shifter (
         push_pending <= 1'b0;
       // Whether or not it is pushed, each word records its error tag, so a
       // controller that reads words itself sees a bad parity or post bit.
-      if (word_end)
+      if (word_end) begin
         word_bad <= done && (post_bad || par_bad || stuff_err || stuff_bad || manch_err || manch_bad);
+        last_word <= rx_next;
+      end
       if (word_end && auto_push) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;
