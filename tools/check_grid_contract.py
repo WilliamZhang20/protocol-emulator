@@ -124,6 +124,40 @@ def check(contract, modules):
     assert 'cfg_leaves' in core_ports and not {'cfg_we', 'cfg_addr', 'cfg_data'} & set(core_ports)
     assert len(core_ports['cfg_leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     assert len(modules[tree['module']]['ports']['leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
+    check_lane(contract, modules, top)
+
+
+def check_lane(contract, modules, top):
+    """The lane section the compiler encodes against matches the RTL."""
+    import re
+    lane = contract['lane']
+    assert top[lane['instance']]['type'] == lane['controller']
+    module = modules[lane['controller']]
+    ports = module['ports']
+    assert len(ports['events']['bits']) == len(lane['events'])
+    assert len(ports['levels']['bits']) == len(lane['levels']) == 8 and lane['level_wait_offset'] == 8
+    assert len(ports['readback']['bits']) >= 16 * len(lane['readback'])
+    assert 2 ** int(module['parameter_default_values']['ABITS'], 2) == lane['buffer_instructions']
+    assert len(ports['prog_base']['bits']) == lane['program_fields']['base'][0] + 1
+    last = lane['program_fields']['last']
+    assert len(ports['prog_last']['bits']) == last[0] - last[1] + 1
+    fabric = (ROOT / 'src/grid_stream_fabric.v').read_text()
+    assert re.search(r'leaf_addr==%d\) begin temporal_mode<=leaf_data\[%d\];lane_mode<=leaf_data\[%d\]'
+                     % (lane['mode_word'], lane['mode_exclusive_with_bit'], lane['mode_bit']), fabric)
+    assert re.search(r'seq_addr==%d\) lane_prog<=seq_data' % lane['program_word'], fabric)
+    assert 'grid_lane_controller lane_ctl(clk,rst_n,arm && configured && lane_mode,' in fabric
+    first, final = lane['live_write_words']
+    rtl = (ROOT / 'src/grid_lane_controller.v').read_text()
+    assert f"arg[7:0]>=8'd{first} && arg[7:0]<=8'd{final}" in rtl
+    assert (first, final) == tuple(contract['configuration']['alternate_context_words'])
+    # The instruction table in the RTL header comment names every opcode.
+    header = rtl.split('module grid_lane_controller')[0]
+    for name, code in lane['instruction']['opcodes'].items():
+        assert re.search(r'\b%X %s\b' % (code, name), header), name
+    for name, code in lane['instruction']['sys'].items():
+        if name in ('ATOC', 'CTOA'):
+            continue  # written "7 C = A[7:0], 8 A = C" in the header
+        assert re.search(r'\b%d %s\b' % (code, name), header), name
 
 
 def prove_switch(contract, yosys, tmp):
@@ -177,7 +211,7 @@ def main():
         subprocess.run([args.yosys, '-Q', '-q', '-p', script], cwd=ROOT, check=True)
         check(contract, json.loads(netlist.read_text())['modules'])
         prove_switch(contract, args.yosys, tmp)
-    print('PASS: grid contract instances, FIFO depths and neighbor connections match RTL; all switch selectors proved')
+    print('PASS: grid contract instances, FIFO depths, neighbor connections and lane controller match RTL; all switch selectors proved')
 
 
 if __name__ == '__main__':

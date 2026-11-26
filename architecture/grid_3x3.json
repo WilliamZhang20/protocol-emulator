@@ -118,5 +118,129 @@
         "abort": "lane A finishing with error aborts lane B; lane B halting with error aborts a temporal lane A",
         "completion": "done is reported once both lanes have finished; error is either lane's, held until the next start",
         "validity": "settings reserved bits zero and, when enabled, the entry row written"}}
+  },
+  "lane": {
+    "controller": "grid_lane_controller",
+    "instance": "lane_ctl",
+    "description": "Decides, never times a bit: waits on events, compares, moves stream bytes, sets action levels, starts tiles. Replaces the row sequencer when selected.",
+    "mode_word": 91,
+    "mode_bit": 2,
+    "mode_exclusive_with_bit": 0,
+    "program_word": 95,
+    "program_fields": {
+      "base": [
+        9,
+        0
+      ],
+      "last": [
+        15,
+        10
+      ]
+    },
+    "program_location": "host bank 0, 16-bit instructions little-endian; copied into the local buffer at start",
+    "buffer_instructions": 64,
+    "idle_actions_word": 92,
+    "idle_actions_bits": [
+      7,
+      4
+    ],
+    "actions_source": {
+      "resource": "sram0",
+      "ports": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "alternate_context_action": 3
+    },
+    "start_pulse": "shifter0 start (fabric fire)",
+    "tx_word": "shifter0 tx word (SHIFT)",
+    "stream": {
+      "reader": "PULL",
+      "writer": "PUSH",
+      "words": {
+        "tx_length": 66,
+        "rx_capacity": 67,
+        "tx_base": 89,
+        "rx_base": 90
+      }
+    },
+    "live_write_words": [
+      112,
+      116
+    ],
+    "live_write_check": "same rules as static configuration: valid word, no other override on its sink; a refused write fails the transfer",
+    "instruction": {
+      "width_bits": 16,
+      "fields": {
+        "op": [
+          15,
+          12
+        ],
+        "arg": [
+          11,
+          0
+        ]
+      },
+      "opcodes": {
+        "SYS": 0,
+        "WAIT": 1,
+        "ACT": 2,
+        "FIRE": 3,
+        "LDI": 4,
+        "RD": 5,
+        "AND": 6,
+        "XOR": 7,
+        "ADD": 8,
+        "J": 9,
+        "JZ": 10,
+        "JNZ": 11,
+        "LOOP": 12,
+        "SETC": 13,
+        "WCFG": 14,
+        "WANY": 15
+      },
+      "sys": {
+        "NOP": 0,
+        "HALT": 1,
+        "FAIL": 2,
+        "CLEAR": 3,
+        "SHIFT": 4,
+        "PULL": 5,
+        "PUSH": 6,
+        "ATOC": 7,
+        "CTOA": 8
+      }
+    },
+    "events": [
+      "timer0_tick",
+      "shifter0_done",
+      "input0_edge",
+      "input1_edge",
+      "shifter1_done",
+      "sequencer_event_sink41",
+      "sequencer_event_sink42",
+      "lane_b_done"
+    ],
+    "levels": [
+      "input0",
+      "input1",
+      "input0_low",
+      "input1_low",
+      "stream_byte_ready",
+      "stream_empty",
+      "shifter0_busy",
+      "shifter1_busy"
+    ],
+    "level_wait_offset": 8,
+    "readback": [
+      "shifter0_rx",
+      "shifter1_rx",
+      "inputs",
+      "stream_bytes_left",
+      "bytes_written",
+      "status_busy1_busy0_rdvalid_wrready"
+    ]
   }
 }

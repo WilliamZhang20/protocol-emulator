@@ -42,4 +42,20 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
         pass
     else:
         raise SystemExit('ERROR: broken coded CRC link was accepted')
-print('PASS: contract checker rejects topology, FIFO, switch and CRC-link mutations')
+    modules['grid_core']['cells']['coded_tile']['connections']['crc_in'] = (
+        modules['grid_core']['cells']['crc_tile']['connections']['tail_out'])
+    check(contract, modules)  # the restored netlist passes again
+    # Lane controller drift the compiler would silently encode against.
+    lane_mutations = []
+    bad = copy.deepcopy(contract); bad['lane']['program_word'] = 96; lane_mutations.append(('program word', bad))
+    bad = copy.deepcopy(contract); bad['lane']['instruction']['opcodes']['WANY'] = 14; lane_mutations.append(('opcode', bad))
+    bad = copy.deepcopy(contract); bad['lane']['levels'] = bad['lane']['levels'][:7]; lane_mutations.append(('levels', bad))
+    bad = copy.deepcopy(contract); bad['lane']['live_write_words'] = [112, 117]; lane_mutations.append(('write fence', bad))
+    bad = copy.deepcopy(contract); bad['lane']['buffer_instructions'] = 32; lane_mutations.append(('buffer depth', bad))
+    for name, bad in lane_mutations:
+        try:
+            check(bad, modules)
+        except AssertionError:
+            continue
+        raise SystemExit(f'ERROR: lane {name} mutation was accepted')
+print('PASS: contract checker rejects topology, FIFO, switch, CRC-link and lane-controller mutations')
