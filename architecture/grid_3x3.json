@@ -210,7 +210,9 @@
         "PULL": 5,
         "PUSH": 6,
         "ATOC": 7,
-        "CTOA": 8
+        "CTOA": 8,
+        "SHL": 9,
+        "SHR": 10
       }
     },
     "events": [

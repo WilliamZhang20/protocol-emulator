@@ -109,7 +109,10 @@ compiler's `circt_lab/lanes/i2c_target.json`: shifter0 samples SDA on
 SCL rises, the lane detects START/STOP, matches address 0x48, ACKs in
 the window after the eighth bit and streams bytes to SRAM; transfers to
 other addresses get no ACK and are skipped. `test_lane_i2c_target.py`
-plays an I2C controller on an open-drain bus at the pins.
+plays an I2C controller on an open-drain bus at the pins. `spi-target.*` (mode 0, no
+chip select) and `slip-uart-tx.*` (SLIP framing on an 8N1 transmitter) are
+built the same way and tested at the pins by `test_lane_spi_target.py` and
+`test_lane_slip_tx.py`.
 
 A live write is checked by grid_core
 against the rules static configuration is checked against (the word is

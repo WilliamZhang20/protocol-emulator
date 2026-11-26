@@ -4,7 +4,7 @@ One instruction per line, optionally after `label:`; `#` comments. Operands are 
 or labels. Instructions are 16 bits {op[3:0], arg[11:0]}, stored
 little-endian in SRAM; `program_bytes` returns the SRAM image.
 
-    NOP HALT FAIL CLEAR SHIFT PULL PUSH ATOC CTOA     (op 0, no operand)
+    NOP HALT FAIL CLEAR SHIFT PULL PUSH ATOC CTOA SHL SHR   (op 0, no operand)
     WAIT e     e 0-7 latched pulse event, 8-15 live level
     ACT  a     action levels
     FIRE       start pulse
@@ -14,7 +14,8 @@ little-endian in SRAM; `program_bytes` returns the SRAM image.
     WANY m     wait for any latched pulse event in mask m (A = the set bits)
 """
 
-SYS = {'NOP': 0, 'HALT': 1, 'FAIL': 2, 'CLEAR': 3, 'SHIFT': 4, 'PULL': 5, 'PUSH': 6, 'ATOC': 7, 'CTOA': 8}
+SYS = {'NOP': 0, 'HALT': 1, 'FAIL': 2, 'CLEAR': 3, 'SHIFT': 4, 'PULL': 5, 'PUSH': 6, 'ATOC': 7, 'CTOA': 8,
+       'SHL': 9, 'SHR': 10}
 OPS = {'WAIT': 1, 'ACT': 2, 'FIRE': 3, 'LDI': 4, 'RD': 5, 'AND': 6, 'XOR': 7, 'ADD': 8,
        'J': 9, 'JZ': 10, 'JNZ': 11, 'LOOP': 12, 'SETC': 13, 'WCFG': 14, 'WANY': 15}
 NO_OPERAND = {'FIRE'}

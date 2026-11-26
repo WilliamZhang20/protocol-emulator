@@ -67,6 +67,9 @@ class Chip:
         from an armed chip a lone command(4, 8) would drop every write."""
         await self.command(4, 0)
         await self.command(4, 8)
+        # Image writes need host address bits 9:8 clear; config() sets only
+        # the low byte, and the last SRAM access may have left them set.
+        await self.command(1, 0)
         image = [int(x, 16) for x in image.read_text().splitlines()]
         words = dict(enumerate(image))
         words[68] = 3            # pins 0 and 1 read their own pads

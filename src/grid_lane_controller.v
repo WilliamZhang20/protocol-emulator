@@ -13,7 +13,8 @@
 //   0 SYS  arg[3:0]: 0 NOP, 1 HALT (done), 2 FAIL (done with error),
 //          3 CLEAR events, 4 SHIFT (tx word = A, start the shifter),
 //          5 PULL (A = next stream byte; waits), 6 PUSH (stream <- A[7:0];
-//          waits), 7 C = A[7:0], 8 A = C; other values fail
+//          waits), 7 C = A[7:0], 8 A = C, 9 SHL (A <<= 1), 10 SHR (A >>= 1);
+//          other values fail
 //   1 WAIT e = arg[3:0]: e 0-7 a latched pulse event (consumed), e 8-15 a
 //          live level (waits while low)
 //   2 ACT  actions = arg[3:0] (levels, held until the next ACT)
@@ -79,7 +80,7 @@ module grid_lane_controller #(parameter ABITS=6)(
   wire [3:0] sel=arg[3:0];
   wire wait_ok=sel[3] ? levels[sel[2:0]] : (latched[sel[2:0]] || events[sel[2:0]]);
   wire target_ok=arg[11:6]==0 && arg[5:0]<=prog_last;
-  wire sys_ok=sys<=4'd8;
+  wire sys_ok=sys<=4'd10;
   wire owned=arg[7:0]>=8'd112 && arg[7:0]<=8'd116 && arg[11:8]==0;
   wire do_wait=exec && op==4'h1;
   wire [7:0] seen=latched | events;
@@ -138,6 +139,8 @@ module grid_lane_controller #(parameter ABITS=6)(
             4'd5: acc<={8'b0,rd_data};
             4'd7: count<=acc[7:0];
             4'd8: acc<={8'b0,count};
+            4'd9: acc<={acc[14:0],1'b0};
+            4'd10: acc<={1'b0,acc[15:1]};
             4'd0,4'd6: ;
             default: begin active<=0;done<=1;error<=1;end
           endcase

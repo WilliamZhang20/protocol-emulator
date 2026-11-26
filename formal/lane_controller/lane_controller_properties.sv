@@ -87,7 +87,7 @@ module lane_controller_properties (input wire clk);
   wire taken = (o == 4'h9) || (o == 4'hA && m_a == 16'd0) || (o == 4'hB && m_a != 16'd0) ||
                (o == 4'hC && m_c != 8'd1);
   wire is_jump = o >= 4'h9 && o <= 4'hC;
-  wire bad = (is_sys && k[3:0] > 4'd8) || (is_any && any_bad) || (o == 4'hE && !may_write) ||
+  wire bad = (is_sys && k[3:0] > 4'd10) || (is_any && any_bad) || (o == 4'hE && !may_write) ||
              (is_jump && taken && !jump_ok);
   wire halts = is_sys && (k[3:0] == 4'd1 || k[3:0] == 4'd2);
 
@@ -156,6 +156,8 @@ module lane_controller_properties (input wire clk);
           if (is_pull) m_a <= {8'd0, rd_data};
           if (is_sys && k[3:0] == 4'd7) m_c <= m_a[7:0];
           if (is_sys && k[3:0] == 4'd8) m_a <= {8'd0, m_c};
+          if (is_sys && k[3:0] == 4'd9) m_a <= m_a << 1;
+          if (is_sys && k[3:0] == 4'd10) m_a <= m_a >> 1;
           if (is_wait && !level_wait) m_seen[k[2:0]] <= 1'b0;
           if (is_any) begin m_a <= {8'd0, any_hit}; m_seen <= (m_seen | events) & ~k[7:0]; end
           if (o == 4'h2) m_act <= k[3:0];
