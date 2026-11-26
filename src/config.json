@@ -38,6 +38,9 @@
   "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
   "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
   "RUN_POST_GRT_RESIZER_TIMING": 1,
+
+  "// DRT_OPT_ITERS": "Fail fast when detailed routing cannot converge. Good runs (d628e18 and earlier) finish detailed routing with 0 violations by iteration 2-3; every run since 7193f31 sat at ~540 violations through iteration 55 and hit the 6 h CI limit with no artifacts. 20 iterations ends a non-converging run in about 2 h with its logs and reports.",
+  "DRT_OPT_ITERS": 20,
   "//": "The 72ffb64 route had +3.278 ns slow-corner setup slack, so the 1 ns",
   "//": "post-GRT target left its long pin-to-shifter path untouched. Try 5 ns",
   "//": "to make setup repair address that path before detailed routing.",
