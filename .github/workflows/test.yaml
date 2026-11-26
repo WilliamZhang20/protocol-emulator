@@ -45,6 +45,11 @@ jobs:
           make grid-stream-coder-test SIM=icarus
           ! grep failure experiments/grid_fabric/reuse/results.xml
 
+      - name: Test the standalone lane core
+        run: |
+          make lane-core-test SIM=icarus
+          ! grep failure experiments/grid_fabric/lane_core/results.xml
+
       - name: Test Summary
         uses: test-summary/action@v2.4
         with:

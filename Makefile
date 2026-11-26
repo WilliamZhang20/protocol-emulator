@@ -39,7 +39,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -101,6 +101,7 @@ lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
 		--top-module tb test/tb.v $(RTL_SOURCES) $(SRAM_MODELS)
 	$(PYTHON) tools/check_part_selects.py $(RTL_SOURCES)
+	$(PYTHON) tools/check_pure_functions.py $(RTL_SOURCES)
 
 dead-check:
 	$(PYTHON) tools/dead_rtl_check.py $(VERILATOR) $(EDA_BIN)/yosys tt_um_protocol_emulator \
@@ -273,6 +274,20 @@ grid-stream-coder-test:
 
 grid-coder-reuse-test:
 	$(MAKE) -C experiments/grid_fabric/reuse SIM=$(SIM)
+
+# Lane core (step 2.4a), standalone: strict lint, then the cocotb tests
+# (UART transmit with auto pull, 8E1 receive with resync at +-5% drift,
+# capture, invalid configurations refused).
+LANE_CORE_SOURCES := src/grid_lane_core.v src/grid_lane_controller.v src/grid_timer.v \
+	src/fabric_shifter.v src/fabric_crc.v src/config_bank.v
+# Waived: the shifter's intentionally open `.next()` bank pins, and `abort`
+# matching a C++ word (a verilator naming note, not a design issue).
+lane-core-test:
+	$(VERILATOR) --lint-only -Wall -Wno-PINCONNECTEMPTY -Wno-SYMRSVDWORD \
+		--top-module grid_lane_core $(LANE_CORE_SOURCES)
+	$(PYTHON) tools/check_pure_functions.py $(LANE_CORE_SOURCES)
+	$(PYTHON) tools/check_part_selects.py $(LANE_CORE_SOURCES)
+	$(MAKE) -C experiments/grid_fabric/lane_core SIM=$(SIM)
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment

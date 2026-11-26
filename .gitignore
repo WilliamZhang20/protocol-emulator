@@ -13,6 +13,8 @@ test/__pycache__/
 test/results.xml
 experiments/grid_fabric/reuse/sim_build/
 experiments/grid_fabric/reuse/results.xml
+experiments/grid_fabric/lane_core/sim_build/
+experiments/grid_fabric/lane_core/results.xml
 test/gate_level_netlist.v
 test/core.*
 core.*

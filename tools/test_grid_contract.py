@@ -63,10 +63,19 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     bad = copy.deepcopy(contract); bad['configuration']['timer_mode_fields']['resync_limit'] = [15, 9]; lane_mutations.append(('resync limit field', bad))
     bad = copy.deepcopy(contract); bad['resources']['timer2']['mode_words'] = [214, 215]; lane_mutations.append(('timer mode owner', bad))
     bad = copy.deepcopy(contract); bad['lane']['readback'][6:8] = ['timer1_capture', 'timer0_capture']; lane_mutations.append(('capture readback slot', bad))
+    # Lane core: the line table, selector fields and readback the compiler encodes against.
+    bad = copy.deepcopy(contract); bad['lane_core']['lines'][3][2], bad['lane_core']['lines'][4][2] = 't0_rise', 't0_tick'; lane_mutations.append(('lane core line swap', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['lines'] = bad['lane_core']['lines'][:-1]; lane_mutations.append(('lane core line dropped', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['selectors'] = bad['lane_core']['selectors'][:-1]; lane_mutations.append(('lane core selector dropped', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['selectors'][0][2] = [6, 1]; lane_mutations.append(('lane core selector bits', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['reserved_bits'][0] = [8, [15, 13]]; lane_mutations.append(('lane core reserved bits', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['readback_rtl'][2:4] = ['t1_captured', 't0_captured']; lane_mutations.append(('lane core readback', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['word_layout']['outputs'] = [34, 36]; lane_mutations.append(('lane core output words', bad))
+    bad = copy.deepcopy(contract); bad['lane_core']['words'] = 40; lane_mutations.append(('lane core word count', bad))
     for name, bad in lane_mutations:
         try:
             check(bad, modules)
         except AssertionError:
             continue
         raise SystemExit(f'ERROR: lane {name} mutation was accepted')
-print('PASS: contract checker rejects topology, FIFO, switch, CRC-link, lane-controller, timer-mode, coder-field and CRC-shape mutations')
+print('PASS: contract checker rejects topology, FIFO, switch, CRC-link, lane-controller, timer-mode, coder-field, CRC-shape and lane-core mutations')

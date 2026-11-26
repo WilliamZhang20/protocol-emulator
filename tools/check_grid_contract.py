@@ -129,6 +129,7 @@ def check(contract, modules):
     check_timers(contract, modules)
     check_coder(contract)
     check_crc_shape(contract)
+    check_lane_core(contract)
     # Shifter configuration fields: the core's validity check and port wiring.
     core_text = (ROOT / 'src/grid_core.v').read_text()
     for name, instance in (('shifter0', 'shifter'), ('shifter1', 'shifter1')):
@@ -139,6 +140,77 @@ def check(contract, modules):
                   re.escape(f"cfg[{word}][{fields['width'][0]}:{fields['width'][1]}],cfg[{word}][{fields['msb_first'][0]}],"
                             f"cfg[{word}][{fields['restart'][0]}],"))
         assert re.search(wiring, core_text), name
+
+
+def concat_items(text, name):
+    """The items of `assign <name>={...};`, expanded LSB first to one entry
+    per bit: a name or bit-select per bit, '0'/'1' for constant bits."""
+    body = re.search(r'assign\s+%s\s*=\s*\{(.*?)\};' % re.escape(name), text, re.S).group(1)
+    bits = []
+    for item in reversed([x.strip() for x in body.replace('\n', ' ').split(',')]):
+        m = re.fullmatch(r"(\d+)'b([01]+)", item)
+        if m:
+            value = m.group(2).rjust(int(m.group(1)), m.group(2)[0] if len(m.group(2)) == 1 else '0')
+            bits.extend(reversed(value))
+        else:
+            bits.append(item)
+    return bits
+
+
+def check_lane_core(contract):
+    """Lane core local signal set, selector fields, validity bounds and
+    readback against src/grid_lane_core.v and the validity proof's tables."""
+    core = contract['lane_core']
+    rtl = (ROOT / 'src/grid_lane_core.v').read_text()
+    assert f"module {core['module']}(" in rtl
+    assert f"reg [15:0] word[0:{core['words'] - 1}];" in rtl
+    # Line table: every bit of the lines vector, defined or constant zero.
+    bits = concat_items(rtl, 'lines')
+    assert len(bits) == 64, len(bits)
+    table = {index: source for index, _, source in core['lines']}
+    names = [name for _, name, _ in core['lines']]
+    assert len(set(names)) == len(names) and len(table) == len(core['lines'])
+    for index in range(64):
+        want = table.get(index, "1'b0")
+        want = {"1'b0": '0', "1'b1": '1'}.get(want, want)
+        assert bits[index] == want, f'line {index}: RTL {bits[index]}, contract {want}'
+    lo_p, hi_p = core['pulse_lines']
+    lo_l, hi_l = core['level_lines']
+    pulses = sorted(i for i in table if lo_p <= i <= hi_p)
+    levels = sorted(i for i in table if lo_l <= i <= hi_l)
+    assert pulses == list(range(pulses[-1] + 1)) and levels == list(range(lo_l, levels[-1] + 1))
+    assert f"line_ok=s<=6'd{pulses[-1]} || (s>=6'd{lo_l} && s<=6'd{levels[-1]});" in rtl
+    assert f"level_ok=s<=5'd{levels[-1] - lo_l};" in rtl
+    # The validity proof checks exactly the contract's fields and line set.
+    props = (ROOT / 'formal/grid_lane_core/grid_lane_core_properties.sv').read_text()
+    mask = sum(1 << i for i in table)
+    assert f"localparam [63:0] DEFINED = 64'h{mask:016x};" in props
+    kinds = {'LINE': 'line', 'LEVEL': 'level', 'PULSE5': 'pulse5'}
+    proved = sorted((n, int(w), [int(h), int(l)], kinds[k]) for k, n, w, h, l in
+                    re.findall(r'`SEL_(LINE|LEVEL|PULSE5)\(([\w.]+), (\d+), (\d+), (\d+)\)', props))
+    assert proved == sorted((n, w, b, k) for n, w, b, k in core['selectors']), 'proof selector fields'
+    reserved = sorted([int(w), [int(h), int(l)]] for w, h, l in re.findall(r'`RESERVED\((\d+), (\d+), (\d+)\)', props))
+    assert reserved == sorted(core['reserved_bits']), 'proof reserved bits'
+    # Selector wiring in the RTL.
+    sel = {n: (w, b) for n, w, b, _ in core['selectors']}
+    for name, wire in [('timer0.start', 't0_start_sel'), ('timer0.stop', 't0_stop_sel'), ('timer0.aux', 't0_aux_sel'),
+                       ('timer1.start', 't1_start_sel'), ('timer1.stop', 't1_stop_sel'), ('timer1.aux', 't1_aux_sel')]:
+        w, (h, l) = sel[name]
+        assert f'{wire}=word[{w}][{h}:{l}]' in rtl, name
+    layout = core['word_layout']
+    for group, array, first_name in [('event_selectors', 'ev_sel', 'event'), ('level_selectors', 'lv_sel', 'level')]:
+        base = layout[group][0]
+        assert sel[f'{first_name}0'] == (base, [5, 0]) and sel[f'{first_name}1'] == (base, [11, 6])
+        assert f'assign {array}[2*si]=word[{base}+si][5:0];assign {array}[2*si+1]=word[{base}+si][11:6];' in rtl
+    base = layout['outputs'][0]
+    assert sel['out0.value'] == (base, [5, 0]) and sel['out0.enable'] == (base, [11, 6])
+    assert f'assign ov_sel[si]=word[{base}+si][5:0];assign oe_sel[si]=word[{base}+si][11:6];' in rtl
+    prog, settings = layout['program'], layout['settings']
+    assert f'word[{prog}][9:0],word[{prog}][15:10],' in rtl and f'readback,word[{settings}][7:4],' in rtl
+    # Readback slots, low slot first.
+    joined = rtl.split('assign readback={')[1].split('};')[0]
+    assert joined == "96'b0," + ','.join(reversed(core['readback_rtl'])), joined
+    assert len(core['readback']) == 10
 
 
 def check_crc_shape(contract):
@@ -177,8 +249,8 @@ def check_coder(contract):
     assert f'wire       manch      = coder[{manch}] && !coder[{rx}];' in tile
     assert f'wire       manch_rx   = coder[{manch}] && coder[{rx}];' in tile
     status = coder['coder_status_bits']
-    assert status == {'post_capture': [3, 0], 'stuff_error': [4, 4], 'manchester_violation': [5, 5]}
-    assert 'assign status = {active_r, overrun, push_pending, 7\'b0, manch_err, stuff_err, post_cap};' in tile
+    assert status == {'post_capture': [3, 0], 'stuff_error': [4, 4], 'manchester_violation': [5, 5], 'word_bad': [6, 6]}
+    assert 'assign status = {active_r, overrun, push_pending, 6\'b0, word_bad, manch_err, stuff_err, post_cap};' in tile
     core = (ROOT / 'src/grid_core.v').read_text()
     stuff_hi, stuff_lo = f['stuff_run']
     rule = (f"coder_word_valid<=!(ld[8][{stuff_hi}:{stuff_lo}]==3'd1 && !ld[8][{f['runs_of_ones'][0]}]) && "

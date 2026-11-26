@@ -71,6 +71,11 @@
 //   of every word (an RX bit counter for CAN); FIFO pushes stay per word.
 // A receiving coder needs the shift and sample lines to be the same.
 //
+// Status: [3:0] post bits captured, [4] stuff error, [5] Manchester
+// violation, [6] the last word ended with an error (parity, post bit,
+// stuffing or Manchester; set whether or not the word is pushed), [13]
+// push pending, [14] overrun, [15] active.
+//
 // FIFO bytes carry tags. TX: a byte pulled tagged err is sent with its
 // parity bit inverted (error injection). RX: an auto-pushed byte is tagged
 // eop when it is the last word of a burst frame, and err when its frame
@@ -187,6 +192,7 @@ module fabric_shifter (
   reg       stuff_err;   // RX: a stuff bit was not the complement
   reg       first_half;  // RX Manchester: the line in the bit's first half
   reg       manch_err;   // RX Manchester: a bit with equal halves
+  reg       word_bad;    // RX: the last word ended with an error (status 6)
   reg       crc_absorb_r, crc_bit_r, crc_emit_r;
 
   // Frame boundaries depend only on the frame register, so they are
@@ -220,18 +226,29 @@ module fabric_shifter (
   end
 
   // The frame bit at position i of word w.
-  function automatic frame_bit_at(input [4:0] i, input [15:0] w);
+  // Functions read only their arguments (tools/check_pure_functions.py): a
+  // continuous assignment re-evaluates when its operands change, so a
+  // function reading module signals directly would keep a stale value in
+  // event-driven simulation (bit_hold stayed X after configuration while
+  // index and tx_word sat at their reset values).
+  // shape, MSB first: pre_val [38], post_val [37], parity_x [36],
+  // msb_first [35], top [34:31], pre_n [30:26], data_end [25:21],
+  // par_end [20:16], len_mask [15:0].
+  localparam FS_W = 39;
+  wire [FS_W-1:0] fshape = {pre_val, post_val, odd_parity ^ word_err, msb_first, frame[3:0],
+                            pre_n, data_end, par_end, len_mask};
+  function automatic frame_bit_at(input [4:0] i, input [15:0] w, input [FS_W-1:0] s);
     reg [3:0] raw;
     begin
-      raw = i[3:0] - pre_n[3:0];
-      if (i < pre_n)
-        frame_bit_at = pre_val;
-      else if (i < data_end)
-        frame_bit_at = w[msb_first ? (frame[3:0] - raw) : raw];
-      else if (i < par_end)
-        frame_bit_at = (^(w & len_mask)) ^ odd_parity ^ word_err;
+      raw = i[3:0] - s[29:26];
+      if (i < s[30:26])
+        frame_bit_at = s[38];
+      else if (i < s[25:21])
+        frame_bit_at = w[s[35] ? (s[34:31] - raw) : raw];
+      else if (i < s[20:16])
+        frame_bit_at = (^(w & s[15:0])) ^ s[36];
       else
-        frame_bit_at = post_val;
+        frame_bit_at = s[37];
     end
   endfunction
 
@@ -309,7 +326,7 @@ module fabric_shifter (
 
   assign stop_pulse = done && !start;
   assign rx_data    = rx_word;
-  assign status = {active_r, overrun, push_pending, 7'b0, manch_err, stuff_err, post_cap};
+  assign status = {active_r, overrun, push_pending, 6'b0, word_bad, manch_err, stuff_err, post_cap};
   wire manch_bad = manch_rx && sample_raw && first_half == in_line;
   assign crc_absorb = crc_absorb_r;
   assign crc_bit    = crc_bit_r;
@@ -341,33 +358,33 @@ module fabric_shifter (
       (cfg_we && cfg_addr == 3'd0 && !active_r) ? cfg_data : tx_word;
   wire [15:0] burst_word = auto_pull ? {8'd0, tx_data} : tx_word;
   wire advance = shift_evt && !lead_wait && !at_last;
-  wire bit_start = frame_bit_at(5'd0, start_word);
-  wire bit_burst = frame_bit_at(pre_n, burst_word);
-  wire bit_next  = frame_bit_at(index + 5'd1, tx_word);
-  wire bit_hold  = frame_bit_at(index, tx_word);
+  wire bit_start = frame_bit_at(5'd0, start_word, fshape);
+  wire bit_burst = frame_bit_at(pre_n, burst_word, fshape);
+  wire bit_next  = frame_bit_at(index + 5'd1, tx_word, fshape);
+  wire bit_hold  = frame_bit_at(index, tx_word, fshape);
   wire bit_tail  = crc_in ^ tail_inv;
   // NRZI: a 0 toggles the line, a 1 keeps it. Manchester: the first half
   // of a bit is its complement.
-  function automatic line_for(input b);
-    line_for = nrzi_tx ? (out_r ^ !b) : (b ^ manch);
+  function automatic line_for(input b, input prev, input nrzi, input m);
+    line_for = nrzi ? (prev ^ !b) : (b ^ m);
   endfunction
   always @(posedge clk) begin
     if (!rst_n)
       out_r <= 1'b0;
     else if (start)
-      out_r <= line_for(bit_start);
+      out_r <= line_for(bit_start, out_r, nrzi_tx, manch);
     else if (burst_next)
-      out_r <= line_for(bit_burst);
+      out_r <= line_for(bit_burst, out_r, nrzi_tx, manch);
     else if (!active_r || done || !run)
       out_r <= idle_next;
     else if (half_tick)
       out_r <= !out_r;
     else if (stuff_tx)
-      out_r <= line_for(!cur_bit);
+      out_r <= line_for(!cur_bit, out_r, nrzi_tx, manch);
     else if (tail_step)
-      out_r <= line_for(bit_tail);
+      out_r <= line_for(bit_tail, out_r, nrzi_tx, manch);
     else if (advance)
-      out_r <= line_for(bit_next);
+      out_r <= line_for(bit_next, out_r, nrzi_tx, manch);
     else if (!nrzi_tx && !manch && !stuffing && !tailing)
       out_r <= bit_hold;
   end
@@ -500,6 +517,7 @@ module fabric_shifter (
       push_byte    <= 8'd0;
       push_eop     <= 1'b0;
       push_err     <= 1'b0;
+      word_bad     <= 1'b0;
       overrun      <= 1'b0;
       burst_end_seen <= 1'b0;
       word_eop     <= 1'b0;
@@ -507,6 +525,10 @@ module fabric_shifter (
     end else begin
       if (rx_grant)
         push_pending <= 1'b0;
+      // Whether or not it is pushed, each word records its error tag, so a
+      // controller that reads words itself sees a bad parity or post bit.
+      if (word_end)
+        word_bad <= done && (post_bad || par_bad || stuff_err || stuff_bad || manch_err || manch_bad);
       if (word_end && auto_push) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;
