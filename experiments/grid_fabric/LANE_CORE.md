@@ -269,6 +269,8 @@ non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
 
 ## Routing gate result and decision (2026-11-26): clusters, no duplication
 
+> **Superseded (user, 2026-11-26):** the cluster plan below kept the lane core's shape (a controller bundle with a private crossbar beside the mesh). It is withdrawn. The fabric is reorganised from first principles in [FABRIC_REORG.md](FABRIC_REORG.md). The routing-gate evidence below stands.
+
 **Result.** 9a3e66e (the lane core beside the grid fabric) cannot route:
 
 | | d628e18 (routed) | 9a3e66e |
