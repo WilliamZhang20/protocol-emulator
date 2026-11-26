@@ -1,33 +1,175 @@
 # Next steps and experiment status
 
-**Current direction:** The numbered notes below are historical planning notes;
-in particular, the later statement dropping CIRCT has been superseded by the
-decision to reuse the Rust frontend and experiment with CIRCT lowering.
+**Goal:** replace the submitted design with the 5 × 3 grid as a protocol
+CGRA: a fabric of protocol-pattern processing elements (timers,
+serializers, line coders, checks, match, state, per-lane descriptor control,
+streams) that a general compiler targets, so that protocols it has never seen
+compile from source and run at the pins. Method: Betz's research flow
+(architecture file, corpus, retargetable compiler, measure); evidence:
+[PROTOCOL_CENSUS.md](experiments/grid_fabric/PROTOCOL_CENSUS.md).
 
-- Current hardware branch: `experiment/two-sram-placement`, described in
-  `PLACEMENT_EXPERIMENT.md`. `work/tile-routing-experiment` retains the prior
-  chip top and the standalone tile experiments.
-- Compiler experiment: sibling `protocol-emulator-compiler` branch
-  `work/tile-fabric-codesign`, described in `circt_lab/README.md`.
-- The experimental Tiny Tapeout top now uses the [structured 5 × 3 grid](experiments/grid_fabric/README.md).
-  Four timers, two shifters, a combinational LUT, four registered LUT4 cells,
-  I/O, the temporal sequencer and two SRAM tiles communicate through finite
-  configurable neighbor links; a reused programmable CRC tile and coded shifter
-  serve USB and Ethernet. Restricted source profiles compile SPI `transfer()`,
-  I²C `write_read()`, UART streams, JTAG tests, USB DATA0 transmit and the
-  Ethernet `transmit()` session; [PROTOCOL_COVERAGE.md](experiments/grid_fabric/PROTOCOL_COVERAGE.md)
-  lists the evidence and boundaries. A two-alternative prefetch block is tested
-  separately but not integrated. Placement is fixed and general source lowering
-  remains incomplete; physical results come from the GDS CI run for each commit.
-- Next: compare protocol workloads and alternative grid layouts, extending the
-  compiler's actual port/link model and source transaction/stream lowering.
-  Distinguish mapping limitations from missing hardware, then implement the
-  highest-impact gap. Track physical area/timing and electrical checks for each
-  candidate; the grid must also preserve UART concurrency and SRAM arbitration.
-- The control-only end-to-end example is deliberately small. Corpus export or
-  a component table is not evidence that an entire protocol fits.
+- Hardware branch: `experiment/two-sram-placement` (5 × 3 grid, two SRAM
+  macros); physical results come from the GDS CI run of each commit.
+- Compiler: sibling `protocol-emulator-compiler`, `circt_lab/`; paging on
+  branch `work/sequencer-paging`.
+- Coverage evidence: [PROTOCOL_COVERAGE.md](experiments/grid_fabric/PROTOCOL_COVERAGE.md);
+  temporal control: [TEMPORAL_CONTROL.md](experiments/grid_fabric/TEMPORAL_CONTROL.md).
 
-## Spatial-architecture direction (2026-11-24)
+## Finish line (2026-11-26)
+
+### Where we are
+
+| Gate | Status |
+|---|---|
+| Timing closure | Done: slow-corner setup +2.27 ns, hold positive (`18fd40a`). |
+| Repeatable layout | Done: `18fd40a` and `7c9ee08` both pass GDS, precheck and post-layout GL. Re-check after each hardware step. |
+| Sequencer capacity | Done: SRAM paging (`ffb3618`), descriptor rows (`f093ade`), second lane (`87f6674`). |
+| Protocol coverage | 4 of 36 census protocols run at the pins, 7 more with workarounds, 12 need only compiler work, 13 are blocked by missing PEs. |
+| General compiler | Not started for the grid: every running image comes from a per-protocol lowering. |
+| Head-to-head, packaging | Not started; the head-to-head moves to the front (step 0). |
+| PX8 lineage (baseline) | 24 protocols at the pins, GDS passes; its data-capable controller is what the grid lacks. |
+
+### What "done" means
+
+0. At least the PX8 lineage's coverage: a replacement that runs fewer
+   protocols than the design it replaces is not a replacement.
+1. Every census protocol that maps is compiled from `.spt` source by general
+   lowering, with no per-protocol code, and passes its own tests at the pins
+   in RTL and at gate level. Target: at least 18 of the 22 inherited protocols
+   (the earlier fabric's set), at least 8 of the 14 held-out classes.
+2. Held-out check: protocols written from specifications after the compiler
+   freezes compile and pass with zero compiler or hardware edits; failures are
+   classified (compiler gap or missing PE) and reported, not patched.
+3. Physical: slack ≥ 0 at all corners, routing converges, precheck and
+   post-layout GL pass on the submission commit; area tracked per step.
+4. A head-to-head table against the earlier fabric (area by function, slack,
+   protocols at gate level, host interface) records the decision.
+
+### The PX8 thesis, and what the redesign lost
+
+The earlier fabric (`arch/spatial`, PX8 lineage) stated its thesis plainly:
+tiles do all timing, and a tiny controller "loads the setup and makes the
+step-by-step decisions, but it never drives a pin or times a bit"; every
+block holds two setups. That is already the spatio-temporal middle Betz
+argues for, and it covered 24 protocols at the pins (targets, receivers, CAN,
+USB receive, HDLC, PPP, SLIP among them) on eight `uio` pins, with the host
+link on `ui_in`, and it passes GDS (`016f736`; `arch/spatial8x4` `7dd2f41`).
+
+The 5 × 3 redesign replaced the PX8 with a row sequencer that has no data
+path, and moved the host link onto `uio[4:0]`. The census traces almost every
+blocked protocol to exactly what that removed: decisions on received values
+(PX8 `XRC`/`JZ`), counters and loops (`DJNZ`), data moves (`P`), per-block
+setups, byte tiles, counters, and six pins. Its real gains are structural:
+registered per-cell configuration distribution and registered validity
+(timing closed, layout repeatable), paging and descriptor rows, a lane placed
+in the fabric, credit-based streams, and a compiler routing model.
+
+So the replacement question is no longer "is the grid ready" but "which base
+keeps the PX8 thesis and gains the grid's structure fastest". Step 0 settles
+it with evidence before more hardware is added.
+
+### Steps, in order
+
+**0. Re-anchor on the PX8 thesis (decision first).**
+
+1. Run the census on the PX8 lineage: which of the 36 protocols pass at the
+   pins there, and with what host-side help (the 22 inherited tests already
+   exist; the 14 held-out classes need status judgement). Add the lineage's
+   area, slack and layout runtime from its last GDS run.
+2. Compare two bases, each keeping the thesis "fabric times every bit; a
+   controller decides":
+   - **Grid with a PX8-class lane controller:** each lane's control PE becomes
+     a small data-capable controller (compare, count, pointer, setup switch)
+     that never times a bit; the row sequencer stays only where it is cheaper.
+     Restore the host link on `ui_in` for eight protocol pins. Then steps A-E
+     below, with A2-A4 largely subsumed by the controller.
+   - **PX8 lineage as base:** port the grid's structural wins (registered
+     configuration distribution and validity, paging, streams) and the
+     compiler into it.
+3. Decide by protocols at gate level per unit area and by the risk to timing
+   and layout, and record the table here. Recommendation until the numbers
+   say otherwise: keep the PX8 thesis as the control model either way; the
+   grid's sequencer-only control is the part to retire, not the controller.
+
+The steps below assume the grid base; if step 0 picks the PX8 lineage, B and
+E carry over unchanged and A/C become ports of the grid's structural fixes.
+
+Hardware steps are ordered by protocols unblocked per unit of area, each
+with a pin-level acceptance test, a local area measurement and a GDS run
+(2-hour CI stuck check after every push). Compiler work (B) is the long pole
+and runs in parallel from the start.
+
+**A. Make general lowering possible (small hardware).**
+
+1. **Latched events.** Per lane, a sticky bit per event, set by the event and
+   cleared on row entry, selected per event by a configuration mask so
+   existing images stay cycle-exact. Accept: existing programs unchanged
+   (sequencer equivalence bench); a pulse arriving during a branch row is no
+   longer lost.
+2. **Match PE, one per lane, beside the shifter.** Masked compare of the
+   received word against 2-4 configured constants; each hit is an event, and
+   the hit index can select the next row. Unblocks or co-unblocks 9
+   protocols. Accept: I²C target address match and ACK in the window at the
+   pins; SWD ACK decode.
+3. **Per-lane contexts, including tile parameters.** Each lane switches its
+   own sink routes and timer/shifter parameters (bit-rate switch,
+   push-pull/open-drain switch); size the word count from the census
+   programs. Accept: a mid-frame bit-rate switch at the pins; I²C unchanged.
+4. **Completeness batch:** parity generate/check in the frame engine, an
+   additive checksum mode in the CRC tile, timer capture of elapsed count,
+   timer period from a stream byte. Accept: PS/2 parity checked on chip, LIN
+   checksum, SENT nibble timing.
+
+**B. General compiler (parallel with A).**
+
+1. **Contract-driven target.** The compiler reads PEs, sinks, rows, contexts
+   and pins from `architecture/grid_3x3.json`; no addresses in compiler code.
+2. **One lowering per construct.** `timer` → timer PE, shifter frames →
+   serializer and line coder, `crc` → check, `reg` expressions → LUT4 state
+   cells (tech-map), `if received == K` → match events, `fn` bodies → rows
+   (fire, wait, if, for, fail, reply), then descriptor folding
+   (`descriptor_fold.py` moves into the compiler), paging (merge
+   `work/sequencer-paging`) and contexts; routing with the existing grid router.
+3. **Diagnostics and resource report** per program (PEs, tracks, sinks, rows,
+   contexts, pins), and a precise reason for anything unmappable.
+4. Accept: the running protocols (UART, I²C, SPI, JTAG, USB TX, 10BASE-T TX)
+   compile through general lowering and pass their existing pin tests, then
+   the "mappable" census protocols one by one; the per-protocol `*.inc`
+   lowerings are deleted.
+
+**C. Pins and receive.**
+
+1. **Free pins from the host link.** It holds uio[4:0], leaving two pads,
+   one input and the multiplexed `uo[0]`. Move opcode and strobe onto `ui_in`
+   (or a narrower handshake) to reach about six protocol pads. This changes
+   every test's host helper; decide the pinout first. Accept: SPI with CS on
+   a pad, 4-wire JTAG on pads, the GPIO-expander chain.
+2. **Receive line decode in the grid.** Connect the coded shifter's receive
+   path (destuff, NRZI/Manchester decode) and edge resync. Accept, with the
+   match PE: USB low-speed receive, HDLC receive, CAN receive at the pins.
+
+**D. Concurrency (lower priority for coverage).** Give lane B its own
+datapath (shifter 1, timer 1, writer) and move both lanes onto the same
+descriptor and context machinery. Accept: two protocols at once at the pins
+(UART receive on lane B during an I²C transaction on lane A). Only full
+duplex UART needs two engines, so this is for demonstration, not coverage.
+
+**E. Evidence and submission.**
+
+1. Re-express the inherited 22 in `.spt`; record parsed, mapped, RTL, GL and
+   physical status per protocol in PROTOCOL_COVERAGE.md and regenerate the
+   census totals.
+2. Freeze the compiler, write the held-out classes from specifications, and
+   report pass/fail with classified causes.
+3. Head-to-head table and decision; Tiny Tapeout `info.yaml`, pinout and
+   datasheet (host link, configuration words, PE contract); GL-safe tests at
+   top-level pins only; final precheck on the merge commit.
+
+Decision points: if the match PE plus contexts exceed the area budget,
+drop step A4 items with a single protocol each first; if the pin rework is
+rejected, the target becomes the census without the pin-blocked protocols.
+
+## Foundations: spatial-architecture direction (2026-11-24)
 
 Sources: V. Betz, *Spatial Computing Architectures: Opportunities and CAD
 Flows in the Deep Learning and More-than-Moore Era*, ICCAD 2026 keynote
@@ -228,7 +370,11 @@ descriptor sequencer per lane → generated from one architecture file and
 evaluated VTR-style against a protocol corpus (minimum track width, wire-rate
 slack, hop counts).
 
-## Earlier planning notes
+## History
+
+Older plans, superseded by the finish line above and kept for their reasoning.
+
+### Earlier planning notes
 
 0. Clean up the loose ends (one session).
 
@@ -394,7 +540,7 @@ What's missing, and what's the priority order?
 
 Once you confirm, I'll write spec 1 (IR op set) and spec 2 (arch file schema), each about a page.
 
-## Cleanup status — 2026-11-22
+### Cleanup status — 2026-11-22
 
 - Compiler PR #6 was merged as `14ddd5f`; its CI passed the example RTL suite.
 - Compiler architecture experiments are preserved on local branch
@@ -407,7 +553,7 @@ Once you confirm, I'll write spec 1 (IR op set) and spec 2 (arch file schema), e
   The compiler WIP's actor images target ABI 2 and need matching experimental
   RTL. See `docs/architecture-triage.md` for details.
 
-## Fabric redesign: hardware, compiler, and test plan
+### Fabric redesign: hardware, compiler, and test plan
 
 **Target:** a structured, heterogeneous 2D fabric grid with configurable
 connections and a programmable temporal layer. The compiler maps protocol
@@ -420,7 +566,7 @@ subsystem: one moves data, the other extends where streams can access it. They
 share interfaces, arbitration, compiler allocation, and tests. The current
 stream changes are uncommitted work in progress, not a completed architecture.
 
-### Design requirements
+#### Design requirements
 
 - **Switches:** compiler-selectable tile connections, turns, and fanout where
   workloads need them. Compare track counts, connectivity, direct links, and
@@ -445,7 +591,7 @@ stream changes are uncommitted work in progress, not a completed architecture.
   report area by function, timing, physical feasibility, and protocol coverage.
   Existing estimates for registered links and the word mesh require measurement.
 
-### Staged work and decision gates
+#### Staged work and decision gates
 
 1. **Baseline and finish the current memory experiment.** Inventory the
    uncommitted hardware and compiler work, complete the interrupted regression,
@@ -509,7 +655,7 @@ separately whether it is parsed, mapped, validated at RTL pins, and validated
 at gate level or physically. Physical checks should run alongside development
 without blocking unrelated compiler and functional work.
 
-## Path to replacing the submitted design with the 5 × 3 grid (2026-11-25)
+### Path to replacing the submitted design with the 5 × 3 grid (2026-11-25, superseded by the finish line)
 
 The grid becomes the submission only when every gate below holds on one
 commit; until then `main` stays the fallback. Status at `4b71ece`/`18fd40a`:
