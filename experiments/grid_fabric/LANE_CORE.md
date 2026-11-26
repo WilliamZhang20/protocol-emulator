@@ -385,14 +385,14 @@ unflattened):
   both sequencers, the v2 shifters, the page loader): about
   358 - 160 + 96 - 33 = 261k.
 - Fabric + one cluster: about 465k unflattened, about 397k flattened,
-  about 44% utilisation. Over budget; two clusters do not fit.
-- The largest remaining block is the mesh's own configuration and
-  selectors (177k). With two clusters each carrying a local crossbar,
-  a 3x3 mesh of 9 configurable cells is no longer the main bit network:
-  it only joins clusters and the LUT4 soft logic.
+  about 44% utilisation. That is above the 40% estimate, but the
+  estimate is only what one earlier design (d628e18) routed at. It is
+  not a physical limit: no run has tested two clusters at a higher
+  density, or with an orderly floorplan.
+- The largest remaining block is the 5 x 3 mesh's own configuration
+  and selectors (177k).
 
-The budget therefore closes only if the mesh shrinks with the
-clusters. Sub-step 1 continues:
+Sub-step 1 continues:
 - the census of which lines each resource input uses (to size the sparse
   local selectors);
 - what the mesh must still carry once clusters hold their own wiring
@@ -425,42 +425,40 @@ so the subsets are typed rather than taken from this list alone:
 That is a small fraction of 64 per input. Sizing these sets with the
 compiler's census tool is the next part of sub-step 1.
 
-**Budget decision (user, 2026-11-26): shrink the mesh to cluster joins.**
-The mesh is sized from what crosses clusters (inter-cluster bit nets,
-LUT4 inputs, pins), not from what a single shared bit network needed.
+**Mesh sizing: open; compare alternatives before deciding (user, 2026-11-26).**
+An earlier note here proposed shrinking the mesh to cluster joins to
+meet the 40% estimate. That trades away connectivity without measuring
+what it costs. With independent assignment, the mesh is what lets a
+resource in one cluster serve a protocol in another: a timer in cluster
+A driving a shifter in cluster B, and how many such connections can
+coexist. That decides how much flexibility the chip has. Removing
+duplicated hardware stands. Reducing connectivity has to be justified
+against the flexibility wanted.
 
-The current mesh is 5 x 3 = 15 cells, rows 3-4 being LUT4 cells and
-timers. Its 177k own area is mostly:
-- configuration storage: 63 words, a second routing context, validity
-  tracking, about 2,000 flops (about 90k);
-- switch and sink selectors for 4 tracks per direction and 46+ sinks;
-- packet, temporal and lane-B glue.
+Alternatives to compare, each with real multi-protocol mappings and
+physical results:
 
-**Sizing that closes (estimates; sub-step 2 measures the RTL):**
+1. **Higher density, current connectivity.** Duplicates removed, the
+   5 x 3 mesh kept (4 tracks, its sinks), two clusters: about 46-50%
+   by the estimate. Does it route?
+2. **Orderly floorplan.** The same logic with placement regions per
+   cluster and the mesh between them (step 4.3), so each cluster's
+   local wiring stays local.
+3. **A smaller but sufficiently connected mesh.** Size tracks, cells
+   and sinks from what multi-protocol mappings need, with margin, not
+   from the area target.
 
-| Part | Estimate (unflattened) | How |
-|---|---|---|
-| Mesh v2 | about 45k | 6 cells (2 cluster ports, LUT4 cells, pads) instead of 15; 2 tracks instead of 4 (channel-width study); one routing context; sinks only for LUT4 inputs, cluster mesh inputs and pins |
-| Infrastructure | about 63k | stream fabric, config tree (shrinks with the mesh), banks, readers, writers |
-| Cluster A | about 190k | controller about 19k + 64x16 macro 15k; 2 timers 32k; 2 coded shifters 69k; CRC 24k; glue with typed sparse selectors about 30k |
-| Cluster B | about 130k | controller + macro 34k; 2 timers 32k; 1 coded shifter 34k; glue about 30k; no CRC |
-| **Total** | **about 428k unflattened, about 366k flattened, about 40%** | |
+Evidence for each:
+- **Mappings (compiler):** multi-protocol workloads with protocols
+  running together and cross-cluster bit nets (timer in A, shifter in
+  B), routed by PathFinder on each candidate's routing graph. Measure
+  the maximum number of coexisting cross-cluster connections, which
+  workloads route, and track use.
+- **Physical:** synth area, then a GDS per candidate (with the DRT
+  fail-fast): utilisation, detailed-routing convergence, wirelength,
+  DRC/LVS.
 
-Two identical A clusters come to about 46%. Heterogeneous clusters (A
-with the CRC and two shifters, B lighter) fit the about-40% target.
-Independent assignment means a protocol in B can borrow A's CRC or
-second shifter over the mesh, at bit level only: words stay in their
-cluster, so a protocol needing the CRC's word readback runs in A. This
-is VPR's heterogeneous-block model, and the packer (sub-step 6) handles
-it.
-
-**Sub-step 1 gate:** the budget closes on paper at about 40% with
-clusters A + B and mesh v2. Sub-step 2 (contract v2) fixes:
-- the typed line subsets;
-- the mesh v2 geometry;
-- the A/B resource lists;
-- the cluster mesh ports.
-Each area figure is then replaced by measured RTL.
+No candidate is chosen before both kinds of evidence exist.
 
 ## 2.5 plan (superseded 2026-11-26 by clusters, above): two lane cores, ownership by construction, per-lane status
 
