@@ -398,6 +398,38 @@ Not yet covered by criterion 3:
    - **L1, resources -> tiles.** Timer, shifter and CRC fields become
      register words; `a until b` becomes start <- a, stop <- b.
    - **L2, pins and flag contexts -> drivers and muxed signals.**
+
+     *L1 and L2 without contexts, done (2026-11-26), roadmap item 1
+     ("a complete protocol from source to pins through actual SRAM
+     streams").* `fabric_lower.py` lowers the frontend's logical IR
+     (`spatial model-ir`) to fabric IR; `fabric_build.py` places, routes,
+     emits and checks it, and writes the vector, the source's test plan
+     and the stream interface. `loopback.spt`, `ps2.spt` and `uart.spt`
+     pass every one of their own source `test` blocks at the pins of
+     `reorg/mesh_soc.v`, the mesh with the existing stream reader,
+     writer and two-bank SRAM (`make reorg-compiled-test`,
+     `test/cocotb_tests/test_mesh_compiled.py`):
+     - host -> pins: the host writes the bytes into SRAM bank 0 and the
+       reader sends them into the shifter;
+     - pins -> host: the shifter's receive word goes through the writer
+       into bank 1 and is read back through the host port;
+     - loopback does both at once.
+
+     The runner knows no protocol: it attaches the plan's peers, plays
+     the host, and checks each invariant every cycle. Two bugs were found
+     in the SoC wrapper, not the mesh:
+     - a host access right after a bank switch went to the old bank;
+     - the one-clock memory disarm for the route change reset the open
+       receive region, because the stream tiles' enable is a reset.
+
+     Coverage of the 35 examples on test_3x5b (`test_fabric_lower.py`;
+     every program compiles or is refused with a class):
+     - compiled: loopback, ps2, uart;
+     - refused, hardware: `spi` (a counter resource has no tile),
+       `io_saturation` (two transmit streams, one reader);
+     - refused, compiler (30): functions, register/event/flag signals
+       (L3/L4), `timer.run`/`resync` inputs, stream stages (L5), and
+       context-dependent inputs (L2 contexts).
    - **L3, exported functions -> control FSMs.** `wait X` is a state
      left on X; `fire E` is the triggering event muxed by state;
      `repeat N { wait next X }` is a count-mode timer; `set_flags`

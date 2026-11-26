@@ -40,7 +40,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test reorg-compiled-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -103,6 +103,19 @@ reorg-proto-test:
 	@echo "word network: every configuration and refusal passed"
 	experiments/grid_fabric/reorg/run_slice.sh $(BUILD_DIR)/slice $(if $(SWEEP),--sweep)
 	experiments/grid_fabric/reorg/run_mesh.sh $(BUILD_DIR)/mesh $(if $(SWEEP),--sweep)
+
+# Programs compiled from .spt source (protocol-emulator-compiler
+# circt_lab/fabric_build.py) run their own source tests at the mesh's pins,
+# with their streams through the real SRAM reader, writer and banks.
+REORG_COMPILED := $(patsubst %.plan.json,%,$(wildcard $(CURDIR)/experiments/grid_fabric/reorg/compiled/*.plan.json))
+reorg-compiled-test:
+	@mkdir -p $(BUILD_DIR)
+	@set -e; for m in $(REORG_COMPILED); do \
+		env PATH="$(EDA_BIN):$(subst $(VENV_BIN):,,$(PATH))" timeout 1800 $(MAKE) -s -C test -f Makefile.mesh SIM=icarus \
+			COCOTB_CONFIG=$(EDA_BIN)/cocotb-config MESH=$$m > $(BUILD_DIR)/mesh-$$(basename $$m).log 2>&1 \
+			|| { tail -30 $(BUILD_DIR)/mesh-$$(basename $$m).log; exit 1; }; \
+		grep -E 'test ".*" passed' $(BUILD_DIR)/mesh-$$(basename $$m).log | sed 's/.*cocotb.mesh_soc *//'; \
+	done
 
 grid-sequencer-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_SEQUENCER_ASSERT --top-module sequencer_tb \

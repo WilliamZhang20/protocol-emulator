@@ -205,5 +205,211 @@
   "tracks": 4,
   "transition_rows": 2
  },
+ "registers": {
+  "shifter": {
+   "frame": {
+    "reg": 1,
+    "fields": {
+     "length_minus_1": [
+      3,
+      0
+     ],
+     "pre": [
+      5,
+      4
+     ],
+     "pre_value": [
+      6,
+      6
+     ],
+     "post": [
+      8,
+      7
+     ],
+     "post_value": [
+      9,
+      9
+     ],
+     "parity": [
+      11,
+      10
+     ],
+     "msb_first": [
+      12,
+      12
+     ],
+     "lead": [
+      13,
+      13
+     ],
+     "end_on_sample": [
+      14,
+      14
+     ],
+     "idle": [
+      15,
+      15
+     ]
+    },
+    "parity": {
+     "none": 0,
+     "even": 1,
+     "odd": 2
+    }
+   },
+   "step": {
+    "reg": 2,
+    "fields": {
+     "shift_line": [
+      5,
+      0
+     ],
+     "sample_line": [
+      11,
+      6
+     ]
+    }
+   },
+   "io": {
+    "reg": 3,
+    "fields": {
+     "start_line": [
+      5,
+      0
+     ],
+     "in_level": [
+      10,
+      6
+     ],
+     "auto_pull": [
+      11,
+      11
+     ],
+     "auto_push": [
+      12,
+      12
+     ]
+    }
+   },
+   "burst": {
+    "reg": 4,
+    "fields": {
+     "end_level": [
+      4,
+      0
+     ],
+     "burst": [
+      5,
+      5
+     ],
+     "eop_ends_burst": [
+      6,
+      6
+     ],
+     "abort_line": [
+      12,
+      7
+     ]
+    }
+   },
+   "coder": {
+    "reg": 5,
+    "fields": {
+     "stuff_run": [
+      2,
+      0
+     ],
+     "runs_of_ones": [
+      3,
+      3
+     ],
+     "nrzi": [
+      4,
+      4
+     ],
+     "receive": [
+      5,
+      5
+     ],
+     "arm_at_first_zero": [
+      6,
+      6
+     ],
+     "tail_invert": [
+      7,
+      7
+     ],
+     "bit_strobe": [
+      8,
+      8
+     ],
+     "tail_length": [
+      14,
+      9
+     ],
+     "manchester": [
+      15,
+      15
+     ]
+    }
+   },
+   "coder2": {
+    "reg": 6,
+    "fields": {
+     "stuff_gate_level": [
+      4,
+      0
+     ],
+     "stuff_gated": [
+      5,
+      5
+     ],
+     "crc_skip": [
+      12,
+      6
+     ],
+     "link_data_only": [
+      13,
+      13
+     ]
+    }
+   }
+  },
+  "crc": {
+   "shape": {
+    "reg": 6,
+    "fields": {
+     "width_minus_1": [
+      4,
+      0
+     ],
+     "init_ones": [
+      5,
+      5
+     ],
+     "linked": [
+      6,
+      6
+     ],
+     "link_select": [
+      7,
+      7
+     ],
+     "additive": [
+      8,
+      8
+     ],
+     "twos_complement": [
+      9,
+      9
+     ]
+    }
+   }
+  }
+ },
+ "latency": {
+  "edge_to_sample": 1,
+  "start_to_shift": 2
+ },
  "pins": 8
 }

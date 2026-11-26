@@ -1,0 +1,19 @@
+# Compiled programs on the reorganised fabric's mesh (FABRIC_REORG.md
+# step 4): test/cocotb_tests/test_mesh_compiled.py with MESH=path/NAME.
+# The mesh parameters come from NAME.mesh.json.
+SIM ?= icarus
+TOPLEVEL_LANG ?= verilog
+SRC_DIR = $(CURDIR)/../src
+REORG = $(CURDIR)/../experiments/grid_fabric/reorg
+COCOTB_CONFIG := $(if $(wildcard $(CURDIR)/../.venv/bin/cocotb-config),$(CURDIR)/../.venv/bin/cocotb-config,cocotb-config)
+export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
+MESH_PARAMS := $(shell python3 -c "import json,sys; p=json.load(open('$(MESH).mesh.json'))['params']; print(' '.join(f'-Pmesh_soc.{k}={str(v).split(\"d\")[-1]}' for k,v in p.items()))")
+SIM_BUILD = sim_build/mesh-$(notdir $(MESH))
+VERILOG_SOURCES = $(REORG)/mesh_soc.v $(REORG)/mesh.v $(REORG)/ctx_switch.v $(REORG)/io_tile.v $(REORG)/wnet.v \
+  $(SRC_DIR)/grid_timer.v $(SRC_DIR)/fabric_shifter.v $(SRC_DIR)/fabric_crc.v $(SRC_DIR)/config_bank.v \
+  $(SRC_DIR)/grid_stream_tiles.v $(SRC_DIR)/grid_stream_memory.v $(SRC_DIR)/memory_tiles.v
+COMPILE_ARGS += -g2012 $(MESH_PARAMS)
+TOPLEVEL = mesh_soc
+COCOTB_TEST_MODULES = cocotb_tests.test_mesh_compiled
+export MESH
+include $(shell $(COCOTB_CONFIG) --makefiles)/Makefile.sim

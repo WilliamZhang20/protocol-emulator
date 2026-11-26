@@ -1,0 +1,19 @@
+{
+ "contract": "test_3x5b",
+ "params": {
+  "ROWS": 3,
+  "COLS": 5,
+  "WORD_PORT": 6,
+  "KINDS": "30'd287029521",
+  "CTX4": "15'd10570"
+ },
+ "streams": {
+  "send": {
+   "port": "reader"
+  },
+  "recv": {
+   "port": "writer"
+  }
+ },
+ "clock_hz": 50000000
+}
