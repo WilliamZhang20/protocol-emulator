@@ -41,13 +41,13 @@ module lane_controller_properties (input wire clk);
     if (mem_req && mem_ready) mem_rdata <= rom_at(mem_addr);
   end
 
-  wire [3:0] actions; wire fire, tx_load, rd_consume, wr_valid, cfg_we;
+  wire [3:0] actions; wire fire, tx_load, rd_consume, rd_want, wr_valid, cfg_we;
   wire [15:0] tx_word, cfg_data, acc; wire [7:0] wr_data, cfg_addr, count;
   wire active, loading, done, error; wire [5:0] pc;
   grid_lane_controller #(.ABITS(2)) dut(clk, rst_n, enable, start, abort, base, last,
     mem_req, mem_ready, mem_addr, mem_rvalid, mem_rdata, owns_port, resp_pending,
     events, levels, readback, idle, actions, fire, tx_word, tx_load,
-    rd_valid, rd_data, rd_consume, wr_valid, wr_data, wr_ready,
+    rd_valid, rd_data, rd_consume, rd_want, wr_valid, wr_data, wr_ready,
     cfg_we, cfg_addr, cfg_data, cfg_ok, active, loading, done, error, pc, acc, count,
     d_latched, d_act, d_sent, d_got, d_low, d_shift_fire, d_prog);
   wire [7:0] d_latched, d_sent, d_got, d_low; wire [3:0] d_act; wire d_shift_fire; wire [63:0] d_prog;
@@ -106,6 +106,7 @@ module lane_controller_properties (input wire clk);
     assert (mem_req == e_req);
     if (e_req) assert (mem_addr == e_addr);
     assert (rd_consume == e_consume);
+    assert (rd_want == (live && in_run && !off_end && is_pull));
     assert (wr_valid == e_push);
     if (e_push) assert (wr_data == m_a[7:0]);
     assert (tx_load == e_load);

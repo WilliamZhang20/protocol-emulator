@@ -2,6 +2,7 @@
 """Check contract topology and resource instances against elaborated grid RTL."""
 import argparse
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -125,11 +126,20 @@ def check(contract, modules):
     assert len(core_ports['cfg_leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     assert len(modules[tree['module']]['ports']['leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     check_lane(contract, modules, top)
+    # Shifter configuration fields: the core's validity check and port wiring.
+    core_text = (ROOT / 'src/grid_core.v').read_text()
+    for name, instance in (('shifter0', 'shifter'), ('shifter1', 'shifter1')):
+        resource = contract['resources'][name]
+        word, fields = resource['config_words'][0], resource['config_fields']
+        assert f"cfg[{word}][15:{fields['reserved'][1]}]==0" in core_text, name
+        wiring = (re.escape(f"fabric_v2_shift {instance}(") + r'clk,rst_n,live,sink\[\d+\],sink\[\d+\],sink\[\d+\],' +
+                  re.escape(f"cfg[{word}][{fields['width'][0]}:{fields['width'][1]}],cfg[{word}][{fields['msb_first'][0]}],"
+                            f"cfg[{word}][{fields['restart'][0]}],"))
+        assert re.search(wiring, core_text), name
 
 
 def check_lane(contract, modules, top):
     """The lane section the compiler encodes against matches the RTL."""
-    import re
     lane = contract['lane']
     assert top[lane['instance']]['type'] == lane['controller']
     module = modules[lane['controller']]

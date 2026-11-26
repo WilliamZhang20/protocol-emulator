@@ -78,8 +78,8 @@ module fabric_v2(
       cfg_addr==2 ? cfg_data : timer_first[1],cfg_addr==3 ? cfg_data : timer_period[1],
       sources[route[3]],sources[route[4]],sources[route[5]],timer_tick[1],timer_running[1],timer_valid[1],timer_level[1],timer_rise[1],timer_fall[1]);
   fabric_v2_shift s0(clk,rst_n,live,sources[route[6]],sources[route[7]],sources[route[8]],
-      shift_cfg[0][4:0],shift_cfg[0][5],tx0,sources[route[9]],serial_out[0],rx0,shift_busy[0],shift_done[0]);
+      shift_cfg[0][4:0],shift_cfg[0][5],1'b0,tx0,sources[route[9]],serial_out[0],rx0,shift_busy[0],shift_done[0]);
   fabric_v2_shift s1(clk,rst_n,live,sources[route[10]],sources[route[11]],sources[route[12]],
-      shift_cfg[1][4:0],shift_cfg[1][5],tx1,sources[route[13]],serial_out[1],rx1,shift_busy[1],shift_done[1]);
+      shift_cfg[1][4:0],shift_cfg[1][5],1'b0,tx1,sources[route[13]],serial_out[1],rx1,shift_busy[1],shift_done[1]);
 endmodule
 `default_nettype wire

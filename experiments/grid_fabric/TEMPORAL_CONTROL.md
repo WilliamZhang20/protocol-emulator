@@ -90,7 +90,28 @@ alternate-context words 112-116 while armed. Lane B still runs beside it.
 | 6 | sequencer event sink 42 | shifter 0 busy | 0 |
 | 7 | lane B done | shifter 1 busy | 0 |
 
-Levels are numbered 8-15 in `WAIT`. A live write is checked by grid_core
+Levels are numbered 8-15 in `WAIT`; `WANY m` waits for any pulse event in
+the mask `m` and leaves the ones that fired in A.
+
+Each lane run is one transfer. It finishes when the controller halts and
+the bytes it pushed are in SRAM; then the reader and writer close, so the
+next start begins both at their bases. A `PUSH` once the destination's
+capacity is used, or a `PULL` with no source bytes left, fails the
+transfer rather than waiting forever. With bit 6 of its configuration
+word set (word 2 or 55), a shifter start while the shifter is busy
+abandons the current word and starts again, so a receiver can
+resynchronize on a framing event (an I2C STOP right after the next byte
+was armed); with it clear a start while busy is ignored, which receivers
+started by every input edge (the UART images) rely on.
+
+`test/data/lane/i2c-target.*` is an I2C target compiled from the
+compiler's `circt_lab/lanes/i2c_target.json`: shifter0 samples SDA on
+SCL rises, the lane detects START/STOP, matches address 0x48, ACKs in
+the window after the eighth bit and streams bytes to SRAM; transfers to
+other addresses get no ACK and are skipped. `test_lane_i2c_target.py`
+plays an I2C controller on an open-drain bus at the pins.
+
+A live write is checked by grid_core
 against the rules static configuration is checked against (the word is
 valid and no other override names its sink); a refused write fails the
 transfer, so the armed configuration never leaves the validity it was

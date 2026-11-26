@@ -6,12 +6,12 @@ module tiles_tb;
   wire tick,running,configured;
   wire level,rise,fall;
   fabric_v2_timer timer(clk,rst_n,arm,cfg_we,first,period,start,stop,hold,tick,running,configured,level,rise,fall);
-  reg s_start=0,shift=0,sample=0,msb=0,serial_in=0;
+  reg s_start=0,shift=0,sample=0,msb=0,restart=0,serial_in=0;
   reg [4:0] width=0;
   reg [15:0] tx=0;
   wire serial_out,busy,done;
   wire [15:0] rx;
-  fabric_v2_shift shifter(clk,rst_n,arm,s_start,shift,sample,width,msb,tx,serial_in,serial_out,rx,busy,done);
+  fabric_v2_shift shifter(clk,rst_n,arm,s_start,shift,sample,width,msb,restart,tx,serial_in,serial_out,rx,busy,done);
   always #5 clk=~clk;
   task automatic cycle;
     begin @(posedge clk); #1; @(negedge clk); end
@@ -51,12 +51,24 @@ module tiles_tb;
       transfer(n,0,16'ha5c3,16'h5a3c);
       transfer(n,1,16'ha5c3,16'h5a3c);
     end
+    // A start mid-word is ignored without restart, and restarts the word with it.
+    width=8;msb=1;tx=16'h00f0;restart=0;s_start=1;cycle();s_start=0;
+    serial_in=1;sample=1;shift=1;cycle();cycle();sample=0;shift=0;
+    tx=16'h0081;s_start=1;cycle();s_start=0;
+    if (!busy || serial_out!==1'b1) $fatal(1,"start while busy was not ignored");
+    restart=1;s_start=1;cycle();s_start=0;
+    if (!busy || serial_out!==1'b1 || rx!==0) $fatal(1,"restart did not reload the word");
+    repeat (7) begin shift=1;cycle();shift=0; end
+    if (!busy || done) $fatal(1,"restart did not reset the bit count");
+    shift=1;cycle();shift=0;
+    if (busy) $fatal(1,"restarted word did not finish after eight shifts");
+    restart=0;
     width=0;s_start=1;cycle();s_start=0;if (busy) $fatal(1,"accepted width zero");
     width=17;s_start=1;cycle();s_start=0;if (busy) $fatal(1,"accepted width 17");
     arm=0;cycle(); if (busy || running || tick) $fatal(1,"disarm failed");
     first=0;period=4;cfg_we=1;cycle();cfg_we=0;if(configured) $fatal(1,"accepted invalid timer");
     arm=1;start=1;cycle();start=0;if(running) $fatal(1,"started unconfigured timer");
-    $display("PASS: configured timer first/repeat/hold and 1..16-bit bidirectional shifters in both orders");
+    $display("PASS: configured timer first/repeat/hold, 1..16-bit bidirectional shifters in both orders, start-while-busy ignored or restarting");
     $finish;
   end
 endmodule

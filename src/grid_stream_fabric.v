@@ -109,9 +109,23 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   // 13) runs beside it from the same start. The host sees one transfer: done
   // waits until both lanes have finished, and either lane's error is reported.
   wire lane_ctl_active,lane_ctl_done,lane_ctl_error;
-  wire lane_a_done=lane_mode ? lane_ctl_done : temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
-  wire lane_a_error=lane_mode ? lane_ctl_error : temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
-  wire lane_a_running=lane_mode ? lane_ctl_active : temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
+  // A lane run is finished once the bytes it pushed are in SRAM; then both
+  // streams close, so the next run starts them at their bases.
+  reg lane_draining,lane_drain_error,lane_close;
+  wire wr_req,wr_active;wire [1:0] wr_queued;
+  wire lane_drained=!wr_req && wr_queued==0;
+  wire lane_finished=lane_draining && lane_drained;
+  always @(posedge clk) begin
+    if(!rst_n || !arm || !configured) begin lane_draining<=0;lane_drain_error<=0;lane_close<=0;end
+    else begin
+      lane_close<=lane_finished;
+      if(lane_ctl_done) begin lane_draining<=1;lane_drain_error<=lane_ctl_error;end
+      else if(lane_finished) lane_draining<=0;
+    end
+  end
+  wire lane_a_done=lane_mode ? lane_finished : temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
+  wire lane_a_error=lane_mode ? lane_drain_error : temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
+  wire lane_a_running=lane_mode ? (lane_ctl_active || lane_draining) : temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
   wire lane_b_active,lane_b_done,lane_b_error,host_start;
   reg lane_a_held,lane_a_held_error,lane_b_failed,finished_error;
   wire finish_now=(lane_a_done && !lane_b_active) || (lane_a_held && lane_b_done);
@@ -135,7 +149,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire rd_valid,rd_req,rd_active,rd_done,rd_error;wire [10:0] rd_addr;
   wire [7:0] rd_data;wire [1:0] rd_queued,rd_outstanding;
   wire rd_valid_local,reader_consume_local;wire [7:0] rd_data_local;
-  wire wr_ready,wr_req,wr_active,wr_done,wr_error;wire [10:0] wr_addr;wire [7:0] wr_data;wire [1:0] wr_queued;
+  wire wr_ready,wr_done,wr_error;wire [10:0] wr_addr;wire [7:0] wr_data;
   wire wr_ready_local,writer_valid_local;wire [7:0] writer_input_local;
   wire [2:0] mem_ready,mem_rvalid;wire [23:0] mem_rdata;
   reg armed_seen,cancel,empty_wait;
@@ -216,7 +230,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     sequencer_actions,temporal_halting,temporal_active,temporal_done,temporal_error,temporal_state,temporal_programmed,
     paging,temporal_idle,seq_loading,seq_load_page,page_row_we,page_row_addr,page_row_data,page_done);
   // ---- lane controller
-  wire lane_owns_port,lane_resp_pending,lane_mem_req,lane_fire,lane_tx_load,lane_wr_valid,lane_cfg_we,lane_cfg_ok,lane_ctl_loading;
+  wire lane_owns_port,lane_resp_pending,lane_mem_req,lane_fire,lane_tx_load,lane_wr_valid,lane_rd_want,lane_cfg_we,lane_cfg_ok,lane_ctl_loading;
   wire [9:0] lane_mem_addr;wire [7:0] lane_wr_data,lane_cfg_addr,lane_count;wire [15:0] lane_tx_word,lane_cfg_data,lane_acc;
   wire [5:0] lane_pc;wire [1:0] pin_edges;
   reg [10:0] lane_left;
@@ -230,12 +244,16 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire [7:0] lane_levels={busy[1],busy[0],lane_left==0,rd_valid,!temporal_pins[1],!temporal_pins[0],temporal_pins[1],temporal_pins[0]};
   wire [255:0] lane_readback={160'b0,{12'b0,busy[1],busy[0],rd_valid,wr_ready},{5'b0,rx_written},{5'b0,lane_left},
     {14'b0,temporal_pins},rx1,rx0};
-  grid_lane_controller lane_ctl(clk,rst_n,arm && configured && lane_mode,host_start,lane_b_done && lane_b_error,
+  // A stream that can never deliver fails the lane instead of hanging it:
+  // PUSH with the writer closed (capacity used), PULL with no bytes left.
+  wire lane_stream_fail=(lane_wr_valid && !wr_active) || (lane_rd_want && lane_left==0);
+  grid_lane_controller lane_ctl(clk,rst_n,arm && configured && lane_mode,host_start,
+    (lane_b_done && lane_b_error) || lane_stream_fail,
     lane_prog[9:0],lane_prog[15:10],
     lane_mem_req,mem_ready[0] && lane_owns_port,lane_mem_addr,mem_rvalid[0],mem_rdata[7:0],lane_owns_port,lane_resp_pending,
     lane_events,lane_levels,lane_readback,temporal_idle,
     lane_actions,lane_fire,lane_tx_word,lane_tx_load,
-    rd_valid,rd_data,lane_rd_consume,lane_wr_valid,lane_wr_data,wr_ready,
+    rd_valid,rd_data,lane_rd_consume,lane_rd_want,lane_wr_valid,lane_wr_data,wr_ready,
     lane_cfg_we,lane_cfg_addr,lane_cfg_data,lane_cfg_ok,lane_ctl_active,lane_ctl_loading,lane_ctl_done,lane_ctl_error,
     lane_pc,lane_acc,lane_count);
   grid_page_loader page_loader(clk,rst_n,seq_loading,seq_load_page,page_cfg[9:0],
@@ -261,10 +279,10 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   grid_stream_link #(.WIDTH(1)) shifter_to_reader(reader_consume,reader_consume_local);
   grid_stream_link #(.WIDTH(9)) shifter_to_writer({writer_valid,writer_input},{writer_valid_local,writer_input_local});
   grid_stream_link #(.WIDTH(1)) writer_to_shifter(wr_ready_local,wr_ready);
-  grid_stream_reader #(.DEPTH(2)) reader(clk,rst_n,arm && configured && !cancel && (!packet_mode || !packet_error || packet_start),reader_start,selected_tx_base,selected_tx_length,
+  grid_stream_reader #(.DEPTH(2)) reader(clk,rst_n,arm && configured && !cancel && !lane_close && (!packet_mode || !packet_error || packet_start),reader_start,selected_tx_base,selected_tx_length,
     rd_req,mem_ready[1],rd_addr,mem_rvalid[1],mem_rdata[15:8],rd_valid_local,reader_consume_local,rd_data_local,
     rd_active,rd_done,rd_error,rd_queued,rd_outstanding);
-  grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,arm && configured && !cancel,writer_start,selected_rx_base,selected_rx_capacity,
+  grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,arm && configured && !cancel && !lane_close,writer_start,selected_rx_base,selected_rx_capacity,
     writer_valid_local,wr_ready_local,writer_input_local,wr_req,mem_ready[2],wr_addr,wr_data,wr_active,wr_done,wr_error,wr_queued);
   wire stream_route_write=leaf_valid && (leaf_bank || leaf_addr==88);
   wire [2:0] stream_routes=leaf_bank ? {leaf_data[1],leaf_data[1],leaf_data[0]} : leaf_data[2:0];

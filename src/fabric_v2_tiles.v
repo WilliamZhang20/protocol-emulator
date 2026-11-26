@@ -41,7 +41,7 @@ endmodule
 // are independent events. At most width samples are captured per transfer.
 module fabric_v2_shift(
     input wire clk, rst_n, arm, start, shift, sample,
-    input wire [4:0] width, input wire msb_first,
+    input wire [4:0] width, input wire msb_first, input wire restart,
     input wire [15:0] tx, input wire serial_in,
     output wire serial_out, output reg [15:0] rx,
     output reg busy, done);
@@ -57,7 +57,12 @@ module fabric_v2_shift(
       active_msb<=0; busy<=0; done<=0;
     end else begin
       done<=0;
-      if (start && !busy && width>=1 && width<=16) begin
+      // With restart set, a start while busy abandons the current word and
+      // begins again, so a receiver can resynchronize on a framing event (an
+      // I2C STOP right after the next byte was armed). Without it a start
+      // while busy is ignored, which receivers started by every edge of
+      // their input (the UART images) rely on.
+      if (start && (!busy || restart) && width>=1 && width<=16) begin
         data<=tx; rx<=0; active_width<=width; shift_count<=0; sample_count<=0;
         active_msb<=msb_first; busy<=1;
       end else if (busy) begin

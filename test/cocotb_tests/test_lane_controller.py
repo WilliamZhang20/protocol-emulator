@@ -61,10 +61,13 @@ class Chip:
         await ClockCycles(self.dut.clk, 5); await FallingEdge(self.dut.clk)
         return int(self.dut.uo_out.value)
 
-    async def configure(self, extra):
-        """Disarmed configuration of the image plus `extra` words, then arm."""
+    async def configure(self, extra, image=IMAGE):
+        """Disarmed configuration of the image plus `extra` words, then arm.
+        Disarm first: configuration mode is only taken while disarmed, so
+        from an armed chip a lone command(4, 8) would drop every write."""
+        await self.command(4, 0)
         await self.command(4, 8)
-        image = [int(x, 16) for x in IMAGE.read_text().splitlines()]
+        image = [int(x, 16) for x in image.read_text().splitlines()]
         words = dict(enumerate(image))
         words[68] = 3            # pins 0 and 1 read their own pads
         words.update(extra)
@@ -250,6 +253,43 @@ async def lane_wait_any(dut):
         chip.state[pin] = 1; chip.drive()
         error = bool((await chip.status()) & 0x40)
         assert error == expect_error, f'{pin} edge: error {error}'
+
+
+@cocotb.test()
+async def lane_stream_limits_fail(dut):
+    """A PUSH past the destination's capacity and a PULL with no source bytes
+    left both fail the transfer instead of waiting forever, and the bytes
+    pushed before the failure are in SRAM."""
+    chip = Chip(dut)
+    await chip.reset()
+    program = assemble('''
+        LDI 0x31
+        PUSH
+        LDI 0x32
+        PUSH
+        LDI 0x33
+        PUSH          # capacity is two: fails
+        HALT
+    ''')
+    await chip.configure(lane_words(program, {66: 0, 67: 2, 90: 200}))
+    await chip.load_program(program)
+    await chip.start_and_wait(limit=2000)
+    assert (await chip.status()) & 0x40, 'PUSH past capacity was not reported'
+    assert [await chip.read_byte(200 + i) for i in range(2)] == [0x31, 0x32]
+    pull = assemble('''
+        PULL
+        PULL
+        PULL          # two source bytes: fails
+        HALT
+        NOP
+        NOP
+        NOP
+    ''')
+    assert len(pull) == len(program)
+    await chip.configure(lane_words(pull, {66: 2, 67: 0, 89: 100}))
+    await chip.load_program(pull)
+    await chip.start_and_wait(limit=2000)
+    assert (await chip.status()) & 0x40, 'PULL past the source was not reported'
 
 
 @cocotb.test()

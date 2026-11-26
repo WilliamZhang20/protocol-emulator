@@ -75,7 +75,7 @@ module grid_core(
   wire tick,running,tvalid,level,rise,fall,serial;
   wire tick1,running1,tvalid1,level1,rise1,fall1,serial1;
   wire live=arm && rst_n && configured;
-  wire configured_now=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
+  wire configured_now=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:7]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:7]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
     (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid) && lane_b_ready;
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
@@ -313,12 +313,12 @@ module grid_core(
   fabric_v2_timer timer(clk,rst_n,live,leaf_we[2] && (la[2]==0 || la[2]==1),
     la[2]==0 ? ld[2] : cfg[0],la[2]==1 ? ld[2] : cfg[1],
     sink[0],sink[1],sink[2],tick,running,tvalid,level,rise,fall);
-  fabric_v2_shift shifter(clk,rst_n,live,sink[3],sink[4],sink[5],cfg[2][4:0],cfg[2][5],
+  fabric_v2_shift shifter(clk,rst_n,live,sink[3],sink[4],sink[5],cfg[2][4:0],cfg[2][5],cfg[2][6],
     tx,sink[6],serial,rx,busy,done);
   fabric_v2_timer timer1(clk,rst_n,live,leaf_we[5] && (la[5]==53 || la[5]==54),
     la[5]==53 ? ld[5] : cfg[53],la[5]==54 ? ld[5] : cfg[54],
     sink[12],sink[13],sink[14],tick1,running1,tvalid1,level1,rise1,fall1);
-  fabric_v2_shift shifter1(clk,rst_n,live,sink[15],sink[16],sink[17],cfg[55][4:0],cfg[55][5],
+  fabric_v2_shift shifter1(clk,rst_n,live,sink[15],sink[16],sink[17],cfg[55][4:0],cfg[55][5],cfg[55][6],
     tx1,sink[18],serial1,rx1,busy1,done1);
   // Extension sinks 19-42 have no alternate-context overrides. Each selector
   // reads constants, its own cell's local outputs or a neighbor's tracks.

@@ -52,6 +52,7 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     bad = copy.deepcopy(contract); bad['lane']['levels'] = bad['lane']['levels'][:7]; lane_mutations.append(('levels', bad))
     bad = copy.deepcopy(contract); bad['lane']['live_write_words'] = [112, 117]; lane_mutations.append(('write fence', bad))
     bad = copy.deepcopy(contract); bad['lane']['buffer_instructions'] = 32; lane_mutations.append(('buffer depth', bad))
+    bad = copy.deepcopy(contract); bad['resources']['shifter0']['config_fields']['restart'] = [7, 7]; lane_mutations.append(('shifter restart bit', bad))
     for name, bad in lane_mutations:
         try:
             check(bad, modules)

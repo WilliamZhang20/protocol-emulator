@@ -42,7 +42,7 @@ module grid_lane_controller #(parameter ABITS=6)(
   input wire [255:0] readback,
   input wire [3:0] idle_actions,
   output wire [3:0] actions,output wire fire,output reg [15:0] tx_word,output wire tx_load,
-  input wire rd_valid,input wire [7:0] rd_data,output wire rd_consume,
+  input wire rd_valid,input wire [7:0] rd_data,output wire rd_consume,output wire rd_want,
   output wire wr_valid,output wire [7:0] wr_data,input wire wr_ready,
   output wire cfg_we,output wire [7:0] cfg_addr,output wire [15:0] cfg_data,input wire cfg_ok,
   output reg active,output reg loading,output reg done,output reg error,
@@ -91,6 +91,7 @@ module grid_lane_controller #(parameter ABITS=6)(
   // An instruction retires this clock unless it waits.
   wire retire=running && !(do_wait && !wait_ok) && !(do_any && any_hit==0) && !(do_pull && !rd_valid) && !(do_push && !wr_ready);
   assign rd_consume=do_pull && rd_valid;
+  assign rd_want=do_pull;   // the fabric fails a PULL that can never be served
   assign wr_valid=do_push;
   assign wr_data=acc[7:0];
   // SHIFT loads the word this clock and starts the shifter the next, so the
