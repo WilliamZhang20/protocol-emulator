@@ -1,15 +1,48 @@
 name: formal
 
 on:
-  # These proofs exercise the preserved legacy core, not this branch's
-  # two-SRAM chip top. Run them explicitly when working on that old core.
+  push:
+  pull_request:
+  # The legacy-core protocol proofs run only when dispatched by hand.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  grid-formal:
+    # Proofs of RTL the grid chip uses: the lane controller against its ISA
+    # reference model, and the coded shifter and CRC tiles in grid_core.
+    name: grid formal (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [lane_controller, lane_controller-mutations, fabric_shifter, fabric_crc]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install OSS CAD Suite
+        uses: YosysHQ/setup-oss-cad-suite@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run ${{ matrix.target }}
+        run: timeout 25m make -C formal ${{ matrix.target }} BUILD_DIR=$PWD/build/formal
+
+      - name: Upload formal results
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: grid-formal-results-${{ matrix.target }}
+          path: build/formal/
+
   formal:
+    # These proofs exercise the preserved legacy core, not this branch's
+    # two-SRAM chip top.
+    if: github.event_name == 'workflow_dispatch'
     # The tile proofs and mutation check in one job, and each protocol
     # proof in its own, so the suite takes as long as its slowest proof.
     name: formal (${{ matrix.target }})

@@ -6,7 +6,8 @@ SBY ?= $(if $(wildcard $(EDA_BIN)/sby),$(EDA_BIN)/sby,sby)
 YOSYS ?= $(if $(wildcard $(EDA_BIN)/yosys),$(EDA_BIN)/yosys,yosys)
 BUILD_DIR ?= $(PROJECT_ROOT)/build/formal
 TARGETS := program_memory byte_fifo host_interface fabric_timer fabric_shifter \
-	fabric_counter fabric_crc fabric_edge fabric_logic byte_tile controller fabric_core
+	fabric_counter fabric_crc fabric_edge fabric_logic byte_tile controller fabric_core \
+	lane_controller
 # Protocol proofs: the whole core running a real protocol program (the
 # bytes the cocotb tests load, assembled into protocols/<name>_rom.vh).
 PROTOCOLS := uart_tx ws2812 spi_master gpio_expander quadrature_decoder vga \
@@ -34,9 +35,10 @@ fabric_logic_TASKS := bmc prove cover
 fabric_edge_TASKS := bmc prove cover
 byte_tile_TASKS := roundtrip checksum cover_roundtrip cover_checksum
 controller_TASKS := bmc cover
+lane_controller_TASKS := prove cover
 fabric_core_TASKS := bmc cover
 
-.PHONY: all modules $(TARGETS) $(PROTOCOLS) $(SLOW_PROTOCOLS) protocol-negative \
+.PHONY: all modules lane_controller-mutations $(TARGETS) $(PROTOCOLS) $(SLOW_PROTOCOLS) protocol-negative \
 	protocol-negative-slow mutation-check clean list list-protocols
 
 all: $(TARGETS) $(PROTOCOLS) protocol-negative mutation-check
@@ -72,6 +74,9 @@ protocol-negative-slow:
 
 mutation-check:
 	python3 mutation_check.py
+
+lane_controller-mutations:
+	$(PYTHON) lane_controller/mutations.py $(SBY) $(BUILD_DIR)/lane_controller_mutations
 
 clean:
 	if [ -d "$(BUILD_DIR)" ]; then find "$(BUILD_DIR)" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; fi
