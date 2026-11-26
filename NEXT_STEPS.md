@@ -194,7 +194,25 @@ Grouped so that image-breaking changes regenerate the SPI/UART images once.
    (bank, offset) addressing with cross-bank streams; SPI becomes TX plus RX
    streams, deleting the SPI state machine and mode bit.
 4. **Per-lane descriptor sequencer plus config contexts,** removing the rest of
-   the adapter logic.
+   the adapter logic. Status (2026-11-26) and order for the rest:
+   - Done: program storage in local SRAM (paging, `ffb3618`, compiler on
+     `work/sequencer-paging`); a second lane placed in the fabric (lane B,
+     cell 13, `87f6674`): mesh-routed actions and events, merged completion,
+     I2C bus-watchdog pin test. Lane B is still the instruction-style row
+     table, so it distributes the bottleneck rather than removing it, and
+     costs +29.6k um2 (+8.5%), mostly row flops.
+   - a. **Descriptor row format, shared by both lanes** (the keynote's
+     amortized control): a row sets actions on entry and waits for an event
+     or a count, and a stream row runs an engine for N bytes until done.
+     This removes the pulse/self-loop rows, so 16 rows cover more protocol
+     and lanes can shrink.
+   - b. **Per-lane contexts,** so each lane switches only its own routing.
+   - c. **Generalize the lanes** onto the descriptor format; lane B's fabric
+     placement and completion logic carry over.
+   - d. **Compiler** targets the descriptor format only after (a) is fixed,
+     so the lowering and pager are not redone.
+   - Harden by corpus frequency only if a descriptor field still needs
+     several rows.
 5. **Config shift chain (finding 3 full version),** once the tile set is
    stable, since it changes the host protocol and cocotb harness.
 
