@@ -361,9 +361,57 @@ Not yet covered by criterion 3:
      Then add a second concurrent workload. A table tile is added only if
      the results show a meaningful need, and then independently
      assignable through the mesh.
-4. **Compiler.** Update the architecture contract and the CIRCT mapping
-   from the slice's result: the RRG gains the logic+state resources and
-   the word network, and the I2C target is mapped from source.
+4. **Compiler: lowering from `.spt` (user, 2026-11-26: protocol mapping
+   is compiler work; the interconnect is finished).**
+
+   The frontend exports every item of a program:
+   - resources with their fields;
+   - registers as boolean expressions;
+   - flags and the contexts they select;
+   - pins, events;
+   - exported functions as statement lists.
+
+   The compiler lowers these to the fabric IR that `fabric_map.py`
+   places and routes. Hand-written fabric IR is only a test fixture.
+   Each lowering stage is tested at the pins before the next:
+   - **L0, cell-side hardware** (no interconnect change): the shifter's
+     `out`/`active` as local outputs; a CRC cell (`fabric_crc`, linked
+     to its neighbouring shifters) carrying the word-network bit port;
+     I/O cells with two pad drivers (open drain or push-pull, polarity).
+     *Done (2026-11-26).* The default 3 x 3 mesh is now:
+     - io, io, shifter;
+     - timer, crc (word port), shifter;
+     - io, shifter, timer.
+
+     The compiler checked each fixture before it ran, and each passes at
+     the pins (`run_mesh.sh`, `test_fabric_map.py`):
+     - UART TX: 12 bytes from the reader, gapless 8N1, on a push-pull pad;
+     - `crc_tx`: a 6-word burst plus the linked CRC cell's CRC-16 tail,
+       recomputed by the bench, on a complementary pad pair with a clock
+       pad;
+     - the I2C target + UART, with the word port now at the CRC cell.
+
+     Pads are not driven until the fabric runs (found by the TX test).
+     The checker caught an emitter bug: a sink tied to a static constant
+     was never written.
+   - **L1, resources -> tiles.** Timer, shifter and CRC fields become
+     register words; `a until b` becomes start <- a, stop <- b.
+   - **L2, pins and flag contexts -> drivers and muxed signals.**
+   - **L3, exported functions -> control FSMs.** `wait X` is a state
+     left on X; `fire E` is the triggering event muxed by state;
+     `repeat N { wait next X }` is a count-mode timer; `set_flags`
+     selects contexts; `send` is a reader stream. A function longer than
+     a switch's 4 contexts is a chain of FSMs on several switches, with
+     the exit event as the token.
+   - **L4, registers -> FSMs where possible.** A feedback register (set
+     by one event, cleared by another) is a 2-state FSM, and a selection
+     on a tracked level is a mux. Anything else is a classified failure
+     ("needs logic"), not hand-mapped.
+   - **L5, streams -> word paths.**
+
+   Baseline workloads, the `.spt` examples: `uart`, `spi`, `i2c`, `jtag`,
+   `usb`, `ps2`, `swd`, and `ethernet_tx_coded` (the defined Ethernet
+   workload: the whole `transmit()` link session).
 5. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
 6. **Grid-size study (user, 2026-11-26), before the fabric size is
@@ -384,6 +432,15 @@ Not yet covered by criterion 3:
    resource counting are proven; failures from the heuristic flow are
    not. Area comes from the measured tile costs, as estimates until a
    GDS.
+7. **Coverage (user, 2026-11-26; also a study metric).**
+   - Define a protocol space: designs generated from the chip's
+     primitives within its limits (timers, shifters, CRC, pin events and
+     drivers, FSMs of up to 4 states with 2 transitions each, muxed
+     signals, word paths), with their sizes swept.
+   - Measure the fraction the compiler maps on each candidate chip,
+     with failures split into proven (counting or oracle) and heuristic.
+   - Report it beside area as the chip's flexibility figure. Every
+     candidate's coverage limit is stated, not assumed.
 
 Workflow (user, 2026-11-26): RTL changes do not wait for review; RTL
 experiments settle decisions, and the evidence is recorded here. Existing

@@ -9,23 +9,31 @@
 // UART byte stream on pad 2 arrives intact throughout. The bench knows no
 // cell, track or context: only pads and the mesh's host ports.
 // Mesh parameters come from the contract (iverilog -P).
-// Plusargs: +CFG +HALF +SETUP +HOLD (clocks) +UART.
-module mesh_tb #(parameter ROWS=3, COLS=3, WORD_PORT=2,
-  parameter [2*ROWS*COLS-1:0] KINDS=18'b01_10_00_10_01_01_10_00_00,
-  parameter [ROWS*COLS-1:0] CTX4=9'b011100111);
+// Plusargs: +CFG +HALF +SETUP +HOLD (clocks) +UART; +TX instead runs a
+// transmit test: bytes through the reader port, decoded as 8N1 at 20
+// clocks per bit on pad 3 (push-pull); +CRCTX a burst with a CRC-16 tail
+// on pads 3/5 (a pair, 5 inverted) clocked by pad 4, the CRC recomputed
+// here.
+module mesh_tb #(parameter ROWS=3, COLS=3, WORD_PORT=4,
+  parameter [2*ROWS*COLS-1:0] KINDS=18'b01_10_00_10_11_01_10_00_00,
+  parameter [ROWS*COLS-1:0] CTX4=9'b011110111);
   localparam N=ROWS*COLS, CFG_BITS=N*512+128, WORDS=(CFG_BITS+31)/32;
   reg clk=0; always #1 clk=!clk;
   reg rst_n=0, run=0;
   reg [31:0] mem[0:WORDS-1];
   reg [CFG_BITS-1:0] cfg;
   reg scl_m=1, sda_m=1, rx_pin=1;
-  wire [7:0] pull_low;
-  wire scl=scl_m && !pull_low[0], sda=sda_m && !pull_low[1];
-  wire [7:0] pins={5'b0,rx_pin && !pull_low[2],sda,scl};
+  wire [7:0] pad_oe, pad_out;
+  wire [7:0] ext={5'b0,rx_pin,sda_m,scl_m};
+  wire [7:0] pins=(pad_oe & pad_out) | (~pad_oe & ext);    // a driven pad wins
+  wire scl=pins[0], sda=pins[1];
+  wire rd_ready; reg [7:0] rdq[0:63]; integer rdn=0, rdi=0;
+  wire rd_valid=rdi<rdn;
+  always @(posedge clk) if(rd_valid && rd_ready) rdi<=rdi+1;
   wire ready, wr_valid; wire [15:0] wr_data;
   wire [N-1:0] host_valid; wire [8*N-1:0] host_byte;
   mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4)) dut(
-    clk,rst_n,run,cfg,pins,pull_low,ready,wr_data,wr_valid,1'b1,host_valid,host_byte);
+    clk,rst_n,run,cfg,pins,pad_oe,pad_out,ready,{8'd0,rdq[rdi]},rd_valid,rd_ready,wr_data,wr_valid,1'b1,host_valid,host_byte);
   reg [7:0] pushed[0:31]; integer npushed=0;
   always @(posedge clk) if(wr_valid) begin pushed[npushed]<=wr_data[7:0];npushed<=npushed+1;end
   reg [7:0] u_got[0:255]; integer u_n=0, k;
@@ -64,6 +72,63 @@ module mesh_tb #(parameter ROWS=3, COLS=3, WORD_PORT=2,
       u_busy=0; end
   end
   integer acks, base; reg [8*256-1:0] file;
+  task crc_tx_test;
+    reg [15:0] crc, tailw; reg [7:0] w; integer j, b, n, nbits, seed, bad_pair; reg prev, d;
+    reg bits[0:1023];
+    begin
+      seed=5; n=6; nbits=0; bad_pair=0;
+      for(j=0;j<n;j=j+1) rdq[j]=$random(seed);
+      run=1; wait_clk(4); rdn=n;
+      // Bit 0 is on the line from the start of the frame until the first
+      // clock edge; each later bit follows an edge.
+      wait(pad_oe[3]); prev=pins[4]; repeat(4) @(posedge clk); bits[0]=pins[3]; nbits=1;
+      while(pad_oe[3]) begin
+        @(posedge clk);
+        if(pad_oe[3] && (pins[3]===pins[5])) bad_pair=bad_pair+1;
+        if(pad_oe[3] && pins[4]!==prev) begin
+          prev=pins[4]; repeat(3) @(posedge clk);
+          if(pad_oe[3]) begin bits[nbits]=pins[3]; nbits=nbits+1; end
+        end
+      end
+      if(bad_pair) begin $display("FAIL: pair not complementary on %0d clocks",bad_pair);fails=fails+1;end
+      crc=16'hffff;
+      for(j=0;j<n;j=j+1) for(b=0;b<8;b=b+1) begin d=rdq[j][b]; crc={crc[14:0],1'b0}^((crc[15]^d) ? 16'h8005 : 16'h0); end
+      tailw=~crc;
+      $display("received %0d bits (want %0d)",nbits,8*n+16);
+      if(nbits!=8*n+16) begin $display("FAIL: bit count");fails=fails+1;end
+      else begin
+        for(j=0;j<n;j=j+1) begin for(b=0;b<8;b=b+1) w[b]=bits[8*j+b]; if(w!==rdq[j]) begin $display("FAIL: word %0d %h want %h",j,w,rdq[j]);fails=fails+1;end end
+        for(b=0;b<16;b=b+1) if(bits[8*n+b]!==tailw[15-b]) begin $display("FAIL: tail bit %0d",b);fails=fails+1;b=16;end
+      end
+      if(fails==0) $display("PASS mesh CRC tail: %0d words from the reader + CRC-16 from the linked CRC cell, complementary pad pair",n);
+      else $display("FAILED mesh CRC tail (%0d)",fails);
+      $finish(fails!=0);
+    end
+  endtask
+  // ---- transmit test: pad 3 decoded as 8N1 at 20 clocks per bit ----
+  task tx_test;
+    reg [7:0] got; integer j, b, n, t0, t1, seed;
+    begin
+      seed=3; n=12;
+      for(j=0;j<n;j=j+1) rdq[j]=$random(seed);
+      wait_clk(5); if(pad_oe[3]!==0) begin $display("FAIL: tx pad driven before run");fails=fails+1;end
+      run=1; wait_clk(4);
+      if(!(pad_oe[3] && pins[3])) begin $display("FAIL: tx not idle high");fails=fails+1;end
+      rdn=n;
+      for(j=0;j<n;j=j+1) begin
+        @(negedge pins[3]); if(j==0) t0=$time;
+        repeat(10) @(posedge clk); if(pins[3]!==0) begin $display("FAIL: start bit %0d",j);fails=fails+1;end
+        for(b=0;b<8;b=b+1) begin repeat(20) @(posedge clk); got[b]=pins[3]; end
+        repeat(20) @(posedge clk); if(pins[3]!==1) begin $display("FAIL: stop bit %0d",j);fails=fails+1;end
+        if(got!==rdq[j]) begin $display("FAIL: byte %0d sent %h want %h",j,got,rdq[j]);fails=fails+1;end
+      end
+      t1=$time; wait_clk(100);
+      if(rdi!=n || pins[3]!==1) begin $display("FAIL: %0d of %0d read, line %b",rdi,n,pins[3]);fails=fails+1;end
+      if(fails==0) $display("PASS mesh UART TX: %0d bytes from the reader, 8N1 at 20 clocks per bit, %0d clocks",n,(t1-t0)/2);
+      else $display("FAILED mesh UART TX (%0d)",fails);
+      $finish(fails!=0);
+    end
+  endtask
   initial begin
     if(!$value$plusargs("CFG=%s",file)) begin $display("FAIL: no +CFG"); $finish(1); end
     $readmemh(file,mem);
@@ -73,6 +138,8 @@ module mesh_tb #(parameter ROWS=3, COLS=3, WORD_PORT=2,
     if(!$value$plusargs("SETUP=%d",SETUP)) SETUP=10;
     if(!$value$plusargs("HOLD=%d",HOLD)) HOLD=10;
     wait_clk(3); rst_n=1; wait(ready); wait_clk(2);
+    if($test$plusargs("TX")) tx_test;
+    if($test$plusargs("CRCTX")) crc_tx_test;
     run=1; i2c_busy=1; wait_clk(HALF);
     write(8'ha0,2,{8'h11,8'h22,48'd0},acks);
     if(acks!=0 || npushed!=0) begin $display("FAIL: another address: %0d ACKs, %0d stored",acks,npushed);fails=fails+1;end

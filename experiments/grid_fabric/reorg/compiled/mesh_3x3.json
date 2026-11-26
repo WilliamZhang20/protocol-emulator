@@ -21,8 +21,8 @@
    "contexts": 1
   },
   {
-   "kind": "timer",
-   "contexts": 1
+   "kind": "crc",
+   "contexts": 4
   },
   {
    "kind": "shifter",
@@ -42,8 +42,9 @@
   }
  ],
  "word_port": {
-  "cell": 2,
+  "cell": 4,
   "locals": {
+   "avail": 1,
    "match": 2,
    "mismatch": 3
   },
@@ -61,9 +62,12 @@
     "o3"
    ],
    "sinks": [
-    "drive_value",
-    "drive_enable"
-   ]
+    "a_value",
+    "a_enable",
+    "b_value",
+    "b_enable"
+   ],
+   "pads": 2
   },
   "timer": {
    "code": 1,
@@ -84,16 +88,15 @@
    "locals": [
     "word",
     "stop",
-    "match",
-    "mismatch"
+    "out",
+    "active"
    ],
    "sinks": [
     "start",
     "shift",
     "sample",
     "abort",
-    "in",
-    "gate"
+    "in"
    ],
    "lines": {
     "start": 1,
@@ -102,6 +105,36 @@
     "sample": 4
    },
    "in_level": 33
+  },
+  "crc": {
+   "code": 3,
+   "locals": [
+    "ok",
+    "avail",
+    "match",
+    "mismatch"
+   ],
+   "sinks": [
+    "init",
+    "absorb",
+    "emit",
+    "data",
+    "level",
+    "gate"
+   ],
+   "lines": {
+    "init": 1,
+    "absorb": 2,
+    "emit": 3
+   },
+   "levels": {
+    "data": 33,
+    "level": 34
+   },
+   "links": [
+    "west",
+    "east"
+   ]
   }
  },
  "encoding": {

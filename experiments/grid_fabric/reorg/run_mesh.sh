@@ -8,6 +8,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../.." && pwd)
 bin=$root/.tools/oss-cad-suite/bin; out=$1; mkdir -p "$out"
 contract=$here/compiled/mesh_3x3.json; hex=$here/compiled/i2c_target+uart_rx.3x3.hex
+tx_hex=$here/compiled/uart_tx.3x3.hex; crc_hex=$here/compiled/crc_tx.3x3.hex
 params=$(python3 - "$contract" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); n = c['rows'] * c['cols']
@@ -18,7 +19,8 @@ print(f"-Pmesh_tb.ROWS={c['rows']} -Pmesh_tb.COLS={c['cols']} -Pmesh_tb.WORD_POR
 PY
 )
 "$bin/iverilog" -g2012 -s mesh_tb $params -o "$out/mesh" "$here/mesh_tb.sv" "$here/mesh.v" "$here/ctx_switch.v" \
-  "$here/io_tile.v" "$here/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/config_bank.v" \
+  "$here/io_tile.v" "$here/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/fabric_crc.v" \
+  "$root/src/config_bank.v" \
   2> >(grep -v 'timescale\|inherit' >&2)
 run() { timeout 60 "$bin/vvp" -N "$out/mesh" +CFG="$hex" +HALF=$1 +SETUP=$2 +HOLD=$3 ${EXTRA:-} | grep -q '^PASS'; }
 if [[ ${2:-} == --sweep ]]; then
@@ -34,5 +36,10 @@ expect() { local want=$1; shift; if run "$@"; then got=pass; else got=fail; fi
 # Recorded (245-point sweep: 215 pass, the hand-mapped slice's envelope).
 expect pass 40 10 10; EXTRA=+UART expect pass 40 10 10; EXTRA=+UART expect pass 4 1 4
 EXTRA=+UART expect pass 20 1 4; EXTRA=+UART expect fail 20 2 2; EXTRA=+UART expect fail 8 1 3
-[[ $bad == 0 ]] && echo "compiled I2C target + UART on the mesh: nominal, boundaries and expected failures as recorded"
+# Step 4 L0 (cell-side hardware): transmit from the reader on a push-pull
+# pad; a burst with the linked CRC cell's CRC-16 tail on a complementary pad pair.
+for t in "TX $tx_hex" "CRCTX $crc_hex"; do set -- $t
+  timeout 60 "$bin/vvp" -N "$out/mesh" +CFG="$2" +$1 | grep -q '^PASS' || { echo "UNEXPECTED fail: +$1"; bad=1; }
+done
+[[ $bad == 0 ]] && echo "compiled designs on the mesh: I2C target + UART (nominal, boundaries, expected failures as recorded), UART TX from the reader, CRC tail on a pad pair"
 exit $bad
