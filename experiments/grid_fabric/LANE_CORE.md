@@ -267,7 +267,103 @@ Also fixed: the tile experiment's timer testbench still expected the old
 non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
 (target phase + period) and the near-edge cases.
 
-## 2.5 plan: two lane cores, ownership by construction, per-lane status
+## Routing gate result and decision (2026-11-26): clusters, no duplication
+
+**Result.** 9a3e66e (the lane core beside the grid fabric) cannot route:
+
+| | d628e18 (routed) | 9a3e66e |
+|---|---|---|
+| synth area (local, IHP liberty) | 350k um2 | 614k um2 |
+| instances | 24,800 | 44,434 |
+| utilisation | 38.4% | 67.1% |
+| DRT violations | 10,827 -> 0 by iteration 4 | 122,615 -> 100,434 in 2 iterations (about 4 h) |
+| global-route overflow | cleared | 24,724 |
+
+Utilisation follows synth area linearly on this die (about 0.11% per
+1k um2: 350k gives 38.4%, 614k predicts 67.4%). The lane core
+(224k; 145k plus a 15k macro with the program store) duplicates
+timers, a coded shifter and a CRC the grid already has, which idle in
+lane mode. The 16-entry buffer probe (c38b62b) also stayed in Build GDS
+past 2.7 h, and 7193f31 failed at 49%. Shrinking the core alone would
+leave about 59%: not credible.
+
+**Decision (user, 2026-11-26): clusters with no duplication.** The
+fabric's timers, shifters and CRC become cluster resources, each
+assignable at the bit level. Words stay on a cluster's bus or go
+through stream ports. The lane core's bundle replaces the grid's
+separate tiles instead of sitting beside them. This replaces the 2.5
+plan below (two fixed lane cores), which is kept only as history.
+
+### Target
+
+- **Budget.** At most about 40% utilisation, about 365k um2 synth, the
+  same as the design that routed. Every sub-step measures synth area
+  with the calibrated local flow before its GDS.
+- **Cluster** (one type first, instances by budget):
+  - the lane controller (ISA unchanged) with its 64x16 program-store
+    macro (lane/prog-store-macro);
+  - 2 timers, 2 coded shifters, 1 CRC (`grid_timer`, `fabric_shifter`,
+    `fabric_crc` unchanged);
+  - one stream port (reader and writer on the SRAM arbiter);
+  - the word bus: controller readback, tx word and WCFG reach only the
+    cluster's own resources and words (ownership by construction inside
+    a cluster).
+- **Local lines, sparse (VPR Fc_in < 1).** Each resource input selects
+  from the subset of the cluster's lines that the contract lists for it,
+  not from all 64. The subsets come from what the shipped protocols use
+  (the compiler's census), with headroom. This bounds the local crossbar
+  by construction. Today's ~40 selectors x 64 lines all-to-all is the
+  largest remaining wiring structure.
+- **Mesh (bit level, independent assignment).** Each cluster exports a
+  fixed set of resource outputs to the switch mesh and takes mesh inputs
+  as lines. A protocol's bit nets may cross clusters (a timer in one
+  driving a shifter in another), with the latency the router accounts
+  for (R5 constraints). The LUT4 cells and switches stay as soft logic.
+- **Removed, after migration:** both `grid_sequencer`s, the page loader,
+  the grid's 4 standalone timers, its coded and CRC tiles, and the
+  frame, packet and temporal modes. Each existing protocol is re-lowered
+  to cluster programs first (below); nothing is deleted while a test
+  depends on it.
+
+### Sub-steps (each sturdy, with its own evidence, before the next)
+
+1. **Inventory and budget.**
+   - Per-instance synth area of every block in the current chip.
+   - The census of which lines each resource input uses across all
+     shipped and compiled designs.
+   - The cluster's estimated area with sparse selectors, and the number
+     of clusters that fit in 365k.
+   - Gate: the budget closes on paper.
+2. **Contract v2: clusters as resources.**
+   - Cluster type, resources, per-input line subsets, mesh exports and
+     word-bus reach.
+   - The checker reads it.
+   - The compiler RRG gains the cluster-local crossbar as routing nodes
+     (VPR's intra-cluster routing), so the router and placer see one
+     graph.
+3. **Cluster RTL (one cluster) beside the existing fabric.**
+   - Measured standalone: area, sparse-selector proof (each input reaches
+     exactly its listed lines), lane-controller and lane-core proofs
+     ported, pin tests of every lane design.
+   - No chip GDS yet.
+4. **Migration, one feature at a time.** Each sequencer, packet or frame
+   protocol (temporal I2C, JTAG TAP, coded USB/Ethernet streams,
+   Ethernet session, compiled images, memory placement) is lowered to
+   cluster programs, and its cocotb test is ported to run on clusters at
+   the pins. The old path stays until its replacement passes.
+5. **Delete the duplicates, then the chip GDS.**
+   - Remove the old paths; synth must meet the budget.
+   - One GDS (with the DRT fail-fast) must route, with DRC/LVS clean.
+   - Only then is the second cluster placed.
+6. **Compiler: pack stage.**
+   - Protocol resources go into clusters under the word-domain
+     constraint (every resource a controller reads or writes is in its
+     cluster), then the annealing placement and PathFinder over the
+     cluster-aware RRG.
+   - R7 lowering maps to resources, not fixed slots.
+   - Two-shifter protocols (full-duplex UART, I2C) lower to one cluster.
+
+## 2.5 plan (superseded 2026-11-26 by clusters, above): two lane cores, ownership by construction, per-lane status
 
 Decisions (each with its reason):
 
