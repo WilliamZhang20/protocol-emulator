@@ -17,7 +17,7 @@
 //		Generated on Mon Apr  7 14:15:45 2025		
 //
 // ------------------------------------------------------ 
-`timescale 1ns/10ps
+// (timescale removed, as in the 1024x8 copies: the RTL sets none)
 module SRAM_1P_behavioral (A_ADDR,
                                 A_DIN,
                                 A_MEN,	// Memory enable input	-> if disabled, the memory is deactivated

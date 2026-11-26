@@ -17,7 +17,7 @@
 //		Generated on Thu Jul 30 11:38:31 2026		
 //
 // ------------------------------------------------------ 
-`timescale 1ns/10ps
+// (timescale removed, as in the 1024x8 copies: the RTL sets none)
 `celldefine
 module RM_IHPSG13_1P_64x16_c2 (
     A_CLK,

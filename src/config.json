@@ -65,7 +65,7 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "IHP 1024x8 single-port SRAM macro integration",
+  "//": "IHP 1024x8 single-port SRAM macro integration (two banks), and the 64x16 lane controller program store (LANE_CORE.md, Program store: 236.8 x 64.36 um, signal pins on the bottom edge, every supply column a declared Metal4 pin; in the empty right half on the banks' baseline). No comment keys inside MACROS entries: LibreLane's Macro dataclass rejects unknown keys.",
   "MACROS": {
     "RM_IHPSG13_1P_1024x8_c2_bm_bist": {
       "instances": {
@@ -103,7 +103,6 @@
       ]
     },
     "RM_IHPSG13_1P_64x16_c2": {
-      "//": "The lane controller's program store (LANE_CORE.md, Program store): 236.8 x 64.36 um, signal pins on the bottom edge, every supply column a declared Metal4 pin. In the empty right half, on the banks' baseline.",
       "instances": {
         "fabric.lane_core.ctl.store.macro.sram": {
           "location": [700, 81],

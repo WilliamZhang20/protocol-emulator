@@ -164,6 +164,17 @@ def require(condition: bool, message: str) -> None:
 
 def main() -> None:
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    # LibreLane's Macro dataclass rejects unknown keys at config load
+    # ("One or more keys unrecognized"), so comments cannot live in entries.
+    macro_fields = {"gds", "lef", "instances", "vh", "nl", "pnl", "spef", "lib", "spice", "sdf", "json_h"}
+    for name, entry in config.get("MACROS", {}).items():
+        unknown = set(entry) - macro_fields
+        require(not unknown, f"MACROS.{name}: keys LibreLane rejects: {sorted(unknown)}")
+    lane_store = config.get("MACROS", {}).get("RM_IHPSG13_1P_64x16_c2")
+    require(lane_store is not None and "fabric.lane_core.ctl.store.macro.sram" in lane_store.get("instances", {}),
+            "MACROS: the lane controller program store (64x16) is not placed")
+    for view in ("gds", "lef", "lib", "nl", "spice"):
+        require(lane_store.get(view), f"MACROS.RM_IHPSG13_1P_64x16_c2.{view} is empty")
     macro = config.get("MACROS", {}).get(MACRO_NAME)
     require(macro is not None, f"MACROS.{MACRO_NAME} is missing")
     require(set(macro.get("instances", {})) == set(INSTANCES), "expected exactly the two memory bank macros")
