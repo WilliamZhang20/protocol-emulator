@@ -460,6 +460,12 @@ Evidence for each:
 
 No candidate is chosen before both kinds of evidence exist.
 
+**Baseline mapping, the current 5 x 3 mesh (2026-11-26).** `grid_chanwidth.py --combine` placed and routed the six routing workloads (SPI, UART, I2C, JTAG, USB, Ethernet TX bit slices) on the contract's graph:
+- Alone, every protocol routes in at most 2 of the 4 tracks (USB and Ethernet TX in 1).
+- Of all combinations, only two fit the resource instances at all (SPI + USB, SPI + Ethernet TX), and both route in 2 tracks.
+
+Today concurrency is limited by resource counts (timers, shifters), not by mesh connectivity. Clusters add resources, so more combinations fit, and only then does cross-cluster connectivity bind. The candidates must therefore be compared on the combinations that clusters make possible, with nets crossing clusters, not on today's single protocols. That needs each candidate's routing graph (contract v2 with clusters) in the compiler: the next piece of this comparison.
+
 ## 2.5 plan (superseded 2026-11-26 by clusters, above): two lane cores, ownership by construction, per-lane status
 
 Decisions (each with its reason):
