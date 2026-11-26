@@ -31,6 +31,8 @@ P = [
  ("Quadrature",        "inh", "0/2/0", "S Q K D",         "M", [], "4-state FSM in LUTs; host keeps count"),
  ("VGA",               "inh", "3/0/0", "T K D",           "W", ["pins"], "hsync, vsync, 1-bit colour; third on uo[0]"),
  ("GPIO expander",     "inh", "4/1/0", "T F D",           "B", ["pins"], "74HC595 + 74HC165 chain"),
+ ("Async HDLC / PPP",  "inh", "1/1/0", "T S F C M D",     "B", ["match"], "0x7E/0x7D escaping, FCS-16"),
+ ("SLIP",              "inh", "1/1/0", "T S F M D",       "B", ["match"], "END/ESC byte escaping"),
  # held-out classes (written from public specs; not the oracle)
  ("MDIO",              "held", "1/0/1", "T F Q D",        "M", [], "two 16-bit frames, turnaround"),
  ("Modbus RTU master", "held", "1/1/0", "T F C X D",      "M", [], "CRC-16 tile; 3.5-char gap by timer restart"),

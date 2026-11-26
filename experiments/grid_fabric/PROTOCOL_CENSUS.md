@@ -16,7 +16,7 @@ stateful, temporally constrained protocol patterns**: its processing elements
 (PEs) are protocol patterns, not LUTs or ALUs, and its control is per-lane
 descriptor sequencing over a registered event network.
 
-Corpus: the 22 pin-tested protocols of the earlier `arch/spatial` fabric
+Corpus: the 24 pin-tested protocols of the earlier `arch/spatial` fabric
 (a small controller, called PX8 there, plus tiles; `test/cocotb_tests/test_*.py`, from `02d0933`
 on), and 14 further protocol classes chosen from public specifications as a
 stand-in for held-out protocols. The held-out oracle
@@ -57,12 +57,12 @@ dataflow of fields. Across the corpus they reduce to these patterns
 | Y full duplex | UART | two shifters, reader + writer |
 | D host stream | every protocol | SRAM reader/writer streams, host link |
 
-Use across all 36: host stream 36, serialize 29, timed waveform 27,
-sample/sync 20, sequence/branch 20, CRC 12, line code 10, **match 9**,
+Use across all 38: host stream 38, serialize 31, timed waveform 29,
+sample/sync 22, sequence/branch 20, CRC 13, **match 11**, line code 10,
 respond-in-window 7, parity 6, measure 5, count 4, stretch 3, arbitrate 2,
 full duplex 1.
 
-## Census: the 22 inherited protocols
+## Census: the 24 inherited protocols
 
 | Protocol | Pins out/in/bidir | Patterns | Grid today | Missing hardware | Note |
 |---|---|---|---|---|---|
@@ -88,6 +88,8 @@ full duplex 1.
 | Quadrature | 0/2/0 | S Q K D | mappable (compiler only) | - | 4-state FSM in LUTs; host keeps count |
 | VGA | 3/0/0 | T K D | workaround | pins | hsync, vsync, 1-bit colour; third on uo[0] |
 | GPIO expander | 4/1/0 | T F D | **blocked** | pins | 74HC595 + 74HC165 chain |
+| Async HDLC / PPP | 1/1/0 | T S F C M D | **blocked** | match | 0x7E/0x7D escaping, FCS-16 |
+| SLIP | 1/1/0 | T S F M D | **blocked** | match | END/ESC byte escaping |
 
 ## Census: 14 held-out protocol classes
 
@@ -112,14 +114,14 @@ full duplex 1.
 
 | Set | Runs | Workaround | Mappable (compiler only) | Blocked |
 |---|---|---|---|---|
-| Inherited (22) | 4 | 6 | 5 | 7 |
+| Inherited (24) | 4 | 6 | 5 | 9 |
 | Held-out classes (14) | 0 | 1 | 7 | 6 |
-| All (36) | 4 | 7 | 12 | 13 |
+| All (38) | 4 | 7 | 12 | 15 |
 
 Missing hardware, by protocols it blocks (workarounds in brackets):
-**match 9**, pins 3 (4), receive line decode 3, parity 2 (3), parameter
+**match 11**, pins 3 (4), receive line decode 3, parity 2 (3), parameter
 contexts 2, capture 1, duration-from-data 1, checksum 1 (1). Match is the sole
-blocker for 2 and co-blocks 7 more with receive decode, pins, parity or
+blocker for 4 and co-blocks 7 more with receive decode, pins, parity or
 capture.
 
 ## Findings
@@ -134,7 +136,7 @@ capture.
    while a tiny controller only decides and never drives a pin or times a
    bit; it made data-dependent decisions and kept state variables in its
    registers (`XRC`/`JZ` compare, `DJNZ` counter, pointer), and covered all
-   22 inherited protocols plus PPP and SLIP. The grid's sequencer has no data
+   24 inherited protocols. The grid's sequencer has no data
    path, so anything that must decide on a received value is blocked. Either
    a data-capable lane controller or a spatial match PE
    (masked compare beside the shifter) restores it; the lane controller covers

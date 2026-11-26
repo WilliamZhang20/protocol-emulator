@@ -24,7 +24,7 @@ compile from source and run at the pins. Method: Betz's research flow
 | Timing closure | Done: slow-corner setup +2.27 ns, hold positive (`18fd40a`). |
 | Repeatable layout | Done: `18fd40a` and `7c9ee08` both pass GDS, precheck and post-layout GL. Re-check after each hardware step. |
 | Sequencer capacity | Done: SRAM paging (`ffb3618`), descriptor rows (`f093ade`), second lane (`87f6674`). |
-| Protocol coverage | 4 of 36 census protocols run at the pins, 7 more with workarounds, 12 need only compiler work, 13 are blocked by missing PEs. |
+| Protocol coverage | 4 of 38 census protocols run at the pins, 7 more with workarounds, 12 need only compiler work, 15 are blocked by missing hardware. |
 | General compiler | Not started for the grid: every running image comes from a per-protocol lowering. |
 | Head-to-head, packaging | Not started. |
 | Earlier fabric (baseline) | `arch/spatial`: 24 protocols at the pins, GDS passes; its data-capable controller is what the grid lacks. |
@@ -35,8 +35,8 @@ compile from source and run at the pins. Method: Betz's research flow
    protocols than the design it replaces is not a replacement.
 1. Every census protocol that maps is compiled from `.spt` source by general
    lowering, with no per-protocol code, and passes its own tests at the pins
-   in RTL and at gate level. Target: at least 18 of the 22 inherited protocols
-   (the earlier fabric's set), at least 8 of the 14 held-out classes.
+   in RTL and at gate level. Target: all 24 inherited protocols (the earlier
+   fabric's set), at least 8 of the 14 held-out classes.
 2. Held-out check: protocols written from specifications after the compiler
    freezes compile and pass with zero compiler or hardware edits; failures are
    classified (compiler gap or missing PE) and reported, not patched.
@@ -83,147 +83,204 @@ lines, so the mesh is what makes more lanes affordable and routable. Step
 1.6 measures this instead of assuming it.
 
 Lanes are the replicated unit (Cerebras-style: own control, datapath,
-memory port, local switches). **Target: five lanes, one per grid row.**
+memory port; the switch-box mesh between them). **Target: five lanes.**
+Priority order for every decision: functionality, then a clean design;
+area is measured and reported each step but is not a gate for now.
+
+### Kept, dropped and new (thesis check, part 1)
+
+From the earlier fabric (`arch/spatial`):
+
+| Idea | Earlier fabric | Plan |
+|---|---|---|
+| Tiles time every bit; a controller decides and never drives a pin or times a bit | thesis | **kept**, enforced by a compiler rule and a determinism test |
+| Decisions on received values, loop counter, data pointer, stream moves | PX8 instructions | **kept** as lane-controller operations |
+| Sticky (latched) events, consumed by a wait | PX8 `WEV`/`CLREV` | **kept** |
+| Two setups per block, switched at run time | `config_bank` per tile | **kept** as lane-owned live configuration writes through the configuration tree |
+| Coded shifter: parity, stuffing, NRZI, Manchester, receive decode, CRC link | per shifter | **kept**, one per lane |
+| Programmable CRC 1-32 | one tile | **kept**, one per lane |
+| Host link on `ui_in`, eight protocol pins | yes | **kept** (restored) |
+| Program held in SRAM; protocols as programs tested against peers | yes | **kept** |
+| Formal reference model of the controller | `formal/` | **kept**, ported to the new encoding |
+| The name PX8 and its encoding: one-byte ops, prefix chains, accumulator idioms | PX8 | **dropped**: fixed-width 16-bit lane instructions with named fields |
+| One central controller for the whole chip | PX8 | **dropped**: one controller per lane |
+| Global 64-wire signal space | yes | **dropped**: switch-box mesh |
+| Byte tiles (escaping, filtering, checksums) | 8 tiles | **dropped**: escaping and filtering are lane-controller compares; checksums in the CRC tile's additive mode |
+| Counter tiles | 2 | **dropped**: lane-controller counter and timer count mode |
+
+From the 5 x 3 grid:
+
+| Idea | Plan |
+|---|---|
+| Decentralized switch boxes, regular cells, compiler router | **kept**: lanes wind through the mesh |
+| Registered per-cell configuration tree and registered validity | **kept**, and extended as the live-configuration path |
+| Credit-based SRAM streams | **kept**, one pair per lane |
+| Row sequencer, descriptor rows, SRAM paging, lane B as built, merged two-lane completion | **dropped** once lane controllers run (per-lane status replaces merged completion) |
 
 ### What a lane is
 
-A lane is defined by ownership:
+A lane is defined by ownership, not geometry:
 
-1. One lane controller and the tiles it owns: 2 timers, 1 shifter, a reader
-   and writer stream port, latched event inputs and a readback window onto
-   those tiles.
-2. The configuration leaves of its cells; only its controller may rewrite
-   its dynamic words (contexts, timer periods) while armed.
-3. No shared state with other lanes: a controller drives only its own cells'
-   actions and reads only its own tiles; lanes meet only through mesh
-   signals (cross-lane events).
-4. Its own host interface: start, done and error per lane.
-5. Shared tiles (CRC, coded shifter, LUT4 cells) are borrowed, assigned to
-   one lane per program by the compiler.
+1. **Lane core (hard, adjacent cells):** lane controller; timer pair with
+   capture, resync, shadowed period and count mode; coded shifter; CRC tile;
+   reader and writer stream port; latched event inputs; a readback window.
+   These are fixed together because they exchange words (received data,
+   stream bytes, live configuration), which the 1-bit mesh cannot carry.
+2. **Soft tiles (anywhere):** extra timers, extra shifters (I2C's pattern
+   shifter, JTAG's TMS shifter), LUT4 state cells and pad cells are placed
+   by the compiler wherever they route; a lane's shape is whatever its
+   routing takes, in any direction.
+3. **Ownership:** the compiler assigns soft tiles to lanes; a lane
+   controller writes live configuration only to cells it owns (an ownership
+   table checked at the configuration tree) and reads only its core.
+4. **Lanes communicate** through routed mesh signals (cross-lane events),
+   never shared state.
+5. **Host interface per lane:** start, done and error.
 
-A lane is not a protocol. A protocol may use two lanes (transmit and
-receive of full-duplex UART, USB or CAN; a responder lane beside a
-controller lane), and a lane may drive no pins (watchdog, supervisor).
+A lane is not a protocol: a protocol may use two lanes (separate transmit and
+receive, a responder beside a controller), and a lane may drive no pins
+(watchdog, supervisor).
 
-### Floorplan: 5 rows x 4 columns
+### Floorplan
 
-```
-            col 0                 col 1         col 2                  col 3
- row 0  [I/O + controller A] [timer pair A] [shifter + stream A] [CRC            ]
- row 1  [I/O + controller B] [timer pair B] [shifter + stream B] [coded shifter  ]
- row 2  [I/O + controller C] [timer pair C] [shifter + stream C] [LUT4 x2        ]
- row 3  [I/O + controller D] [timer pair D] [shifter + stream D] [LUT4 x2        ]
- row 4  [I/O + controller E] [timer pair E] [shifter + stream E] [LUT4 x2        ]
-   pads (8) on the column-0 edge          SRAM banks on the column-2/3 side
-```
+Heterogeneous columns, as in an FPGA: a column of five lane cores along the
+SRAM side, columns of soft timers/shifters and of LUT4 state cells, pad
+cells on the outer edge with a lane select each. Track count and column
+sizes come from a concurrent minimum-channel-width sweep (step 4), not from
+the current 4. Each lane core gets a placement region in the layout flow.
 
-- Dataflow in a lane runs one way, pins → controller → timing → serializer
-  → memory, one hop per cell; vertical tracks carry shared tiles and
-  cross-lane events, so lanes do not route through each other.
-- Pads: eight pad cells on the column-0 edge, each with a configured lane
-  select, so any lane drives any pad. Five lanes run at once when their pins
-  total at most eight (UART 2 + I2C 2 + 1-Wire 1 + WS2812 1 + DMX 1 = 7).
-- Configuration tree: one leaf per cell (20) plus the scheduler leaf.
-- Physical coherence: one placement region per lane row in the layout flow.
+### The lane controller
 
-### Budget and risks
+A small state machine with data operations, fetched per lane:
 
-| Item | Estimate (local synthesis) |
-|---|---|
-| Today | 378k um2 std cells; 44% std-cell utilization in layout |
-| Remove two row sequencers | -52k |
-| Five lane controllers | +57k (11.4k each) |
-| Six more timers, three more shifters | +45k |
-| Per-lane FIFOs, events, readback, pad selects | about +40k |
-| Projected | about 470k (+24%) |
+- Fixed 16-bit instructions with named fields (no prefix chains):
+  `wait event`, `act levels`, `fire pulse`, `branch if (received byte &
+  mask) == K`, `loop with counter`, `pull/push stream byte`, `write own
+  configuration word`, `read core register`, `halt ok/fail`.
+- Built from `controller.v`'s datapath and its formal reference model;
+  the compiler's existing backend for that controller keeps its lowering and
+  gets a new encoder.
+- **Thesis rule:** an `act`/`fire` never produces a timed edge. Every edge
+  with a timing requirement comes from a tile (timer, shifter, coder); the
+  compiler rejects lowerings that violate this.
 
-Risks: routing at about 55% utilization; SRAM contention with 16 clients
-(host plus fetch, reader and writer per lane) on two single-port banks;
-pins limiting how many lanes drive pads at once. Checkpoint after step 2:
-if the measured per-lane cost projects five lanes past the layout's
-routable limit, fall back to four lane rows (row 4 becomes shared tiles).
+### Thesis check, part 2: every named gap traced to a fix
+
+| Gap (protocols blocked / workaround) | Fix | Step |
+|---|---|---|
+| Value match, 11 blocked (I2C/SPI/Modbus targets, CAN/USB/HDLC receive, SWD, SD, LIN, PPP, SLIP) | lane-controller compare-and-branch on the received byte; escaping and filtering in the controller | 1 |
+| Respond in window (7) | controller decision latency bounded by fetch: a per-lane local instruction buffer for responder programs | 1, 4 |
+| Pins, 3 blocked + 4 workarounds (SPI, JTAG, I2S, VGA, SPI target, GPIO chain, SD) | host link on `ui_in`, eight pads with lane select | 3 |
+| Receive line decode, 3 blocked (USB, CAN, HDLC receive) | coded shifter receive path in every lane core; timer resync for clock recovery | 2 |
+| Parity, 2 blocked + 3 workarounds (SWD, I3C, PS/2, LIN PID) | coded shifter parity in every lane core | 2 |
+| Additive checksum (LIN) | CRC tile additive mode | 2 |
+| Capture (LIN autobaud) | timer capture, read by the controller | 2 |
+| Duration from data (SENT) | controller writes the timer's shadowed period, applied at the next reload | 2 |
+| Tile-parameter contexts (CAN FD bit-rate switch, I3C drive mode) | live writes to own timer periods (shadowed, bit-exact) and own pad mode | 2, 3 |
+| No general compiler (12 mappable, 4 running via per-protocol code) | retargeted backend, cluster placement, routing, LUT mapping | 5 |
+| Concurrency | five lane cores, each with its own coder and CRC; limited by pins (8) and SRAM bandwidth | 4 |
+
+Holes found by the check, now in the steps:
+
+1. **Response-window latency.** Five lanes fetching from two single-port
+   banks can delay a decision past an SPI-target byte boundary. Fix: local
+   instruction buffer per lane; acceptance includes a worst-case
+   decision-time bound per responder protocol.
+2. **Thesis violation by jitter.** Fetch stalls shift `act` timing. Fix: the
+   compiler rule above, and a determinism test that randomizes SRAM
+   contention and requires identical pin waveforms (as the earlier fabric's
+   `test_determinism.py`).
+3. **Clock recovery** needs a timer resync input (restart phase on an edge,
+   optionally only inside a window); now part of the timer.
+4. **Bit-exact parameter switches** need shadowed timer periods applied at
+   reload; now part of the timer.
+5. **Live writes to soft tiles** go through the configuration tree with an
+   ownership check (3-cycle latency), so no separate word network is needed.
+6. **Census omission:** PPP and SLIP (byte escaping) are now in the census
+   and covered by step 1.
+
+Objectives, checked: the earlier fabric's thesis (kept, enforced); coverage
+of at least its 24 protocols (every gap above has a fix and an acceptance
+test; proven only by step 7); held-out protocols through the compiler (step
+5, then a frozen-compiler run); spatial advantage (mesh scaling measured in
+step 1.6, lanes routed through it); simultaneous protocols (five
+self-sufficient lanes); physical closure (checked every step).
 
 ### Roadmap (concrete)
 
-Every step ends with: regression, local area, push, GDS, 2-hour CI check.
+Every step ends with: regression, local area (reported), push, GDS,
+2-hour CI check.
 
 **1. Lane controller in today's grid (one lane).**
 
-1. `src/grid_lane_controller.v` around `controller.v` (instruction set
-   unchanged):
-   - *Fetch* through the host-bank memory client with ready/valid stall and
-     a 4-byte prefetch buffer, borrowing the port as `grid_page_loader`
-     does; program base from a lane word.
-   - *Events:* 16 sticky lines (today's sequencer events, routed sinks,
-     shifter done, rx-ready, cross-lane), `WEV`/`CLREV`.
-   - *Readback* (`RD n`, 16 entries): shifter rx word, rx/tx counts, timer
-     status, CRC low/high, pin levels, other lanes' status.
-   - *Actions:* reserved opcode C becomes `ACT n` (4 action levels); `FIRE`
-     keeps two pulse lines.
-   - *Live configuration* limited to the lane's own dynamic words; other
-     addresses ignored and flagged.
-   - *Streams:* `PULL`/`TXP`/`PUSH` on the lane's reader and writer;
-     `HALT` and an error flag end the transfer.
-2. `grid_stream_fabric.v`: control select (0 = row sequencer, 1 = lane
-   controller), so every existing image keeps running.
-3. Bench `lane_controller_tb.sv`: fetch under stalls, sticky events,
-   readback, live-config fence, `ACT` timing.
-4. Pin tests: I2C target (address match, ACK in window); SPI target; PS/2
-   with parity checked by the controller.
-5. Measure fetch occupancy of the SRAM port per protocol (decides step 4.2).
+1. `src/grid_lane_controller.v`: the 16-bit instruction set above, built
+   from `controller.v`'s datapath; fetch through the host-bank client with
+   ready/valid stall and a local instruction buffer; 16 sticky events;
+   16-entry readback; `act`/`fire`; live configuration writes limited to
+   owned cells; streams; halt ok/fail.
+2. Formal reference model ported from `formal/` (`arch/spatial`) to the new
+   encoding; bounded proof of fetch, events, readback and the write fence.
+3. `grid_stream_fabric.v`: control select (row sequencer or lane
+   controller) so existing images keep running until step 2 removes it.
+4. Pin tests: I2C target, SPI target, SLIP escaping; determinism under
+   random SRAM contention.
+5. Measure fetch occupancy and worst-case decision time.
+6. Measure switch-box mesh against the earlier 64-wire signal space at
+   1, 3 and 5 lanes.
 
-**2. `grid_lane` and two lanes.**
+**2. Lane core and soft tiles (two lanes).**
 
-1. `src/grid_lane.v`: controller, timer pair, shifter, reader/writer,
-   events, readback, as one row of three cells with their switch boxes.
-2. `grid_core` generated over `LANES` rows plus the shared column; start
-   with two lanes and today's shared tiles.
-3. Host status: start, done, error per lane.
-4. Pin test: UART receive on lane B during an I2C transaction on lane A.
-5. Remove the row sequencers, descriptors and paging (about -52k um2).
-6. **Checkpoint:** measured per-lane area and GDS; confirm five lanes fit.
+1. Timer: capture, resync (windowed), shadowed period, count mode.
+2. `src/grid_lane_core.v`: lane controller, timer pair, coded shifter
+   (parity, stuffing, NRZI, Manchester, receive decode, CRC link), CRC tile
+   with additive mode, stream port, events, readback.
+3. Configuration tree: live writes from lane controllers with the ownership
+   table; per-lane start, done, error in the host status.
+4. Two lane cores plus today's soft tiles; pin tests: UART receive on lane
+   B during I2C on lane A; USB low-speed receive; CAN receive; PS/2 with
+   parity in the coder; SENT; LIN with autobaud and checksum.
+5. Remove the row sequencer, descriptors, paging and merged completion.
 
 **3. Host link and pads.**
 
 1. `project.v`: host link on `ui_in` alone (`ui[7]` strobe, `ui[6:4]`
-   opcode, `ui[3:0]` data nibble), status on `uo_out`; `uio[7:0]` all
-   protocol pads.
-2. Eight pad cells with lane select (synchronizer, edge events, open-drain,
-   output enable).
-3. Update host helpers (`command()`, `test_compiled.py`) and `info.yaml`.
-4. Pin tests: SPI controller with CS on a pad, 4-wire JTAG, GPIO chain.
+   opcode, `ui[3:0]` data), status on `uo_out`; `uio[7:0]` all pads.
+2. Eight pad cells with lane select and lane-writable drive mode.
+3. Host helpers (`command()`, `test_compiled.py`), `info.yaml`.
+4. Pin tests: SPI with CS on a pad, 4-wire JTAG, SPI target, GPIO chain,
+   I3C drive-mode switch.
 
-**4. Five lanes.**
+**4. Five lanes and the floorplan.**
 
-1. Grid to 5 x 4: lanes C, D, E; shared column (CRC, coded shifter, LUT4
-   pairs); 20 configuration leaves.
-2. Memory: arbiter for host plus three clients per lane on two banks.
-   Fetch strategy from the step 1.5 measurement: direct fetch if the
-   worst-case grant wait keeps every protocol's response window, otherwise
-   a small per-lane instruction page loaded by the page loader.
-3. Placement region per lane row; GDS; routing and slack checkpoint.
-4. Pin test: five lanes at once (UART, I2C, 1-Wire, WS2812, DMX), each
+1. Concurrent minimum-channel-width sweep with the existing router: five
+   census protocols at once; set track count and soft-tile columns from it.
+2. Five lane cores, soft-tile columns, configuration leaves per cell,
+   arbiter for host plus three clients per lane; local instruction buffer
+   size from step 1.5.
+3. Placement regions per lane core; GDS checkpoint.
+4. Pin test: five protocols at once (UART, I2C, 1-Wire, WS2812, DMX), each
    checked by its own peer.
 
-**5. Compiler retarget (in parallel from step 1).**
+**5. Compiler.**
 
-1. The compiler's existing backend for this controller (8 x 4) retargets
-   to grid lanes: lane assignment (a protocol may take two lanes), placement
-   and routing on the mesh (`grid_route`), controller code from `fn` bodies,
-   configuration words from the architecture contract.
-2. `reg` expressions to LUT4 cells; `if received == K` to `RD`/`XRC`/`JZ`.
-3. Resource report and unmappable-construct diagnostics.
-4. Accept: UART, I2C, SPI, JTAG, USB TX, 10BASE-T TX compile and pass their
-   pin tests; delete the per-protocol `circt_lab/*.inc` lowerings.
+1. New encoder for the lane controller; lowering kept from the existing
+   backend.
+2. Lane assignment (a protocol may take two lanes), cluster placement of
+   soft tiles, mesh routing, configuration words from the contract.
+3. `reg` expressions to LUT4 cells; `if received == K` to compare-and-branch;
+   the timed-edge rule.
+4. Resource report and unmappable-construct diagnostics.
+5. Accept: the six running protocols compile and pass; delete the
+   per-protocol `circt_lab/*.inc` lowerings and `descriptor_fold.py`.
 
-**6. Receive and completeness.** Coded-shifter receive path and resync
-(USB, HDLC, CAN receive); frame parity, additive checksum, timer capture,
-period from data (LIN, SENT).
+**6. Evidence and submission.**
 
-**7. Evidence and submission.** Port the 22 inherited tests, compiled from
-source; held-out classes with the compiler frozen; five-lane concurrency
-demo; head-to-head with `arch/spatial`; Tiny Tapeout packaging; final
-precheck.
+1. Port all 24 inherited tests to grid pins, compiled from source; record
+   per-protocol status in PROTOCOL_COVERAGE.md; regenerate the census.
+2. Freeze the compiler; held-out classes from specifications; report
+   pass/fail with classified causes.
+3. Five-lane concurrency demo; head-to-head with `arch/spatial`; Tiny
+   Tapeout packaging; final precheck.
 
 ## Foundations: spatial-architecture direction (2026-11-24)
 
