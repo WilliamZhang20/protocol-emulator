@@ -425,6 +425,43 @@ so the subsets are typed rather than taken from this list alone:
 That is a small fraction of 64 per input. Sizing these sets with the
 compiler's census tool is the next part of sub-step 1.
 
+**Budget decision (user, 2026-11-26): shrink the mesh to cluster joins.**
+The mesh is sized from what crosses clusters (inter-cluster bit nets,
+LUT4 inputs, pins), not from what a single shared bit network needed.
+
+The current mesh is 5 x 3 = 15 cells, rows 3-4 being LUT4 cells and
+timers. Its 177k own area is mostly:
+- configuration storage: 63 words, a second routing context, validity
+  tracking, about 2,000 flops (about 90k);
+- switch and sink selectors for 4 tracks per direction and 46+ sinks;
+- packet, temporal and lane-B glue.
+
+**Sizing that closes (estimates; sub-step 2 measures the RTL):**
+
+| Part | Estimate (unflattened) | How |
+|---|---|---|
+| Mesh v2 | about 45k | 6 cells (2 cluster ports, LUT4 cells, pads) instead of 15; 2 tracks instead of 4 (channel-width study); one routing context; sinks only for LUT4 inputs, cluster mesh inputs and pins |
+| Infrastructure | about 63k | stream fabric, config tree (shrinks with the mesh), banks, readers, writers |
+| Cluster A | about 190k | controller about 19k + 64x16 macro 15k; 2 timers 32k; 2 coded shifters 69k; CRC 24k; glue with typed sparse selectors about 30k |
+| Cluster B | about 130k | controller + macro 34k; 2 timers 32k; 1 coded shifter 34k; glue about 30k; no CRC |
+| **Total** | **about 428k unflattened, about 366k flattened, about 40%** | |
+
+Two identical A clusters come to about 46%. Heterogeneous clusters (A
+with the CRC and two shifters, B lighter) fit the about-40% target.
+Independent assignment means a protocol in B can borrow A's CRC or
+second shifter over the mesh, at bit level only: words stay in their
+cluster, so a protocol needing the CRC's word readback runs in A. This
+is VPR's heterogeneous-block model, and the packer (sub-step 6) handles
+it.
+
+**Sub-step 1 gate:** the budget closes on paper at about 40% with
+clusters A + B and mesh v2. Sub-step 2 (contract v2) fixes:
+- the typed line subsets;
+- the mesh v2 geometry;
+- the A/B resource lists;
+- the cluster mesh ports.
+Each area figure is then replaced by measured RTL.
+
 ## 2.5 plan (superseded 2026-11-26 by clusters, above): two lane cores, ownership by construction, per-lane status
 
 Decisions (each with its reason):
