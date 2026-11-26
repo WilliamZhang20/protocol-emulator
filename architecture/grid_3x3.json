@@ -134,131 +134,34 @@
   },
   "lane": {
     "controller": "grid_lane_controller",
-    "instance": "lane_ctl",
-    "description": "Decides, never times a bit: waits on events, compares, moves stream bytes, sets action levels, starts tiles. Replaces the row sequencer when selected.",
+    "core": "grid_lane_core",
+    "instance": "lane_core",
+    "description": "Lane mode runs one lane core: the controller decides (waits on events, compares, moves stream bytes, sets action levels, starts tiles) and the core's own timers, coded shifter and CRC time the bits, wired through the core's local lines (see lane_core). Replaces the row sequencer when selected; the core drives the three pins directly.",
     "mode_word": 91,
     "mode_bit": 2,
     "mode_exclusive_with_bit": 0,
-    "program_word": 95,
-    "program_fields": {
-      "base": [
-        9,
-        0
-      ],
-      "last": [
-        15,
-        10
-      ]
-    },
+    "core_page": 1,
+    "core_words_base": 0,
+    "core_words_per_lane": 64,
+    "lanes": 1,
+    "program_word": 36,
+    "program_fields": {"base": [9, 0], "last": [15, 10]},
     "program_location": "host bank 0, 16-bit instructions little-endian; copied into the local buffer at start",
     "buffer_instructions": 64,
-    "idle_actions_word": 92,
-    "idle_actions_bits": [
-      7,
-      4
-    ],
-    "actions_source": {
-      "resource": "sram0",
-      "ports": [
-        0,
-        1,
-        2,
-        3
-      ],
-      "alternate_context_action": 3
-    },
-    "start_pulse": "shifter0 start (fabric fire)",
-    "tx_word": "shifter0 tx word (SHIFT)",
-    "stream": {
-      "reader": "PULL",
-      "writer": "PUSH",
-      "words": {
-        "tx_length": 66,
-        "rx_capacity": 67,
-        "tx_base": 89,
-        "rx_base": 90
-      }
-    },
-    "live_write_words": [
-      112,
-      116
-    ],
-    "live_write_check": "same rules as static configuration: valid word, no other override on its sink; a refused write fails the transfer",
-    "instruction": {
-      "width_bits": 16,
-      "fields": {
-        "op": [
-          15,
-          12
-        ],
-        "arg": [
-          11,
-          0
-        ]
-      },
-      "opcodes": {
-        "SYS": 0,
-        "WAIT": 1,
-        "ACT": 2,
-        "FIRE": 3,
-        "LDI": 4,
-        "RD": 5,
-        "AND": 6,
-        "XOR": 7,
-        "ADD": 8,
-        "J": 9,
-        "JZ": 10,
-        "JNZ": 11,
-        "LOOP": 12,
-        "SETC": 13,
-        "WCFG": 14,
-        "WANY": 15
-      },
-      "sys": {
-        "NOP": 0,
-        "HALT": 1,
-        "FAIL": 2,
-        "CLEAR": 3,
-        "SHIFT": 4,
-        "PULL": 5,
-        "PUSH": 6,
-        "ATOC": 7,
-        "CTOA": 8,
-        "SHL": 9,
-        "SHR": 10
-      }
-    },
-    "events": [
-      "timer0_tick",
-      "shifter0_done",
-      "input0_edge",
-      "input1_edge",
-      "shifter1_done",
-      "sequencer_event_sink41",
-      "sequencer_event_sink42",
-      "lane_b_done"
-    ],
-    "levels": [
-      "input0",
-      "input1",
-      "input0_low",
-      "input1_low",
-      "stream_byte_ready",
-      "stream_empty",
-      "shifter0_busy",
-      "shifter1_busy"
-    ],
+    "idle_actions_word": 37,
+    "idle_actions_bits": [7, 4],
+    "stream": {"reader": "PULL", "writer": "PUSH", "words": {"tx_length": 66, "rx_capacity": 67, "tx_base": 89, "rx_base": 90}},
+    "live_write_words": [0, 7],
+    "live_write_accepted": [0, 1, 4, 5],
+    "live_write_check": "timer first or period of a timer in use, nonzero; it goes to the timer's shadow and takes effect at the next reload. Any other owned word is refused, and a refused write fails the transfer",
+    "pads": "the grid's synchronized pin inputs (in0, in1)",
+    "mesh_inputs": "sinks 41-42 (mesh0, mesh1)",
+    "events": 8,
+    "levels": 8,
     "level_wait_offset": 8,
-    "readback": [
-      "shifter0_rx",
-      "shifter1_rx",
-      "inputs",
-      "stream_bytes_left",
-      "bytes_written",
-      "status_busy1_busy0_rdvalid_wrready",
-      "timer0_capture",
-      "timer1_capture"
-    ]
+    "inert_grid_words": {"0": 1, "1": 1, "2": 1, "53": 1, "54": 1, "55": 1, "63": 10},
+    "inert_grid_note": "page-0 words that make the unused grid valid in lane mode: timer0/timer1 first and period nonzero, shifter widths 1, a valid frame format; every route zero",
+    "instruction": {"width_bits": 16, "fields": {"op": [15, 12], "arg": [11, 0]}, "opcodes": {"SYS": 0, "WAIT": 1, "ACT": 2, "FIRE": 3, "LDI": 4, "RD": 5, "AND": 6, "XOR": 7, "ADD": 8, "J": 9, "JZ": 10, "JNZ": 11, "LOOP": 12, "SETC": 13, "WCFG": 14, "WANY": 15}, "sys": {"NOP": 0, "HALT": 1, "FAIL": 2, "CLEAR": 3, "SHIFT": 4, "PULL": 5, "PUSH": 6, "ATOC": 7, "CTOA": 8, "SHL": 9, "SHR": 10}}
   },
   "lane_core": {
     "module": "grid_lane_core",
@@ -278,7 +181,7 @@
       [34, "action0", "actions[0]"], [35, "action1", "actions[1]"], [36, "action2", "actions[2]"], [37, "action3", "actions[3]"],
       [38, "timer0.level", "t0_level"], [39, "timer0.running", "t0_running"], [40, "timer1.level", "t1_level"], [41, "timer1.running", "t1_running"],
       [42, "coder.serial", "c_out"], [43, "coder.active", "c_active"], [44, "crc.out", "crc_out"], [45, "crc.ok", "crc_ok"],
-      [46, "in0", "pad_in[0]"], [47, "in1", "pad_in[1]"], [48, "mesh0", "mesh_in[0]"], [49, "mesh1", "mesh_in[1]"],
+      [46, "in0", "pad_q[0]"], [47, "in1", "pad_q[1]"], [48, "mesh0", "mesh_q[0]"], [49, "mesh1", "mesh_q[1]"],
       [50, "coder.word_bad", "c_bad"]
     ],
     "word_layout": {
@@ -313,7 +216,18 @@
       [33, [15, 12]], [34, [15, 12]], [35, [15, 12]],
       [37, [15, 8]], [37, [3, 0]]
     ],
+    "registers": {
+      "coder.frame": {"word": 11, "fields": {"length_minus_1": [3, 0], "pre": [5, 4], "pre_value": [6, 6], "post": [8, 7], "post_value": [9, 9], "parity": [11, 10], "msb_first": [12, 12], "lead": [13, 13], "end_on_sample": [14, 14], "idle": [15, 15]}, "parity": {"none": 0, "even": 1, "odd": 2}},
+      "coder.io": {"word": 13, "fields": {"auto_pull": [11, 11], "auto_push": [12, 12]}},
+      "coder.burst": {"word": 14, "fields": {"burst": [5, 5], "eop_ends_burst": [6, 6]}},
+      "coder.coder": {"word": 15, "fields": {"stuff_run": [2, 0], "runs_of_ones": [3, 3], "nrzi": [4, 4], "receive": [5, 5], "arm_at_first_zero": [6, 6], "tail_invert": [7, 7], "bit_strobe": [8, 8], "tail_length": [14, 9], "manchester": [15, 15]}},
+      "coder.coder2": {"word": 16, "fields": {"crc_skip": [12, 6]}},
+      "crc.polynomial": {"words": [17, 18]},
+      "crc.residue": {"words": [19, 20]},
+      "crc.shape": {"word": 23, "fields": {"width_minus_1": [4, 0], "init_ones": [5, 5], "linked": [6, 6], "link_select": [7, 7], "additive": [8, 8], "twos_complement": [9, 9]}}
+    },
+    "gate_enables": {"coder.stuff_gate": [16, 5], "crc.absorb_gate": [24, 5], "crc.emit_gate": [24, 11]},
     "readback": ["coder.rx_word", "coder.status", "timer0.capture", "timer1.capture", "crc.value_low", "crc.value_high", "inputs", "stream_bytes_left", "bytes_written", "stream_status"],
-    "readback_rtl": ["c_rx_data", "c_status", "t0_captured", "t1_captured", "crc_value", "{12'b0,mesh_in,pad_in}", "fabric_readback"]
+    "readback_rtl": ["c_rx_data", "c_status", "t0_captured", "t1_captured", "crc_value", "{12'b0,mesh_q,pad_q}", "fabric_readback"]
   }
 }

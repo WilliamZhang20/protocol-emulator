@@ -18,7 +18,7 @@ module grid_stream_fabric_tb;
     bank_cfg_we,bank_routes,host_req,host_we,host_addr,host_wdata,host_ready,host_rvalid,host_rdata,
     tx_start,tx_base,tx_length,rx_base,rx_capacity,pin_in,pin_out,pin_oe,configured,
     tx_done,tx_error,rx_overflow,tx_active,rx_received,rx_written,tx_queued,rx_queued,
-    spi_start,spi_source_addr,spi_dest_addr,spi_done,spi_error,spi_active);
+    spi_start,spi_source_addr,spi_dest_addr,spi_done,spi_error,spi_active,1'b0);
   always #5 clk=~clk;
   initial begin #1000000;$fatal(1,"timeout");end
   // Interface-level invariants; evaluated with Verilator --assert.

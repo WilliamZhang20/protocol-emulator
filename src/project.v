@@ -27,13 +27,16 @@ module tt_um_protocol_emulator (
   // Per-call host words (TX length, RX capacity, TX and RX bases) may also be
   // written while armed and idle, so a program's calls keep its pins driven.
   // The fabric ignores every configuration write while armed.
-  wire host_word=host_addr[7:0]==66 || host_addr[7:0]==67 || host_addr[7:0]==89 || host_addr[7:0]==90;
-  wire image_write=command && uio_in[4:2]==3'd7 && cfg_mode && host_addr[9:8]==0 &&
-    (!arm || (host_word && !tx_active && !spi_active));
+  // Image pages: address bits 9:8 = 0 the grid and fabric words, 1 the lane
+  // cores (disarmed only). The host words are page-0 words.
+  wire page0=host_addr[9:8]==2'd0,page1=host_addr[9:8]==2'd1;
+  wire host_word=page0 && (host_addr[7:0]==66 || host_addr[7:0]==67 || host_addr[7:0]==89 || host_addr[7:0]==90);
+  wire image_write=command && uio_in[4:2]==3'd7 && cfg_mode &&
+    ((page0 && (!arm || (host_word && !tx_active && !spi_active))) || (page1 && !arm));
   wire [15:0] image_word={ui_in,cfg_low};
   wire safe_arm=arm && source_valid && dest_valid;
   grid_stream_fabric #(.USE_MACRO(1)) fabric(
-      .clk(clk),.rst_n(reset_n),.arm_in(safe_arm),.cfg_we(image_write),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
+      .clk(clk),.rst_n(reset_n),.arm_in(safe_arm),.cfg_we(image_write),.cfg_page(page1),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
       .bank_cfg_we(cfg_write),.bank_routes(ui_in[1:0]),
       .host_req(host_req),.host_we(host_we),.host_addr(host_addr),.host_wdata(host_wdata),
       .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),
@@ -63,7 +66,7 @@ module tt_um_protocol_emulator (
       sync1<=uio_in[1];sync2<=sync1;strobe_prev<=sync2;start<=0;
       if(host_req && host_ready) host_req<=0;
       if(host_rvalid) read_data<=host_rdata;
-      if(image_write) begin
+      if(image_write && page0) begin
         if(host_addr[7:0]==66) tx_length<=image_word[10:0];
         if(host_addr[7:0]==67) rx_capacity<=image_word[10:0];
         if(host_addr[7:0]==68) pad_feedback<=image_word[1:0];

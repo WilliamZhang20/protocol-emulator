@@ -425,18 +425,21 @@ endmodule
 // write has landed. Bank-route commands travel the same path, preserving
 // their order relative to word 88.
 module grid_config_tree(
-  input wire clk,rst_n,accept,bank,input wire [7:0] addr,input wire [15:0] data,
-  output wire [16*26-1:0] leaves,output wire busy);
-  reg root_valid; reg [2:0] trail;
+  input wire clk,rst_n,accept,bank,page,input wire [7:0] addr,input wire [15:0] data,
+  output wire [16*26-1:0] leaves,output wire [25:0] lane_leaf,output wire busy);
+  // Page 0 (the grid and fabric words) reaches the 16 cell leaves; page 1
+  // (lane cores, 64 words per lane) reaches only the lane leaf. Validity
+  // is split at the root, so no page-0 consumer ever sees a page-1 write.
+  reg root_valid,root_lane; reg [2:0] trail;
   reg [24:0] root_bus;
   always @(posedge clk) begin
-    if(!rst_n) begin root_valid<=0;trail<=0;end
-    else begin root_valid<=accept;trail<={trail[1:0],root_valid};end
+    if(!rst_n) begin root_valid<=0;root_lane<=0;trail<=0;end
+    else begin root_valid<=accept && !page;root_lane<=accept && page;trail<={trail[1:0],root_valid || root_lane};end
     root_bus<={bank,addr,data};
   end
   // A write lands in its cell register 3 clocks after acceptance; the two
   // registered validity stages need 2 more before the fabric may arm.
-  assign busy=root_valid || (|trail);
+  assign busy=root_valid || root_lane || (|trail);
   genvar k;
   generate for(k=0;k<16;k=k+1) begin: leaf
     reg valid;
@@ -448,5 +451,12 @@ module grid_config_tree(
     end
     assign leaves[k*26+:26]={valid,bus};
   end endgenerate
+  reg lane_valid;
+  reg [24:0] lane_bus;
+  always @(posedge clk) begin
+    if(!rst_n) lane_valid<=0;else lane_valid<=root_lane;
+    lane_bus<=root_bus;
+  end
+  assign lane_leaf={lane_valid,lane_bus};
 endmodule
 `default_nettype wire

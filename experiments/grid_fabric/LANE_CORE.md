@@ -126,3 +126,88 @@ Two findings worth keeping:
   so a receiver's sample lands 2 clocks after the timer count ends. The
   first-tick count and the resync phase both subtract it (the compiler's
   UART receive templates must do the same when they move to the core).
+
+## 2.4b plan: the core in the chip (one sub-step at a time)
+
+Lane mode (word 91 bit 2) runs the core instead of today's lane
+controller over shared grid tiles; one controller per lane, no second
+path to keep alive. The row sequencer, packet engine and lane B are
+untouched.
+
+1. **b1 configuration page 1.** `grid_config_tree` gains a page input and a
+   dedicated lane leaf: the root splits `valid` by page, so the 16 existing
+   leaves never see a page-1 write (no consumer changes) and the lane leaf
+   sees only page-1 writes. `project.v` accepts image writes with
+   `host_addr[9:8]==1` while disarmed (host words 66/67/89/90 stay page 0
+   only). Lane k's words are at 256 + 64k (k = 0 for now). The fabric's
+   `configured` requires the core's validity when lane mode is set.
+   Contract `configuration.pages`; a pin-level test writes page 1, checks
+   validity gating and that page-0 images are unchanged.
+2. **b2 core in the fabric.** `grid_lane_core` replaces `lane_ctl`: same
+   memory port, stream reader/writer, start/abort, drain-before-done and
+   stream-fail logic; `fabric_readback` = {stream status, bytes written,
+   bytes left}. Pads: the synchronized `pin_in`. Mesh inputs: sinks 41-42
+   (today the sequencer events, unused in lane mode). Outputs: the core's
+   three value lines become cell 6's local sources in lane mode and its
+   enable lines gate the matching pins' output enables, so open drain is a
+   selection. Controller WCFG targets the core's timer shadows (live first
+   and period through `grid_timer`'s `live_we`); any other word is refused,
+   keeping the write fence.
+3. **b3 compiler schema v2** (`spatial.lane-design.v2`): core tiles and
+   lines by contract name (`timer0.aux <- in0.fall`, `out0 = coder.serial
+   enable high`), encoded from the contract's `lane_core` table into page-1
+   words; v1 designs are rejected with a pointer to v2.
+4. **b4 tests at the pins.** Every lane test (controller, timer capture
+   and resync, I2C target, SPI target, SLIP TX, determinism, timing) runs a
+   v2 design and passes unchanged at the pins; then gate level locally.
+
+## 2.4b status: done (gate level confirmed by CI's gl_test)
+
+- **Page 1.** `grid_config_tree` splits validity at the root by page: the
+  16 cell leaves see only page 0, the new lane leaf only page 1, so no
+  page-0 consumer changed. `project.v` takes page-1 image writes while
+  disarmed; host words stay page 0. Lane mode's readiness is the core's
+  validity (the row sequencer's settings and contexts are not required).
+- **The core in the fabric.** `grid_lane_core` replaces the lane
+  controller over shared grid tiles; word 95 is retired (the program word
+  is core word 36). Pads: the grid's synchronized pins. Mesh inputs: sinks
+  41-42. The core drives the three pins directly (value and enable lines)
+  and its values are cell 6's local sources. WCFG owns core words 0-7 (a
+  controller parameter now; the default stays 112-116) and the core
+  accepts timer first/period, nonzero, of a timer in use, into the timer's
+  shadow.
+- **Compiler v2** (`spatial.lane-design.v2`, protocol-emulator-compiler
+  `circt_lab/grid_lane.py`): connections by contract name, timers and
+  coder/CRC registers by named field (the contract's `lane_core.registers`,
+  checked against the tile decodes), event and level slots allocated from
+  the program's operands, `word:<name>` WCFG operands, the core's validity
+  rules enforced at build time, an inert page-0 grid from the contract.
+  v1 designs are refused with a pointer to v2. Its test rebuilds every
+  shipped design and compares it byte for byte with the RTL pin-test data.
+- **Tests at the pins** (41/41 with the rest of the suite): the five
+  designs (I2C target, SPI target, SLIP TX, pulse period, UART receive with
+  and without resync) and the controller, determinism and timing tests run
+  on the core; a new test checks that page-1 validity gates arming.
+
+Found and fixed on the way:
+
+- **Resync double-sampled a late edge** (`grid_timer`). With a slow sender
+  the sampler runs early; an edge arriving just after the tick that sampled
+  its bit was pulled to `phase`, sampling the same bit twice. The phase
+  error is now cyclic: an edge with more than `phase + period/2` clocks
+  remaining targets `phase + period` (the next bit), then the limit clamp,
+  then saturation. The timer's reference model was rewritten
+  independently; two new mutations (double sample, wrap) are caught.
+- **SHIFT sent the previous byte** (the core). The controller registers
+  its tx word on the SHIFT clock; the core wrote the coder one clock early.
+  It now writes on the registered shift line. The FIRE line is now the
+  FIRE instruction only (the controller's internal fire after a SHIFT, for
+  the old grid shifter, no longer reaches it).
+- **Inputs are registered at the core boundary**, so "every line is a
+  register output" holds for any input; in the chip the mesh is
+  combinational and a core output routed back to sink 41 would otherwise
+  close a loop through a selector. Edge to pad is now 5 + k clocks
+  (LANE_TIMING.md).
+- **Sample timing rule:** a receiver's first count and resync phase are
+  half a bit less the 2-clock tick-to-sample latency; input latency
+  delays the edge and the sampled level alike and cancels.

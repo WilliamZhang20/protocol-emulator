@@ -12,7 +12,7 @@ RTL = HERE.parents[1] / 'src' / 'grid_lane_controller.v'
 MUTATIONS = [
     ('XOR computes OR', "acc<=acc ^ {4'b0,arg};", "acc<=acc | {4'b0,arg};"),
     ('WAIT does not consume its event', "4'h1: if(!sel[3]) latched[sel[2:0]]<=1'b0;", "4'h1: ;"),
-    ('write fence admits word 117', "arg[7:0]<=8'd116", "arg[7:0]<=8'd117"),
+    ('write fence admits word 117', "wire owned=own_offset<=OWN_SPAN && arg[11:8]==0;", "wire owned=own_offset<=OWN_SPAN+8'd1 && arg[11:8]==0;"),
     ('LOOP tests the old count', "(op==4'hC && count!=8'd1)", "(op==4'hC && count!=8'd0)"),
     ('refused value is written', "assign cfg_we=exec && op==4'hE && owned && cfg_ok;", "assign cfg_we=exec && op==4'hE && owned;"),
     ('WANY consumes the whole mask register', "latched<=seen & ~arg[7:0];", "latched<=0;"),

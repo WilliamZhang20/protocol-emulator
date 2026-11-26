@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
-           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_timer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
+           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_lane_core.v', 'grid_timer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
            'fabric_shifter.v', 'config_bank.v', 'memory_tiles.v', 'program_memory.v']
 
 
@@ -211,6 +211,38 @@ def check_lane_core(contract):
     joined = rtl.split('assign readback={')[1].split('};')[0]
     assert joined == "96'b0," + ','.join(reversed(core['readback_rtl'])), joined
     assert len(core['readback']) == 10
+    # Register fields the compiler encodes by name, against the tile decodes.
+    regs = core['registers']
+    shifter = (ROOT / 'src/fabric_shifter.v').read_text()
+    for reg, field, decl in [('coder.frame', 'pre', "wire [4:0] pre_n     = {3'b0, frame[%s]};"),
+                             ('coder.frame', 'pre_value', 'wire       pre_val   = frame[%s];'),
+                             ('coder.frame', 'post_value', 'wire       post_val  = frame[%s];'),
+                             ('coder.frame', 'msb_first', 'wire       msb_first = frame[%s];'),
+                             ('coder.frame', 'lead', 'wire       lead      = frame[%s];'),
+                             ('coder.frame', 'end_on_sample', 'wire       end_on_sample = frame[%s];'),
+                             ('coder.io', 'auto_pull', 'wire       auto_pull = io[%s];'),
+                             ('coder.io', 'auto_push', 'wire       auto_push = io[%s];'),
+                             ('coder.burst', 'burst', 'wire       burst_mode = burst[%s];'),
+                             ('coder.coder2', 'crc_skip', 'wire [6:0] skip_n     = coder2[%s];')]:
+        hi, lo = regs[reg]['fields'][field]
+        assert decl % (f'{hi}:{lo}' if hi != lo else f'{hi}') in shifter, (reg, field)
+    frame = regs['coder.frame']['fields']
+    assert frame['parity'] == [11, 10] and regs['coder.frame']['parity'] == {'none': 0, 'even': 1, 'odd': 2}
+    assert "wire       odd_parity = frame[11];" in shifter and "frame[11:10] != 2'd0" in shifter
+    assert frame['idle'] == [15, 15] and 'wire        idle_next   = frame_next[15];' in shifter
+    assert frame['length_minus_1'] == [3, 0] and 'frame[3:0]' in shifter
+    assert regs['coder.coder']['fields'] == contract['resources']['coded_shifter']['coder_fields']
+    shape = {k: v for k, v in contract['resources']['crc']['shape_fields'].items() if k != 'reserved'}
+    assert regs['crc.shape']['fields'] == shape and regs['crc.shape']['word'] == layout['crc_registers'][0] + 6
+    for name, base in [('coder.frame', 1), ('coder.io', 3), ('coder.burst', 4), ('coder.coder', 5), ('coder.coder2', 6)]:
+        assert regs[name]['word'] == layout['coder_registers'][0] + base - 1, name
+    crc0 = layout['crc_registers'][0]
+    assert regs['crc.polynomial']['words'] == [crc0, crc0 + 1] and regs['crc.residue']['words'] == [crc0 + 2, crc0 + 3]
+    gates = core['gate_enables']
+    assert gates['coder.stuff_gate'] == [regs['coder.coder2']['word'], 5] and '(!coder2[5] || levels[coder2[4:0]])' in shifter
+    crc_rtl = (ROOT / 'src/fabric_crc.v').read_text()
+    assert gates['crc.absorb_gate'] == [crc0 + 7, 5] and "(!gate_cfg[5] || lines[{1'b1, gate_cfg[4:0]}])" in crc_rtl
+    assert gates['crc.emit_gate'] == [crc0 + 7, 11] and "(!gate_cfg[11] || lines[{1'b1, gate_cfg[10:6]}])" in crc_rtl
 
 
 def check_crc_shape(contract):
@@ -290,39 +322,56 @@ def check_timers(contract, modules):
         tile = core['cells'][resource['instance']]['connections']
         assert tile['mode'] == netnames[f'timer_mode[{index}]']['bits'], name
         assert tile['phase'] == netnames[f'timer_phase[{index}]']['bits'], name
-    # Lane readback slots 6 and 7 are the timer 0 and 1 capture registers.
-    lane = contract['lane']['readback']
-    for slot, (name, port) in enumerate([('timer0_capture', 'timer0_captured'), ('timer1_capture', 'timer1_captured')], 6):
-        assert lane[slot] == name
-        tile = core['cells'][contract['resources'][f'timer{slot - 6}']['instance']]['connections']
-        assert tile['captured'] == core['ports'][port]['bits'], name
-    fabric = (ROOT / 'src/grid_stream_fabric.v').read_text()
-    assert "lane_readback={128'b0,timer1_captured,timer0_captured," in fabric
 
 
 def check_lane(contract, modules, top):
-    """The lane section the compiler encodes against matches the RTL."""
+    """Lane mode: the fabric runs one lane core (page-1 words) whose
+    controller the compiler assembles for."""
     lane = contract['lane']
-    assert top[lane['instance']]['type'] == lane['controller']
-    module = modules[lane['controller']]
+    core = contract['lane_core']
+    assert top[lane['instance']]['type'] == lane['core'] == core['module']
+    # The core's controller is parameterized (its owned words), so yosys
+    # names it $paramod\\grid_lane_controller\\...; exactly one such module.
+    names = [n for n in modules if n == lane['controller'] or n.startswith('$paramod\\' + lane['controller'] + '\\')]
+    assert len(names) == 1, names
+    module = modules[names[0]]
     ports = module['ports']
-    assert len(ports['events']['bits']) == len(lane['events'])
-    assert len(ports['levels']['bits']) == len(lane['levels']) == 8 and lane['level_wait_offset'] == 8
-    assert len(ports['readback']['bits']) >= 16 * len(lane['readback'])
+    assert len(ports['events']['bits']) == lane['events'] == 8
+    assert len(ports['levels']['bits']) == lane['levels'] == 8 and lane['level_wait_offset'] == 8
     assert 2 ** int(module['parameter_default_values']['ABITS'], 2) == lane['buffer_instructions']
     assert len(ports['prog_base']['bits']) == lane['program_fields']['base'][0] + 1
     last = lane['program_fields']['last']
     assert len(ports['prog_last']['bits']) == last[0] - last[1] + 1
+    layout = core['word_layout']
+    assert lane['program_word'] == layout['program'] and lane['idle_actions_word'] == layout['settings']
+    assert lane['core_words_per_lane'] >= core['words'] and lane['lanes'] == 1
+    rtl_core = (ROOT / 'src/grid_lane_core.v').read_text()
+    hi, lo = lane['idle_actions_bits']
+    assert f"readback,word[{lane['idle_actions_word']}][{hi}:{lo}]," in rtl_core
+    # Event and level slots are the core's selectors, in order.
+    assert [n for n, *_ in core['selectors'] if n.startswith('event')] == [f'event{i}' for i in range(lane['events'])]
+    assert [n for n, *_ in core['selectors'] if n.startswith('level') and n[5:].isdigit()] == \
+        [f'level{i}' for i in range(lane['levels'])]
     fabric = (ROOT / 'src/grid_stream_fabric.v').read_text()
     assert re.search(r'leaf_addr==%d\) begin temporal_mode<=leaf_data\[%d\];lane_mode<=leaf_data\[%d\]'
                      % (lane['mode_word'], lane['mode_exclusive_with_bit'], lane['mode_bit']), fabric)
-    assert re.search(r'seq_addr==%d\) lane_prog<=seq_data' % lane['program_word'], fabric)
-    assert 'grid_lane_controller lane_ctl(clk,rst_n,arm && configured && lane_mode,' in fabric
+    assert 'grid_lane_core lane_core(clk,rst_n,arm && configured && lane_mode,' in fabric
+    # Page 1 reaches the core through the tree's lane leaf; lane 0 only.
+    assert lane['core_page'] == 1 and lane['core_words_base'] == 0 and lane['core_words_per_lane'] == 64
+    assert "wire core_cfg_we=lane_leaf[25] && !lane_leaf[24] && lane_leaf[23:22]==2'd0;" in fabric
+    assert 'core_cfg_we,lane_leaf[21:16],lane_leaf[15:0],core_configured,' in fabric
+    project = (ROOT / 'src/project.v').read_text()
+    assert "wire page0=host_addr[9:8]==2'd0,page1=host_addr[9:8]==2'd1;" in project
+    for name, word in lane['stream']['words'].items():
+        assert f'host_addr[7:0]=={word}' in project, name
+    # Live writes: the controller owns the core words; the core accepts timer first/period.
     first, final = lane['live_write_words']
-    rtl = (ROOT / 'src/grid_lane_controller.v').read_text()
-    assert f"arg[7:0]>=8'd{first} && arg[7:0]<=8'd{final}" in rtl
-    assert (first, final) == tuple(contract['configuration']['alternate_context_words'])
+    assert f"grid_lane_controller #(.OWN_FIRST(8'd{first}),.OWN_LAST(8'd{final})) ctl(" in rtl_core
+    assert lane['live_write_accepted'] == [layout['timer0'][0], layout['timer0'][0] + 1,
+                                           layout['timer1'][0], layout['timer1'][0] + 1]
+    assert "wire live_ok=ctl_cfg_addr<=8'd7 && !live_idx[1] && ctl_cfg_data!=16'd0 &&" in rtl_core
     # The instruction table in the RTL header comment names every opcode.
+    rtl = (ROOT / 'src/grid_lane_controller.v').read_text()
     header = rtl.split('module grid_lane_controller')[0]
     for name, code in lane['instruction']['opcodes'].items():
         assert re.search(r'\b%X %s\b' % (code, name), header), name

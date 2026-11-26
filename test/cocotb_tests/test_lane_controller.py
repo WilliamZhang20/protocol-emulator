@@ -1,22 +1,25 @@
-"""Lane controller in the fabric, at the top-level pins only.
+"""Lane mode in the fabric, at the top-level pins only.
 
-Configuration word 91 bit 2 selects the lane controller instead of the row
-sequencer; word 95 says where its program lives. These tests use the
-temporal I2C image for every other word (pins, routes, contexts) and check:
-the program loads over the host-bank port and streams bytes through the
-reader and writer; a live alternate-context write takes effect when the
-program switches context; a write outside the lane's words fails closed;
-and the row sequencer still runs when the bit is clear.
+Configuration word 91 bit 2 selects lane mode: lane 0's core (controller,
+timers, coded shifter, CRC) runs instead of the row sequencer, configured on
+page 1 (core word 36 says where its program lives). These tests use the
+temporal I2C image for the page-0 words and check: the program loads over
+the host-bank port and streams bytes through the reader and writer; a live
+write of a timer period takes effect at its next reload; writes the core
+refuses, and writes outside its words, fail closed; and the row sequencer
+still runs when the bit is clear.
 """
+import json
 from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
-from cocotb_tests.lane_asm import assemble, program_bytes, program_word, EV_EDGE0, EV_EDGE1
+from cocotb_tests.lane_asm import assemble, program_bytes, core_words, READBACK, CORE_PAGE
 
 IMAGE = Path(__file__).parents[1] / 'data/temporal-i2c.mem'
+DESIGNS = Path(__file__).parents[1] / 'data/lane'
 PROGRAM_BASE = 768
 
 
@@ -67,17 +70,33 @@ class Chip:
         from an armed chip a lone command(4, 8) would drop every write."""
         await self.command(4, 0)
         await self.command(4, 8)
-        # Image writes need host address bits 9:8 clear; config() sets only
-        # the low byte, and the last SRAM access may have left them set.
-        await self.command(1, 0)
         image = [int(x, 16) for x in image.read_text().splitlines()]
         words = dict(enumerate(image))
         words[68] = 3            # pins 0 and 1 read their own pads
         words.update(extra)
+        # Address bits 9:8 pick the page (0 grid and fabric, 1 lane cores);
+        # config() sets only the low byte, and the last SRAM access may have
+        # left bits 9:8 set, so the page is always written before the first word.
+        page = None
         for address, word in sorted(words.items()):
-            await self.config(address, word)
+            if address >> 8 != page:
+                page = address >> 8
+                await self.command(1, page)
+            await self.config(address & 255, word)
         await self.command(4, 0); await self.command(4, 4)
         assert int(self.dut.uio_oe.value) & 0x80, 'configuration did not arm'
+
+    async def load_design(self, name, host=None):
+        """A compiled lane design (test/data/lane/<name>): the page-0 image,
+        the lane core's page-1 words, then its program in the host bank."""
+        program = json.loads((DESIGNS / f'{name}.program.json').read_text())
+        assert program['schema'] == 'spatial.lane-program.v2', name
+        page = program['core_page'] << 8
+        core = {page + int(k): v for k, v in program['core_words'].items()}
+        await self.configure({**core, **(host or {})}, image=DESIGNS / f'{name}.mem')
+        for offset, value in enumerate(program['bytes']):
+            await self.write_byte(program['base'] + offset, value)
+        return program
 
     async def load_program(self, words):
         for offset, value in enumerate(program_bytes(words)):
@@ -92,10 +111,12 @@ class Chip:
         raise AssertionError('lane did not finish')
 
 
-def lane_words(program, host=None):
-    words = {91: 0x4, 95: program_word(PROGRAM_BASE, program)}
-    words.update(host or {})
-    return words
+def lane_words(program, host=None, connect=None, words=None, idle_actions=0):
+    """Lane mode (word 91 bit 2) with lane 0's core configured on page 1."""
+    out = {91: 0x4}
+    out.update(core_words(program, PROGRAM_BASE, connect, words, idle_actions))
+    out.update(host or {})
+    return out
 
 
 @cocotb.test()
@@ -103,9 +124,9 @@ async def lane_streams_bytes(dut):
     """Pull each source byte, transform it, push it to the destination."""
     chip = Chip(dut)
     await chip.reset()
-    program = assemble('''
+    program = assemble(f'''
     next:
-        RD 3          # stream bytes left
+        RD {READBACK['stream_bytes_left']}
         JZ done
         PULL
         XOR 0x5A
@@ -133,117 +154,129 @@ async def lane_streams_bytes(dut):
     assert received == [b ^ 0xFF ^ 0x5A for b in payload], received
 
 
-# With actions 0x9 (bit 3: alternate context) the image's overrides drive
-# SDA (uio 6) low and release SCL (uio 5). Word 114 (0x0547, sink 7) is the
-# override driving SDA: with it disabled, SDA is released.
-SDA, SCL = 0x40, 0x20
+SDA, SCL = 0x40, 0x20      # uio 6 is the core's out0 (and in1), uio 5 its out1 (and in0)
 
 
-async def watch_oe(dut, cycles):
-    """uio_oe & (SDA|SCL) each clock until done or `cycles`, as runs."""
-    runs = []
+async def line_intervals(dut, bit, cycles):
+    """Clocks between changes of uio_out & bit, until done or `cycles`."""
+    intervals, last, since = [], None, 0
     for _ in range(cycles):
         await FallingEdge(dut.clk); await Timer(1, unit='ns')
         if int(dut.uio_out.value) & 0x80:
             break
-        oe = int(dut.uio_oe.value) & (SDA | SCL)
-        if runs and runs[-1][0] == oe:
-            runs[-1][1] += 1
-        else:
-            runs.append([oe, 1])
-    return runs
+        level = bool(int(dut.uio_out.value) & bit)
+        since += 1
+        if last is not None and level != last:
+            intervals.append(since)
+            since = 0
+        last = level
+    return intervals
+
+
+TOGGLE = {'timer0.start': 'fire', 'timer0.stop': 'action0', 'out0.value': 'timer0.level', 'out0.enable': 'high'}
 
 
 @cocotb.test()
 async def lane_live_context_write(dut):
-    """A live write disables word 114's override while the alternate context
-    is selected, and the pads change mid-run. The program puts the word back
-    before it halts, so a second run behaves the same."""
+    """A live write of timer0's period (WCFG) while it toggles out0: the
+    interval in progress finishes at the old period and every later one has
+    the new period; the program restores the period before it halts, so a
+    second run behaves the same."""
     chip = Chip(dut)
     await chip.reset()
     program = assemble('''
-        ACT 0x9         # alternate context; image override drives SDA
-        SETC 100
-    a:  LOOP a
-        LDI 0x007       # word 114 with its enable bit clear
-        WCFG 114
-        SETC 100
-    b:  LOOP b
-        LDI 0x547       # restore the image's word
-        WCFG 114
         ACT 0
+        FIRE            # timer0 toggles out0 every 10 clocks
+        SETC 120
+    a:  LOOP a
+        LDI 30
+        WCFG 1          # timer0 period: 30 from its next reload
+        SETC 200
+    b:  LOOP b
+        LDI 10
+        WCFG 1          # restore
+        SETC 60
+    c:  LOOP c
+        ACT 1           # stop timer0
         HALT
     ''')
-    await chip.configure(lane_words(program))
+    await chip.configure(lane_words(program, connect=TOGGLE, words={0: 10, 1: 10}))
     await chip.load_program(program)
     for run in range(2):
         await chip.command(5, 0)
-        runs = [r for r in await watch_oe(dut, 2000) if r[1] > 2]
-        dut._log.info('run %d: oe runs %s', run, runs)
-        # SCL depends on image tile state left by the previous transfer, so
-        # only SDA, which word 114 controls, is checked.
-        sda = [bool(oe & SDA) for oe, _ in runs[1:]]
-        assert sda and sda[0] and not any(sda[1:]) and len(sda) > 1, \
-            f'expected SDA driven, then released by the live write: {runs}'
+        intervals = (await line_intervals(dut, SDA, 3000))[1:]
+        dut._log.info('run %d: out0 intervals %s', run, intervals)
+        groups = []
+        for value in intervals:
+            if groups and groups[-1][0] == value:
+                groups[-1][1] += 1
+            else:
+                groups.append([value, 1])
+        assert [g[0] for g in groups] == [10, 30, 10] and groups[1][1] >= 3, \
+            f'expected 10-clock intervals, then 30, then 10 again (never a cut interval): {intervals}'
         assert not (await chip.status()) & 0x40
 
 
 @cocotb.test()
 async def lane_refused_context_write(dut):
-    """A live write that would give sink 7 a second override (word 114 has
-    it) is refused: the transfer fails, the fabric stays configured and the
-    next transfer runs."""
+    """Live writes the core refuses fail the transfer (timer0's mode word,
+    owned but not live-writable; a zero period; a timer not in use); the
+    fabric stays configured and the next transfer runs: action 0 pulls SDA
+    through an open-drain selection."""
     chip = Chip(dut)
     await chip.reset()
-    bad = assemble('''
-        LDI 0x407       # override enabled, sink 7: clashes with word 114
-        WCFG 112
-        HALT
-        NOP             # same length as the second program (word 95)
-        NOP
-    ''')
-    await chip.configure(lane_words(bad))
-    await chip.load_program(bad)
-    await chip.start_and_wait()
-    assert (await chip.status()) & 0x40, 'refused write was not reported'
-    assert int(dut.uio_oe.value) & 0x80, 'fabric no longer armed'
+    connect = {'out0.value': 'low', 'out0.enable': 'action0'}
     good = assemble('''
-        ACT 0x9
+        ACT 1
         SETC 50
     a:  LOOP a
         ACT 0
         HALT
     ''')
-    assert len(good) == len(bad)
-    await chip.load_program(good)
-    await chip.command(5, 0)
-    runs = [r for r in await watch_oe(dut, 1000) if r[1] > 2]
-    assert [oe for oe, _ in runs if oe] == [SDA], f'image override lost after the refused write: {runs}'
-    assert not (await chip.status()) & 0x40
+    for bad_source in ('LDI 1\nWCFG 2', 'LDI 0\nWCFG 1', 'LDI 9\nWCFG 5'):
+        bad = assemble(bad_source + '\nHALT\nNOP\nNOP')
+        assert len(good) == len(bad)
+        await chip.configure(lane_words(bad, connect=connect, words={0: 10, 1: 10}))
+        await chip.load_program(bad)
+        await chip.start_and_wait()
+        assert (await chip.status()) & 0x40, f'refused write was not reported: {bad_source!r}'
+        assert int(dut.uio_oe.value) & 0x80, 'fabric no longer armed'
+        await chip.load_program(good)
+        await chip.command(5, 0)
+        runs = []
+        for _ in range(1000):
+            await FallingEdge(dut.clk); await Timer(1, unit='ns')
+            if int(dut.uio_out.value) & 0x80:
+                break
+            pulled = bool(int(dut.uio_oe.value) & SDA) and not int(dut.uio_out.value) & SDA
+            if not runs or runs[-1][0] != pulled:
+                runs.append([pulled, 0])
+            runs[-1][1] += 1
+        assert [r[0] for r in runs] == [False, True, False] and runs[1][1] > 40, f'SDA pull after a refused write: {runs}'
+        assert not (await chip.status()) & 0x40
 
 
 @cocotb.test()
 async def lane_wait_any(dut):
     """WANY waits for either pin edge and says which one fired: the program
-    halts cleanly only when it saw the SDA edge alone."""
+    halts cleanly only when it saw the SDA (in1) edge alone."""
     chip = Chip(dut)
     await chip.reset()
-    program = assemble(f'''
+    program = assemble('''
         CLEAR
-        WANY {1 << EV_EDGE0 | 1 << EV_EDGE1}
-        XOR {1 << EV_EDGE1}
+        WANY 3
+        XOR 2
         JNZ wrong
         HALT
     wrong: FAIL
     ''')
-    await chip.configure(lane_words(program))
+    await chip.configure(lane_words(program, connect={'event0': 'in0.fall', 'event1': 'in1.fall'}))
     await chip.load_program(program)
     for pin, expect_error in (('sda', False), ('scl', True)):
         await chip.command(5, 0)
         await ClockCycles(dut.clk, 300)
         assert not int(dut.uio_out.value) & 0x80, 'finished before any edge'
-        # A low pulse gives an edge in either configured polarity; the done
-        # strobe is one clock, so watch every clock.
+        # A low pulse; the done strobe is one clock, so watch every clock.
         finished = False
         for cycle in range(220):
             if cycle in (0, 20):
@@ -297,18 +330,50 @@ async def lane_stream_limits_fail(dut):
 
 @cocotb.test()
 async def lane_write_fence(dut):
-    """A configuration write outside the lane's words fails the transfer."""
+    """A configuration write outside the core's owned words fails the transfer."""
     chip = Chip(dut)
     await chip.reset()
     program = assemble('''
         LDI 0x123
-        WCFG 117
+        WCFG 8
         HALT
     ''')
-    await chip.configure(lane_words(program))
+    await chip.configure(lane_words(program, words={0: 10, 1: 10}))
     await chip.load_program(program)
     await chip.start_and_wait()
     assert (await chip.status()) & 0x40, 'write outside the lane was not reported'
+
+
+@cocotb.test()
+async def lane_core_validity_gates_arming(dut):
+    """Page-1 words reach the lane core and its validity gates arming in lane
+    mode: a reserved line on a selector keeps the chip from arming, valid
+    words arm it. A page-1 write to the address of a page-0 host word (66,
+    the transfer length) leaves the host word alone."""
+    chip = Chip(dut)
+    await chip.reset()
+    program = assemble(f'''
+        RD {READBACK['stream_bytes_left']}
+        PUSH
+        HALT
+    ''')
+    words = lane_words(program, {66: 3, 67: 1, 89: 100, 90: 200})
+    bad = dict(words)
+    bad[CORE_PAGE + 25] = 19            # event0 <- line 19: reserved
+    try:
+        await chip.configure(bad)
+    except AssertionError as e:
+        assert 'did not arm' in str(e), e
+    else:
+        raise AssertionError('a reserved core selector was accepted')
+    good = dict(words)
+    good[CORE_PAGE + 66 - 64] = 0       # page 1, address 2 (core word 2): unrelated to host word 66
+    good[CORE_PAGE + 66] = 7            # page 1, address 66: beyond lane 0's 38 words, ignored
+    await chip.configure(good)
+    await chip.load_program(program)
+    await chip.start_and_wait()
+    assert not (await chip.status()) & 0x40
+    assert await chip.read_byte(200) == 3, 'host word 66 (transfer length) changed by a page-1 write'
 
 
 @cocotb.test()

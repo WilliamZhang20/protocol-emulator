@@ -26,15 +26,17 @@ clocks: the lane owns the port while loading, and the host waits.
 
 | Decision path | Edge to pad |
 |---|---|
-| `WAIT` pulse event; `ACT` | 4 clocks |
-| `WAIT` level; `ACT` | 4 |
-| `WANY`; `AND`; `JNZ`; `ACT` | 6 |
-| I2C STOP check: `WANY`; `AND`; `JNZ`; `RD`; `AND`; `JZ`; `ACT` | 9 |
+| `WAIT` pulse event; `ACT` | 5 clocks |
+| `WAIT` level; `ACT` | 5 |
+| `WANY`; `AND`; `JNZ`; `ACT` | 7 |
+| I2C STOP check: `WANY`; `AND`; `JNZ`; `RD`; `AND`; `JZ`; `ACT` | 10 |
 
-**Edge to pad = 4 + k clocks**, k the instructions between the wait and
-the `ACT`: two synchronizer flops, the wait retiring on the clock it sees
-its condition (pulse events and levels both come from the synchronized
-pin), and the `ACT` register driving the routed pad. There is no fetch
+**Edge to pad = 5 + k clocks**, k the instructions between the wait and
+the `ACT`: two synchronizer flops, the lane core's input register (every
+core line is a register output, so no selection can close a loop; this
+clock was added with the lane core, step 2.4b), the wait retiring on the
+clock it sees its condition, and the `ACT` register driving the pad
+directly (lane mode drives the pins from the core). There is no fetch
 and no stall, so this is also the worst case; the only variable is which
 path the program takes, which the compiler knows.
 
@@ -44,22 +46,24 @@ Derived from the measured model above (the per-design gaps are not
 measured separately).
 
 
-- **I2C target**: the ACK is driven 4 clocks after SCL falls following the
-  eighth bit (the program waits on the SCL-low level, then `ACT`). At
+- **I2C target**: the ACK is driven about 5 clocks after SCL falls
+  following the eighth bit (the program waits on the SCL fall event, then
+  `ACT`). At
   400 kHz SCL is low for at least 1.3 us = 65 clocks, so the response lands
-  in the first 6% of the window. STOP is decided 9 clocks after SDA rises;
+  in the first 6% of the window. STOP is decided 10 clocks after SDA rises;
   SCL stays high at least 0.6 us = 30 clocks.
 - **SPI target**: between the eighth SCLK rise and the next reply's first
   bit the program runs `RD`, `PUSH`, `RD`, `JNZ`, `PULL`, `SHIFT` and the
-  shifter starts the clock after `SHIFT`: about 4 + 6 + 2 = 12 clocks. The
-  controller must leave that long before the next byte's first rise; the
-  pin tests use at least 24.
-- **SLIP UART TX**: bits are timed by timer0 and shifter0. Between frames
-  the plain-byte path runs 13 instructions after the done event (`J`,
-  `RD`, `JZ`, `PULL`, `ATOC`, `XOR`, `JZ`, `XOR`, `JZ`, `CTOA`, `SHL`,
-  `ADD`, `SHIFT`), so frames are separated by about 15 idle (high) clocks
-  after each stop bit, which UART permits; a back-to-back stream would
-  need the next frame loaded before the stop bit ends.
+  coded shifter starts on the shift line the clock after: about 5 + 6 + 2
+  = 13 clocks. The controller must leave that long before the next byte's
+  first rise; the pin tests use at least 24.
+- **SLIP UART TX**: bits are timed by the core's timer0 and coded shifter,
+  which also adds the start and stop bits. Between frames the plain-byte
+  path runs 11 instructions after the stop event (`J`, `RD`, `JZ`, `PULL`,
+  `ATOC`, `XOR`, `JZ`, `XOR`, `JZ`, `CTOA`, `SHIFT`), so frames are
+  separated by about 13 idle (high) clocks after each stop bit, which UART
+  permits; a gapless stream uses the coded shifter's auto pull instead
+  (no controller work per byte).
 - Contention never moves these numbers (`test_lane_determinism.py`):
   arbitration is round-robin per bank (a stream request waits at most two
   clocks) and each `PULL` takes a byte prefetched a frame earlier.

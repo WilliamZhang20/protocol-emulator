@@ -69,26 +69,27 @@ A single sequencer cannot do this because it is busy waiting on the stretch.
 
 ## Lane controller mode
 
-Configuration word 91 bit 2 replaces the row sequencer with the lane
-controller (`src/grid_lane_controller.v`; bits 0 and 2 together are
-invalid). Word 95 is `{last[5:0], base[9:0]}`: the program is `last + 1`
-16-bit instructions, little-endian, at host-bank byte `base`. Start copies
-it into the controller's local buffer over memory client 0, then the lane
-drives the grid's four action lines, its start pulse and shifter 0's tx
-word, pulls and pushes bytes through the stream reader and writer (words
-66/67 lengths, 89/90 bases, as in frame mode), and may write the five
-alternate-context words 112-116 while armed. Lane B still runs beside it.
+Configuration word 91 bit 2 replaces the row sequencer with a lane core
+(`src/grid_lane_core.v`, step 2.4; bits 0 and 2 together are invalid): the
+lane controller (`src/grid_lane_controller.v`) with its own two timers,
+coded shifter and CRC, wired through the core's local lines and configured
+on page 1 (host addresses 256-319, lane 0; see
+experiments/grid_fabric/LANE_CORE.md and the contract's `lane_core`
+section). Core word 36 is `{last[5:0], base[9:0]}`: the program is
+`last + 1` 16-bit instructions, little-endian, at host-bank byte `base`.
+Start copies it into the controller's local buffer over memory client 0;
+then the lane pulls and pushes bytes through the stream reader and writer
+(words 66/67 lengths, 89/90 bases, as in frame mode), drives the three
+pins from the core's output selectors, and may write its timers' first
+and period while armed (WCFG, to the timer's shadow). Lane B still runs
+beside it.
 
-| Number | Pulse events (latched) | Levels (live) | Readback |
-|---|---|---|---|
-| 0 | timer tick | pin 0 | rx 0 |
-| 1 | shifter 0 done | pin 1 | rx 1 |
-| 2 | pin 0 edge | pin 0 low | pins |
-| 3 | pin 1 edge | pin 1 low | stream bytes left |
-| 4 | shifter 1 done | stream byte ready | bytes written |
-| 5 | sequencer event sink 41 | stream empty | `{busy1, busy0, rd_valid, wr_ready}` |
-| 6 | sequencer event sink 42 | shifter 0 busy | 0 |
-| 7 | lane B done | shifter 1 busy | 0 |
+The controller's eight events and eight levels are selectors over the
+core's lines (`event0`..`event7`, `level0`..`level7`); the compiler
+allocates them from the program's `event:<line>` and `level:<line>`
+operands. Readback slots: 0 coder rx word, 1 coder status, 2/3 timer 0/1
+capture, 4/5 CRC value, 6 inputs, 7 stream bytes left, 8 bytes written,
+9 stream status.
 
 Levels are numbered 8-15 in `WAIT`; `WANY m` waits for any pulse event in
 the mask `m` and leaves the ones that fired in A.

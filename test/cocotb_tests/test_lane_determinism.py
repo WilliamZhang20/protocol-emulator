@@ -8,7 +8,7 @@ command; the two traces must be identical. The lane's program lives in a
 local buffer and its streams are prefetched, so port contention may delay
 memory traffic but must never move a pin edge.
 
-This holds when tiles or the external controller time the bits and each
+This holds when the lane core's tiles or the external controller time the bits and each
 PULL takes a byte prefetched well before (byte period much longer than the
 refill latency): arbitration is round-robin per bank, so a stream request
 waits at most two clocks, and the lane owns its port while loading its
@@ -102,9 +102,7 @@ async def slip_deterministic_under_contention(dut):
     packet = [0x01, SLIP.END, 0x7E, SLIP.ESC, 0x55, 0xAA, SLIP.END]
     traces = []
     for seed in (None, 0xC0FFEE):
-        await chip.configure({66: len(packet), 67: 0, 89: SLIP.TX_BASE}, image=SLIP.IMAGE)
-        for offset, value in enumerate(SLIP.PROGRAM['bytes']):
-            await chip.write_byte(SLIP.PROGRAM['base'] + offset, value)
+        await chip.load_design('slip-uart-tx', {66: len(packet), 67: 0, 89: SLIP.TX_BASE})
         for offset, value in enumerate(packet):
             await chip.write_byte(SLIP.TX_BASE + offset, value)
 

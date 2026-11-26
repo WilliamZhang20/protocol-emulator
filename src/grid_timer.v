@@ -16,7 +16,12 @@
 //   3 resync   an aux pulse while running moves remaining to `phase`,
 //              limited to +/- mode[15:8] clocks (0: no limit), so the next
 //              tick lands `phase` clocks after the edge (a receiver tracks
-//              its sender's bit edges; CAN-style limited resynchronization)
+//              its sender's bit edges; CAN-style limited resynchronization).
+//              The phase error is cyclic: an edge that arrives with more
+//              than phase + period/2 clocks remaining came just after the
+//              tick that sampled its bit (a slow sender), so the target is
+//              phase + period, the next bit's sample, not a second sample
+//              of the same bit. The result saturates at the counter's top.
 // mode[7:2] are reserved and must be zero.
 module grid_timer #(parameter W=16)(
     input wire clk, rst_n, arm, cfg_we,
@@ -41,11 +46,12 @@ module grid_timer #(parameter W=16)(
   wire step = fn == 2'd1 ? aux : !hold;
   // Resynchronization target, clamped to +/- limit around remaining.
   wire [W:0] lo = (limit == 0 || {1'b0, remaining} <= {{(W-7){1'b0}}, limit}) ? {(W+1){1'b0}} : {1'b0, remaining} - {{(W-7){1'b0}}, limit};
-  wire [W:0] hi = (limit == 0) ? {1'b0, {W{1'b1}}} : {1'b0, remaining} + {{(W-7){1'b0}}, limit};
-  wire [W:0] want = {1'b0, phase};
+  wire [W:0] hi = (limit == 0) ? {1'b1, {W{1'b0}}} : {1'b0, remaining} + {{(W-7){1'b0}}, limit};
+  wire late_edge = {1'b0, remaining} > {1'b0, phase} + {2'b0, period[W-1:1]};
+  wire [W:0] want = late_edge ? {1'b0, phase} + {1'b0, period} : {1'b0, phase};
   wire [W:0] clamped = want < lo ? lo : want > hi ? hi : want;
-  wire [W-1:0] resync_to = clamped[W-1:0] == 0 ? {{(W-1){1'b0}}, 1'b1} : clamped[W-1:0];
-  wire unused = clamped[W];   // the clamp never exceeds phase or remaining, both W bits
+  wire [W-1:0] saturated = clamped[W] ? {W{1'b1}} : clamped[W-1:0];
+  wire [W-1:0] resync_to = saturated == 0 ? {{(W-1){1'b0}}, 1'b1} : saturated;
 `ifdef FORMAL
   assign f_state = {first, period, remaining, next_first, next_period, elapsed, valid, pending};
 `endif

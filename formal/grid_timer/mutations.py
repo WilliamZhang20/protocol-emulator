@@ -14,6 +14,8 @@ MUTATIONS = [
     ('hold ignored', "wire hold = fn == 2'd0 && aux;", "wire hold = 1'b0;"),
     ('count mode steps on clocks', "wire step = fn == 2'd1 ? aux : !hold;", "wire step = !hold;"),
     ('capture does not restart its count', "if (aux) begin captured <= elapsed; elapsed <= 1; end", "if (aux) begin captured <= elapsed; end"),
+    ('resync double-samples a late edge', "wire [W:0] want = late_edge ? {1'b0, phase} + {1'b0, period} : {1'b0, phase};", "wire [W:0] want = {1'b0, phase};"),
+    ('resync wraps instead of saturating', "wire [W-1:0] saturated = clamped[W] ? {W{1'b1}} : clamped[W-1:0];", "wire [W-1:0] saturated = clamped[W-1:0];"),
     ('resync ignores its limit', "wire [W:0] clamped = want < lo ? lo : want > hi ? hi : want;", "wire [W:0] clamped = want;"),
     ('zero period accepted', "valid <= (cfg_first != 0 && cfg_period != 0);", "valid <= (cfg_first != 0);"),
     ('shadow kept after reload', "remaining <= next_period; first <= next_first; period <= next_period; pending <= 0;", "remaining <= next_period; first <= next_first; period <= next_period;"),

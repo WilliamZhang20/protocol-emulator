@@ -23,8 +23,9 @@
 //   5 RD   A = readback[arg[3:0]]  8 ADD A += arg   B JNZ  if A != 0: pc = arg
 //   6 AND  A &= arg           9 J    pc = arg       C LOOP C -= 1; if C != 0: pc = arg
 //   D SETC C = arg[7:0]
-//   E WCFG configuration word arg[7:0] = A; only lane-owned words (the five
-//          alternate-context words 112-116); any other address fails, and
+//   E WCFG configuration word arg[7:0] = A; only lane-owned words
+//          OWN_FIRST..OWN_LAST (the grid lane: the five alternate-context
+//          words 112-116; a lane core: its own words); any other address fails, and
 //          so does a value the fabric refuses (cfg_ok low: the word would
 //          break the rules static configuration is checked against)
 //   F WANY m = arg[7:0]: wait until any latched pulse event in m is set;
@@ -32,7 +33,7 @@
 //          empty mask fails
 // A is 16 bits (immediates zero-extend); C is 8 bits. Jumps and execution
 // beyond the loaded program fail. Abort fails. Everything fails closed.
-module grid_lane_controller #(parameter ABITS=6)(
+module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112,parameter [7:0] OWN_LAST=8'd116)(
   input wire clk,rst_n,enable,start,abort,
   input wire [9:0] prog_base,input wire [5:0] prog_last,
   // Program load: borrows a memory client like grid_page_loader.
@@ -81,7 +82,10 @@ module grid_lane_controller #(parameter ABITS=6)(
   wire wait_ok=sel[3] ? levels[sel[2:0]] : (latched[sel[2:0]] || events[sel[2:0]]);
   wire target_ok=arg[11:6]==0 && arg[5:0]<=prog_last;
   wire sys_ok=sys<=4'd10;
-  wire owned=arg[7:0]>=8'd112 && arg[7:0]<=8'd116 && arg[11:8]==0;
+  // In OWN_FIRST..OWN_LAST: one unsigned compare of the wrapped offset.
+  localparam [7:0] OWN_SPAN=OWN_LAST-OWN_FIRST;
+  wire [7:0] own_offset=arg[7:0]-OWN_FIRST;
+  wire owned=own_offset<=OWN_SPAN && arg[11:8]==0;
   wire do_wait=exec && op==4'h1;
   wire [7:0] seen=latched | events;
   wire [7:0] any_hit=seen & arg[7:0];

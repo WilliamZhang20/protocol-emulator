@@ -30,16 +30,21 @@ module grid_timer_properties (input wire clk);
   reg ok = 0, run = 0, lv = 0, pend = 0, t = 0, r = 0, fl = 0;
   wire [1:0] fn = mode[1:0];
   wire [8:0] lim = {1'b0, mode[15:8]};
-  // Resync target: phase, moved at most lim from rem (lim 0: anywhere).
-  function [W-1:0] toward(input [W-1:0] from, input [W-1:0] to, input [8:0] l);
-    reg [9:0] d;
+  // Resync target: the bit's sample `phase` after the edge, or, when the
+  // edge comes in the first half of the interval (more than phase + p/2
+  // clocks left: it arrived just after the tick that sampled its bit), the
+  // next bit's sample at phase + p. Moved at most lim from rem (lim 0:
+  // anywhere), then saturated to the counter.
+  function [9:0] toward(input [9:0] from, input [9:0] to, input [8:0] l);
     begin
       if (l == 0) toward = to;
-      else if (to > from) begin d = to - from; toward = d > l ? from + l[W-1:0] : to; end
-      else begin d = from - to; toward = d > l ? from - l[W-1:0] : to; end
+      else if (to > from) toward = (to - from > l) ? from + l : to;
+      else toward = (from - to > l) ? from - l : to;
     end
   endfunction
-  wire [W-1:0] rs = toward(rem, phase, lim);
+  wire [9:0] target = ({2'b0, rem} > {2'b0, phase} + {3'b0, p[W-1:1]}) ? {2'b0, phase} + {2'b0, p} : {2'b0, phase};
+  wire [9:0] moved = toward({2'b0, rem}, target, lim);
+  wire [W-1:0] rs = moved > 10'd255 ? 8'd255 : moved[W-1:0];
   wire [W-1:0] rs1 = rs == 0 ? 1 : rs;
   wire advance = fn == 1 ? aux : !(fn == 0 && aux);
   wire take_shadow = pend && !live_we;

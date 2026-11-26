@@ -1,15 +1,16 @@
 """Timer modes at the pins, driven by compiled lane designs.
 
-Images and programs come from the compiler (protocol-emulator-compiler
-circt_lab/lanes/<design>.json, built by `circt_lab/grid_lane.py`); the
-timer mode words (208-215) are the program's `extended_words`.
+Designs come from the compiler (protocol-emulator-compiler
+circt_lab/lanes/<design>.json, schema v2, built by `circt_lab/grid_lane.py`):
+a lane core wired through its local lines, written to configuration page 1.
 
 - pulse_period: timer0 in capture mode measures the clocks between rising
-  edges on pin 0 (uio 5); the lane pushes each 16-bit period to SRAM.
+  edges on in0 (uio 5); the lane pushes each 16-bit period to SRAM.
 - uart_rx_resync / uart_rx_plain: UART receive (8N1, 20 clocks per bit) on
-  pin 0 from a sender whose bit is up to 6% long or short. With timer0 in
-  resync mode every falling edge re-centres the samples; without it the
-  samples walk off the bits and frames fail.
+  in0 from a sender whose bit is up to 6% long or short, timed by the core's
+  timer0 and coded shifter. With timer0 in resync mode every falling edge
+  re-centres the samples; without it the samples walk off the bits and
+  frames fail.
 """
 import json
 import os
@@ -25,17 +26,8 @@ GATE_LEVEL = os.environ.get('GATES') == 'yes'
 RX_BASE = 200
 
 
-def design(name):
-    program = json.loads((DATA / f'{name}.program.json').read_text())
-    extended = {int(k): v for k, v in program.get('extended_words', {}).items()}
-    return DATA / f'{name}.mem', program, extended
-
-
 async def load(chip, name, host):
-    image, program, extended = design(name)
-    await chip.configure({**extended, **host}, image=image)
-    for offset, value in enumerate(program['bytes']):
-        await chip.write_byte(program['base'] + offset, value)
+    await chip.load_design(name, host)
 
 
 async def pulses(chip, periods, settle=300, high=20):

@@ -1,11 +1,12 @@
-"""SLIP-framed UART transmitter on the lane controller, at the pins.
+"""SLIP-framed UART transmitter on the lane core, at the pins.
 
-Image and program come from the compiler: protocol-emulator-compiler
-circt_lab/lanes/slip_uart_tx.json, built by `circt_lab/grid_lane.py
-lanes/slip_uart_tx.json <prefix>`. The line is uio 6, 8N1 at 20 clocks per
-bit. The lane escapes END and ESC per byte; tiles time every bit.
+The design comes from the compiler: protocol-emulator-compiler
+circt_lab/lanes/slip_uart_tx.json (lane design v2), built by
+`circt_lab/grid_lane.py lanes/slip_uart_tx.json <prefix>`. The line is uio 6
+(the core's out0), 8N1 at 20 clocks per bit. The lane escapes END and ESC
+per byte; the core's coded shifter frames each byte and its timer0 times
+every bit.
 """
-import json
 import os
 import random
 from pathlib import Path
@@ -15,9 +16,6 @@ from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
 from cocotb_tests.test_lane_controller import Chip
 
-DATA = Path(__file__).parents[1] / 'data/lane'
-IMAGE = DATA / 'slip-uart-tx.mem'
-PROGRAM = json.loads((DATA / 'slip-uart-tx.program.json').read_text())
 GATE_LEVEL = os.environ.get('GATES') == 'yes'
 BIT = 20
 LINE = 0x40
@@ -59,9 +57,7 @@ async def receive(dut, count, stop):
 
 
 async def send_packet(chip, packet):
-    await chip.configure({66: len(packet), 67: 0, 89: TX_BASE}, image=IMAGE)
-    for offset, value in enumerate(PROGRAM['bytes']):
-        await chip.write_byte(PROGRAM['base'] + offset, value)
+    await chip.load_design('slip-uart-tx', {66: len(packet), 67: 0, 89: TX_BASE})
     for offset, value in enumerate(packet):
         await chip.write_byte(TX_BASE + offset, value)
     expected = slip(packet)

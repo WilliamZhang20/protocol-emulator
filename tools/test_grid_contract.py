@@ -49,8 +49,8 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     lane_mutations = []
     bad = copy.deepcopy(contract); bad['lane']['program_word'] = 96; lane_mutations.append(('program word', bad))
     bad = copy.deepcopy(contract); bad['lane']['instruction']['opcodes']['WANY'] = 14; lane_mutations.append(('opcode', bad))
-    bad = copy.deepcopy(contract); bad['lane']['levels'] = bad['lane']['levels'][:7]; lane_mutations.append(('levels', bad))
-    bad = copy.deepcopy(contract); bad['lane']['live_write_words'] = [112, 117]; lane_mutations.append(('write fence', bad))
+    bad = copy.deepcopy(contract); bad['lane']['levels'] = 7; lane_mutations.append(('levels', bad))
+    bad = copy.deepcopy(contract); bad['lane']['live_write_words'] = [0, 8]; lane_mutations.append(('write fence', bad))
     bad = copy.deepcopy(contract); bad['lane']['buffer_instructions'] = 32; lane_mutations.append(('buffer depth', bad))
     bad = copy.deepcopy(contract); bad['resources']['shifter0']['config_fields']['restart'] = [7, 7]; lane_mutations.append(('shifter restart bit', bad))
     bad = copy.deepcopy(contract); bad['configuration']['timer_mode_words'] = [200, 207]; lane_mutations.append(('timer mode words', bad))
@@ -62,7 +62,9 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     bad = copy.deepcopy(contract); bad['configuration']['timer_functions']['capture'] = 3; lane_mutations.append(('timer function code', bad))
     bad = copy.deepcopy(contract); bad['configuration']['timer_mode_fields']['resync_limit'] = [15, 9]; lane_mutations.append(('resync limit field', bad))
     bad = copy.deepcopy(contract); bad['resources']['timer2']['mode_words'] = [214, 215]; lane_mutations.append(('timer mode owner', bad))
-    bad = copy.deepcopy(contract); bad['lane']['readback'][6:8] = ['timer1_capture', 'timer0_capture']; lane_mutations.append(('capture readback slot', bad))
+    bad = copy.deepcopy(contract); bad['lane']['live_write_accepted'] = [0, 1, 2, 4, 5]; lane_mutations.append(('live write accepted', bad))
+    bad = copy.deepcopy(contract); bad['lane']['idle_actions_bits'] = [3, 0]; lane_mutations.append(('idle actions bits', bad))
+    bad = copy.deepcopy(contract); bad['lane']['mode_bit'] = 1; lane_mutations.append(('lane mode bit', bad))
     # Lane core: the line table, selector fields and readback the compiler encodes against.
     bad = copy.deepcopy(contract); bad['lane_core']['lines'][3][2], bad['lane_core']['lines'][4][2] = 't0_rise', 't0_tick'; lane_mutations.append(('lane core line swap', bad))
     bad = copy.deepcopy(contract); bad['lane_core']['lines'] = bad['lane_core']['lines'][:-1]; lane_mutations.append(('lane core line dropped', bad))

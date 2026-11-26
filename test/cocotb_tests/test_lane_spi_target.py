@@ -1,23 +1,19 @@
-"""SPI target (mode 0, no chip select) on the lane controller, at the pins.
+"""SPI target (mode 0, no chip select) on the lane core, at the pins.
 
-Image and program come from the compiler: protocol-emulator-compiler
-circt_lab/lanes/spi_target.json, built by `circt_lab/grid_lane.py
-lanes/spi_target.json <prefix>`. SCLK is uio 5, MOSI uio 6; MISO is output
-2, visible on uo[0] while the host opcode is 7 and its strobe is idle.
+The design comes from the compiler: protocol-emulator-compiler
+circt_lab/lanes/spi_target.json (lane design v2), built by
+`circt_lab/grid_lane.py lanes/spi_target.json <prefix>`. SCLK is uio 5 (in0),
+MOSI uio 6 (in1); MISO is the core's out2, visible on uo[0] while the host
+opcode is 7 and its strobe is idle.
 """
-import json
 import os
 import random
-from pathlib import Path
 
 import cocotb
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
 from cocotb_tests.test_lane_controller import Chip
 
-DATA = Path(__file__).parents[1] / 'data/lane'
-IMAGE = DATA / 'spi-target.mem'
-PROGRAM = json.loads((DATA / 'spi-target.program.json').read_text())
 GATE_LEVEL = os.environ.get('GATES') == 'yes'
 TX_BASE, RX_BASE = 100, 200
 
@@ -34,9 +30,7 @@ async def prepare(chip, replies):
     """(Re)configure for a transfer of len(replies) bytes and load SRAM."""
     chip.state['op'] = 0; chip.drive()
     n = len(replies)
-    await chip.configure({66: n, 67: n, 89: TX_BASE, 90: RX_BASE}, image=IMAGE)
-    for offset, value in enumerate(PROGRAM['bytes']):
-        await chip.write_byte(PROGRAM['base'] + offset, value)
+    await chip.load_design('spi-target', {66: n, 67: n, 89: TX_BASE, 90: RX_BASE})
     for offset, value in enumerate(replies):
         await chip.write_byte(TX_BASE + offset, value)
 

@@ -13,7 +13,9 @@
 // word/stop pulses are registered here), so no selection can close a
 // combinational loop: a pulse reaches the tile it drives one clock after
 // its source. Pulses 0-31, levels 32-63:
-//    0 never            1 FIRE             2 SHIFT (tx word loaded)
+//    0 never            1 FIRE (the instruction only; the controller's
+//                         fire after a SHIFT is not on it)
+//    2 SHIFT (the coder's data register takes the tx word)
 //    3 timer0 tick      4 timer0 rise      5 timer0 fall
 //    6 timer1 tick      7 timer1 rise      8 timer1 fall
 //    9 coder word      10 coder stop
@@ -65,7 +67,7 @@ module grid_lane_core(
   input wire rd_valid,input wire [7:0] rd_data,output wire rd_consume,rd_want,
   output wire wr_valid,output wire [7:0] wr_data,input wire wr_ready,
   output wire stream_fault,
-  input wire [1:0] pad_in,mesh_in,   // synchronized levels
+  input wire [1:0] pad_in,mesh_in,   // synchronized levels (registered again here)
   output wire [2:0] out_value,out_enable,
   input wire [47:0] fabric_readback,
   output wire active,loading,done,error
@@ -77,11 +79,13 @@ module grid_lane_core(
 );
   // ------------------------------------------------------------ config
   reg [15:0] word[0:37];
+  wire ctl_cfg_we;wire [7:0] ctl_cfg_addr;wire [15:0] ctl_cfg_data;
   integer wi;
   always @(posedge clk) begin
     if(!rst_n) begin
       for(wi=0;wi<38;wi=wi+1) word[wi]<=16'd0;
     end else if(cfg_we && cfg_addr<6'd38) word[cfg_addr]<=cfg_data;
+    else if(ctl_cfg_we) word[{3'b0,ctl_cfg_addr[2:0]}]<=ctl_cfg_data;
   end
   wire [5:0] t0_start_sel=word[8][5:0],t0_stop_sel=word[8][11:6],t0_aux_sel=word[9][5:0];
   wire [5:0] t1_start_sel=word[9][11:6],t1_stop_sel=word[10][5:0],t1_aux_sel=word[10][11:6];
@@ -110,17 +114,21 @@ module grid_lane_core(
   wire t1_tick,t1_rise,t1_fall,t1_level,t1_running,t1_cfg;
   wire c_word,c_stop,c_out,c_active,c_bad;
   wire crc_out,crc_ok;
-  reg [1:0] pad_prev,mesh_prev;
+  // Inputs are registered at the boundary (pad_q, mesh_q), so their level
+  // and edge lines are register outputs like every other line: a mesh input
+  // that is combinationally derived from this core's own outputs cannot
+  // close a loop through a selector.
+  reg [1:0] pad_q,mesh_q,pad_prev,mesh_prev;
   always @(posedge clk) begin
-    if(!rst_n) begin pad_prev<=0;mesh_prev<=0;fire_q<=0;shift_q<=0;c_word_q<=0;c_stop_q<=0;end
+    if(!rst_n) begin pad_q<=0;mesh_q<=0;pad_prev<=0;mesh_prev<=0;fire_q<=0;shift_q<=0;c_word_q<=0;c_stop_q<=0;end
     else begin
-      pad_prev<=pad_in;mesh_prev<=mesh_in;
-      fire_q<=fire;shift_q<=shift_go;c_word_q<=c_word;c_stop_q<=c_stop;
+      pad_q<=pad_in;mesh_q<=mesh_in;pad_prev<=pad_q;mesh_prev<=mesh_q;
+      fire_q<=fire && !shift_q;shift_q<=shift_go;c_word_q<=c_word;c_stop_q<=c_stop;
     end
   end
-  wire [1:0] pad_rise=pad_in&~pad_prev,pad_fall=~pad_in&pad_prev;
-  wire [1:0] mesh_rise=mesh_in&~mesh_prev,mesh_fall=~mesh_in&mesh_prev;
-  assign lines={13'b0,c_bad,mesh_in[1],mesh_in[0],pad_in[1],pad_in[0],crc_ok,crc_out,c_active,c_out,
+  wire [1:0] pad_rise=pad_q&~pad_prev,pad_fall=~pad_q&pad_prev;
+  wire [1:0] mesh_rise=mesh_q&~mesh_prev,mesh_fall=~mesh_q&mesh_prev;
+  assign lines={13'b0,c_bad,mesh_q[1],mesh_q[0],pad_q[1],pad_q[0],crc_ok,crc_out,c_active,c_out,
                 t1_running,t1_level,t0_running,t0_level,actions[3],actions[2],actions[1],actions[0],1'b1,1'b0,
                 13'b0,mesh_fall[1],mesh_rise[1],mesh_fall[0],mesh_rise[0],pad_fall[1],pad_rise[1],pad_fall[0],pad_rise[0],
                 c_stop_q,c_word_q,t1_fall,t1_rise,t1_tick,t0_fall,t0_rise,t0_tick,shift_q,fire_q,1'b0};
@@ -143,27 +151,37 @@ module grid_lane_core(
   wire [15:0] tx_word;
   wire ctl_rd_valid,ctl_rd_consume,ctl_wr_valid,ctl_wr_ready;
   wire [7:0] ctl_wr_data;
-  wire ctl_cfg_we;wire [7:0] ctl_cfg_addr;wire [15:0] ctl_cfg_data;
   wire [5:0] pc;wire [15:0] acc;wire [7:0] count;
   wire ctl_rd_want;
-  grid_lane_controller ctl(clk,rst_n,arm && configured,start,abort,
+  // Live writes (WCFG, while armed): the controller owns words 0-7 and the
+  // core accepts timer first and period (words 0, 1, 4, 5) of a timer in
+  // use, nonzero. The word is updated and the timer's shadow takes the new
+  // {first, period} at its next reload, so a running period is never cut.
+  wire [2:0] live_idx=ctl_cfg_addr[2:0];
+  wire live_ok=ctl_cfg_addr<=8'd7 && !live_idx[1] && ctl_cfg_data!=16'd0 &&
+    (live_idx[2] ? word[4]!=16'd0 : word[0]!=16'd0);
+  wire [15:0] live_first=live_idx[0] ? word[{3'b0,live_idx[2],2'b00}] : ctl_cfg_data;
+  wire [15:0] live_period=live_idx[0] ? ctl_cfg_data : word[{3'b0,live_idx[2],2'b01}];
+  grid_lane_controller #(.OWN_FIRST(8'd0),.OWN_LAST(8'd7)) ctl(clk,rst_n,arm && configured,start,abort,
     word[36][9:0],word[36][15:10],
     mem_req,mem_ready,mem_addr,mem_rvalid,mem_rdata,owns_port,resp_pending,
     events,levels,readback,word[37][7:4],
     actions,fire,tx_word,shift_go,
     ctl_rd_valid,rd_data,ctl_rd_consume,ctl_rd_want,ctl_wr_valid,ctl_wr_data,ctl_wr_ready,
-    ctl_cfg_we,ctl_cfg_addr,ctl_cfg_data,1'b0,
+    ctl_cfg_we,ctl_cfg_addr,ctl_cfg_data,live_ok,
     active,loading,done,error,pc,acc,count);
-  wire unused_ctl=&{1'b0,ctl_cfg_we,ctl_cfg_addr,ctl_cfg_data,pc,acc,count};
+  wire unused_ctl=&{1'b0,pc,acc,count};
 
   // ------------------------------------------------------------ timers
   wire [15:0] t0_captured,t1_captured;
   grid_timer timer0(clk,rst_n,arm && configured,cfg_we && (cfg_addr==6'd0 || cfg_addr==6'd1),
-    cfg_addr==6'd0 ? cfg_data : word[0],cfg_addr==6'd1 ? cfg_data : word[1],1'b0,16'b0,16'b0,word[2],word[3],
+    cfg_addr==6'd0 ? cfg_data : word[0],cfg_addr==6'd1 ? cfg_data : word[1],
+    ctl_cfg_we && !live_idx[2],live_first,live_period,word[2],word[3],
     lines[t0_start_sel],lines[t0_stop_sel],lines[t0_aux_sel],
     t0_tick,t0_running,t0_cfg,t0_level,t0_rise,t0_fall,t0_captured);
   grid_timer timer1(clk,rst_n,arm && configured,cfg_we && (cfg_addr==6'd4 || cfg_addr==6'd5),
-    cfg_addr==6'd4 ? cfg_data : word[4],cfg_addr==6'd5 ? cfg_data : word[5],1'b0,16'b0,16'b0,word[6],word[7],
+    cfg_addr==6'd4 ? cfg_data : word[4],cfg_addr==6'd5 ? cfg_data : word[5],
+    ctl_cfg_we && live_idx[2],live_first,live_period,word[6],word[7],
     lines[t1_start_sel],lines[t1_stop_sel],lines[t1_aux_sel],
     t1_tick,t1_running,t1_cfg,t1_level,t1_rise,t1_fall,t1_captured);
   // A timer is in use when its first and period are set; an unused timer
@@ -180,8 +198,11 @@ module grid_lane_core(
   wire c_tx_grant=c_tx_request && c_auto_pull && rd_valid;
   wire c_rx_grant=c_rx_request && c_auto_push && wr_ready;
   fabric_shifter coded_shifter(.clk(clk),.rst_n(rst_n),.enable(arm && configured),
-    .cfg_we((cfg_we && cfg_addr>=6'd11 && cfg_addr<=6'd16) || shift_go),
-    .cfg_addr(shift_go ? 3'd0 : cfg_addr[2:0]-3'd2),.cfg_data(shift_go ? tx_word : cfg_data),
+    // SHIFT: the controller registers its tx word on the SHIFT clock, so
+    // the data register is written one clock later, on the shift line
+    // (shift_q), when the word is current; a start on that line takes it.
+    .cfg_we((cfg_we && cfg_addr>=6'd11 && cfg_addr<=6'd16) || shift_q),
+    .cfg_addr(shift_q ? 3'd0 : cfg_addr[2:0]-3'd2),.cfg_data(shift_q ? tx_word : cfg_data),
     .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(c_pulls),
     .tx_request(c_tx_request),.tx_grant(c_tx_grant),.tx_data(rd_data),.tx_eop(1'b0),.tx_err(1'b0),
     .rx_request(c_rx_request),.rx_grant(c_rx_grant),.crc_in(crc_tail),.rx_byte(c_rx_byte),
@@ -204,7 +225,7 @@ module grid_lane_core(
   assign stream_fault=(c_auto_pull && ctl_rd_want) || (c_auto_push && ctl_wr_valid);
 
   // ------------------------------------------------------------ readback and outputs
-  assign readback={96'b0,fabric_readback,{12'b0,mesh_in,pad_in},crc_value,t1_captured,t0_captured,c_status,c_rx_data};
+  assign readback={96'b0,fabric_readback,{12'b0,mesh_q,pad_q},crc_value,t1_captured,t0_captured,c_status,c_rx_data};
   generate for(si=0;si<3;si=si+1) begin: outputs
     assign out_value[si]=lines[ov_sel[si]];
     assign out_enable[si]=lines[oe_sel[si]];

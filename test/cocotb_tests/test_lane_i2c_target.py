@@ -1,23 +1,18 @@
-"""I2C target on the lane controller, at the top-level pins only.
+"""I2C target on the lane core, at the top-level pins only.
 
-The image and program come from the compiler (protocol-emulator-compiler,
-circt_lab/lanes/i2c_target.json, built by `circt_lab/grid_lane.py
-lanes/i2c_target.json <prefix>`). The test plays an I2C controller on an
+The design comes from the compiler (protocol-emulator-compiler,
+circt_lab/lanes/i2c_target.json, lane design v2, built by
+`circt_lab/grid_lane.py lanes/i2c_target.json <prefix>`). The test plays an I2C controller on an
 open-drain bus: each line is high unless the test or the chip pulls it.
 """
-import json
 import os
 import random
-from pathlib import Path
 
 import cocotb
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
 from cocotb_tests.test_lane_controller import Chip
 
-DATA = Path(__file__).parents[1] / 'data/lane'
-IMAGE = DATA / 'i2c-target.mem'
-PROGRAM = json.loads((DATA / 'i2c-target.program.json').read_text())
 ADDRESS = 0x48
 GATE_LEVEL = os.environ.get('GATES') == 'yes'
 SDA, SCL = 0x40, 0x20      # uio bits: SDA is pin 1 (uio 6), SCL is pin 0 (uio 5)
@@ -88,9 +83,7 @@ class Bus:
 async def setup(dut, capacity, half=60):
     chip = Chip(dut)
     await chip.reset()
-    await chip.configure({67: capacity, 90: 200}, image=IMAGE)
-    for offset, value in enumerate(PROGRAM['bytes']):
-        await chip.write_byte(PROGRAM['base'] + offset, value)
+    await chip.load_design('i2c-target', {67: capacity, 90: 200})
     bus = Bus(chip, half)
     cocotb.start_soon(bus.run())
     return chip, bus

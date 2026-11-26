@@ -1,8 +1,9 @@
-"""Lane controller timing at the pins: program-load (fetch) occupancy and
-decision time from an input edge to the pad the program drives.
+"""Lane timing at the pins: program-load (fetch) occupancy and decision
+time from an input edge to the pad the program drives.
 
-Uses the I2C target's fabric wiring (test/data/lane/i2c-target.mem): pin 0
-(uio 5) edges on rise; action 0 drives output 0 (uio 6) low when clear.
+The lane core is wired as an I2C target's pads: event 2 is in0's rise (uio
+5), event 1 in1's rise, level 0 in0, level 2 high (stands in for "already
+low" in the paths below); action 0 pulls out0 (uio 6) low, open drain.
 Numbers are logged and asserted against the model in
 experiments/grid_fabric/LANE_TIMING.md, so a timing regression fails here.
 RTL only: gate-level timing is the same cycle count by construction.
@@ -13,18 +14,21 @@ import random
 import cocotb
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
-from cocotb_tests.lane_asm import assemble, program_bytes, program_word
+from cocotb_tests.lane_asm import assemble, program_bytes, core_words
 from cocotb_tests.test_lane_controller import Chip
 from cocotb_tests import test_lane_determinism as D
-from cocotb_tests import test_lane_i2c_target as I2C
 
 GATE_LEVEL = os.environ.get('GATES') == 'yes'
 BASE = 768
 SDA, SCL = 0x40, 0x20
 
 
+WIRING = {'event1': 'in1.rise', 'event2': 'in0.rise', 'level0': 'in0', 'level2': 'high',
+          'out0.value': 'low', 'out0.enable': 'action0'}
+
+
 async def configure(chip, words):
-    await chip.configure({95: program_word(BASE, words), 66: 0, 67: 0}, image=I2C.IMAGE)
+    await chip.configure({91: 0x4, 66: 0, 67: 0, **core_words(words, BASE, WIRING)})
     for offset, value in enumerate(program_bytes(words)):
         await chip.write_byte(BASE + offset, value)
 
@@ -105,20 +109,20 @@ async def decision_time(dut):
     await chip.reset()
     paths = {
         # name: (program, instructions after the wait that precede the ACT)
-        'WAIT pulse; ACT': ('ACT 3\nCLEAR\nWAIT 2\nACT 2\nWAIT 8\nHALT', 0),
-        'WAIT level; ACT': ('ACT 3\nWAIT 10\nWAIT 8\nACT 2\nWAIT 10\nHALT', 0),
-        'WANY; AND; JNZ; ACT': ('ACT 3\nCLEAR\nWANY 6\nAND 4\nJNZ hit\nFAIL\nhit: ACT 2\nWAIT 10\nHALT', 2),
+        'WAIT pulse; ACT': ('ACT 0\nCLEAR\nWAIT 2\nACT 1\nWAIT 8\nHALT', 0),
+        'WAIT level; ACT': ('ACT 0\nWAIT 10\nWAIT 8\nACT 1\nWAIT 10\nHALT', 0),
+        'WANY; AND; JNZ; ACT': ('ACT 0\nCLEAR\nWANY 6\nAND 4\nJNZ hit\nFAIL\nhit: ACT 1\nWAIT 10\nHALT', 2),
         'I2C STOP decision (WANY; AND; JNZ; RD; AND; JZ; ACT)':
-            ('ACT 3\nCLEAR\nWANY 6\nAND 2\nJNZ bad\nRD 2\nAND 1\nJZ bad\nACT 2\nWAIT 10\nHALT\nbad: FAIL', 5),
+            ('ACT 0\nCLEAR\nWANY 6\nAND 2\nJNZ bad\nRD 6\nAND 1\nJZ bad\nACT 1\nWAIT 10\nHALT\nbad: FAIL', 5),
     }
     measured = {}
     for name, (source, extra) in paths.items():
         measured[name] = await edge_to_pad(chip, assemble(source))
     base = measured['WAIT pulse; ACT']
     dut._log.info('edge-to-pad clocks: %s', measured)
-    # Two synchronizer flops, the wait retiring on the clock it sees its
-    # condition (pulse events and levels both come from the synchronized
-    # pin), then the ACT register: 4 clocks, plus one per instruction.
-    assert base == 4, measured
+    # Two synchronizer flops, the lane core's input register (every core
+    # line is a register output), the wait retiring on the clock it sees its
+    # condition, then the ACT register: 5 clocks, plus one per instruction.
+    assert base == 5, measured
     for name, (source, extra) in paths.items():
         assert measured[name] == base + extra, (name, measured[name], base + extra)

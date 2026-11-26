@@ -16,7 +16,7 @@ module coded_abort_tb;
     bank_cfg_we,bank_routes,host_req,host_we,host_addr,host_wdata,host_ready,host_rvalid,host_rdata,
     tx_start,tx_base,tx_length,rx_base,rx_capacity,pin_in,pin_out,pin_oe,configured,
     tx_done,tx_error,rx_overflow,tx_active,rx_received,rx_written,tx_queued,rx_queued,
-    spi_start,10'd100,10'd200,spi_done,spi_error,spi_active);
+    spi_start,10'd100,10'd200,spi_done,spi_error,spi_active,1'b0);
   always #5 clk=~clk;
   initial begin #1000000;$fatal(1,"coded abort test timeout");end
   reg [15:0] words[0:123];reg [7:0] payload[0:7];integer i;

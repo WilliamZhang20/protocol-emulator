@@ -19,8 +19,9 @@ module grid_unified #(parameter USE_MACRO=0)(
   // Grid words travel grid_config_tree; arm waits until they have landed.
   wire [16*26-1:0] cfg_leaves;
   wire cfg_busy;
-  grid_config_tree config_tree(clk,rst_n,!arm_in && cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),1'b0,
-    {1'b0,cfg_addr},cfg_data,cfg_leaves,cfg_busy);
+  wire [25:0] unused_lane_leaf;   // no lane cores in this fabric
+  grid_config_tree config_tree(clk,rst_n,!arm_in && cfg_we && (cfg_addr<63 || (cfg_addr>=69 && cfg_addr<=80)),1'b0,1'b0,
+    {1'b0,cfg_addr},cfg_data,cfg_leaves,unused_lane_leaf,cfg_busy);
   wire arm=arm_in && !cfg_busy;
   reg [15:0] format,ormask;
   reg [1:0] fmt_written;
