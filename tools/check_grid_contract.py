@@ -50,6 +50,17 @@ def check(contract, modules):
     for codec_port, crc_port in [('crc_absorb', 'link_absorb'), ('crc_bit', 'link_bit'), ('crc_emit', 'link_emit')]:
         assert coder[codec_port] == crc[crc_port][:1], codec_port
     assert coder['crc_in'] == crc['tail_out']
+    # Selector sinks outside the sink array (the CRC's four inputs): each
+    # word is a route_input selector at its cell, like the array's sinks.
+    core_text = (ROOT / 'src/grid_core.v').read_text()
+    extra = network['selector_sinks']
+    assert sorted(int(k) for k in extra) == [77, 78, 79, 80]
+    for k, v in extra.items():
+        assert v['word'] == int(k) and v['cell'] == contract['resources'][v['resource']]['cell'] == 8
+        assert v['word'] in contract['resources'][v['resource']]['config_words']
+        assert contract['resources'][v['resource']]['inputs'][v['word'] - 77] == v['input']
+    assert 'if(la[8]>=77) crc_routes[la[8]-77]<=ld[8];' in core_text
+    assert 'assign crc_in[c]=route_input(crc_routes[c],local_signal[8],n_in[8],s_in[8],w_in[8],e_in[8]);' in core_text
     sinks = modules['grid_core']['netnames']['sink']['bits']
     for name, resource in contract['resources'].items():
         if resource['kind'] == 'timer' and 'input_sinks' in resource:

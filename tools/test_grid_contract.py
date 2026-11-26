@@ -19,6 +19,8 @@ bad['bit_network']['turn_classes'][1]['tracks'] = [0, 1]
 mutations.append(('switch turns', bad))
 bad = copy.deepcopy(contract); bad['bit_network']['switch_inputs']['north'] = ['south', 'east', 'west']
 mutations.append(('switch inputs', bad))
+bad = copy.deepcopy(contract); bad['bit_network']['selector_sinks']['77']['input'] = 'emit'
+mutations.append(('selector sink input', bad))
 with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     for name, bad in mutations:
         path = Path(tmp) / 'contract.json'

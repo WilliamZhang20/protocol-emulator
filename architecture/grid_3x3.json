@@ -33,7 +33,7 @@
     "input_selector": {"constant_zero": 0, "constant_one": 1, "local_first": 2, "north_first": 6, "south_first": 10, "west_first": 14, "east_first": 18, "last": 21},
     "sink_cells": [2, 2, 2, 3, 3, 3, 3, 1, 1, 1, 4, 4, 5, 5, 5, 7, 7, 7, 7, 10, 10, 10, 13, 13, 13, 9, 9, 9, 9, 11, 11, 11, 11, 12, 12, 12, 12, 14, 14, 14, 14, 6, 6],
     "sink_words": [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 57, 58, 59, 60, 61, 62, 176, 177, 178, 179, 180, 181, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 182, 183], "context_overridable_sinks": 19,
-    "sink_word_first": 41, "sink_word_split": 12, "sink_word_second": 56,
+    "selector_sinks": {"77": {"cell": 8, "word": 77, "resource": "crc", "input": "absorb"}, "78": {"cell": 8, "word": 78, "resource": "crc", "input": "emit"}, "79": {"cell": 8, "word": 79, "resource": "crc", "input": "init"}, "80": {"cell": 8, "word": 80, "resource": "crc", "input": "data"}}, "sink_word_first": 41, "sink_word_split": 12, "sink_word_second": 56,
     "lut_sinks": [10, 11], "lut_local_feedback": false
   },
   "resources": {
