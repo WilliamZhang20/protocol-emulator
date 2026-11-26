@@ -6,12 +6,17 @@
 // word network) is fixed; cell kinds, context counts and the word-port
 // cell are parameters. A mesh contract (written by the compiler's
 // fabric_arch.py) holds the same values and is the only description the
-// compiler reads. The default is the 3 x 3 prototype:
+// compiler reads. The defaults are the test configuration, a 3 x 5
+// candidate (3 rows, 5 columns: wide, like the 8 x 4 Tiny Tapeout die).
+// It is not the chosen fabric; the grid-size study decides size and mix:
 //
-//   0 io      1 io      2 shifter
-//   3 timer   4 crc     5 shifter        (4: word port)
-//   6 io      7 shifter 8 timer
+//    0 timer   1 io      2 timer   3 io      4 timer
+//    5 shifter 6 crc*    7 shifter 8 crc     9 shifter   (* word port)
+//   10 timer  11 io     12 timer  13 io     14 timer
 //
+// (An earlier arrangement with the io cells in the corners could not
+// route the I2C target's muxes: see FABRIC_REORG.md, grid-size study.)
+// Contexts on the io and crc cells.
 // KINDS: 2 bits per cell (0 io, 1 timer, 2 shifter, 3 crc). CTX4: 1 bit
 // per cell, 4 contexts if set, else 1 (transition rows tied off).
 // Cell kinds, local outputs (k) and sinks (k):
@@ -41,9 +46,9 @@
 //   feeds the network and whose transmit FIFO it feeds; 15: none).
 // Pads: open drain (enable and value 0 pull low) or push-pull (enable
 // drives value); invert applies to the value.
-module mesh #(parameter ROWS=3, COLS=3, WORD_PORT=4,
-  parameter [2*ROWS*COLS-1:0] KINDS=18'b01_10_00_10_11_01_10_00_00,
-  parameter [ROWS*COLS-1:0] CTX4=9'b011110111,
+module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
+  parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
+  parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,

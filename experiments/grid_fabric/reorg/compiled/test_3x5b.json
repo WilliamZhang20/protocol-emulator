@@ -1,23 +1,31 @@
 {
  "schema": "reorg.mesh.v1",
- "name": "mesh_3x3",
+ "name": "test_3x5b",
  "rows": 3,
- "cols": 3,
+ "cols": 5,
  "cells": [
   {
-   "kind": "io",
-   "contexts": 4
+   "kind": "timer",
+   "contexts": 1
   },
   {
    "kind": "io",
-   "contexts": 4
-  },
-  {
-   "kind": "shifter",
    "contexts": 4
   },
   {
    "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "shifter",
    "contexts": 1
   },
   {
@@ -26,14 +34,30 @@
   },
   {
    "kind": "shifter",
+   "contexts": 1
+  },
+  {
+   "kind": "crc",
    "contexts": 4
+  },
+  {
+   "kind": "shifter",
+   "contexts": 1
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
   },
   {
    "kind": "io",
    "contexts": 4
   },
   {
-   "kind": "shifter",
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "io",
    "contexts": 4
   },
   {
@@ -42,7 +66,7 @@
   }
  ],
  "word_port": {
-  "cell": 4,
+  "cell": 6,
   "locals": {
    "avail": 1,
    "match": 2,

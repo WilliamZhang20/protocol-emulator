@@ -14,9 +14,9 @@
 // clocks per bit on pad 3 (push-pull); +CRCTX a burst with a CRC-16 tail
 // on pads 3/5 (a pair, 5 inverted) clocked by pad 4, the CRC recomputed
 // here.
-module mesh_tb #(parameter ROWS=3, COLS=3, WORD_PORT=4,
-  parameter [2*ROWS*COLS-1:0] KINDS=18'b01_10_00_10_11_01_10_00_00,
-  parameter [ROWS*COLS-1:0] CTX4=9'b011110111);
+module mesh_tb #(parameter ROWS=3, COLS=5, WORD_PORT=6,
+  parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
+  parameter [ROWS*COLS-1:0] CTX4=15'd10570);
   localparam N=ROWS*COLS, CFG_BITS=N*512+128, WORDS=(CFG_BITS+31)/32;
   reg clk=0; always #1 clk=!clk;
   reg rst_n=0, run=0;

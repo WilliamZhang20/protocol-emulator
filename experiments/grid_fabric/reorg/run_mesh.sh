@@ -7,8 +7,8 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../.." && pwd)
 bin=$root/.tools/oss-cad-suite/bin; out=$1; mkdir -p "$out"
-contract=$here/compiled/mesh_3x3.json; hex=$here/compiled/i2c_target+uart_rx.3x3.hex
-tx_hex=$here/compiled/uart_tx.3x3.hex; crc_hex=$here/compiled/crc_tx.3x3.hex
+contract=$here/compiled/test_3x5b.json; hex=$here/compiled/i2c_target+uart_rx.test_3x5b.hex
+tx_hex=$here/compiled/uart_tx.test_3x5b.hex; crc_hex=$here/compiled/crc_tx.test_3x5b.hex
 params=$(python3 - "$contract" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); n = c['rows'] * c['cols']
@@ -33,7 +33,8 @@ fi
 bad=0
 expect() { local want=$1; shift; if run "$@"; then got=pass; else got=fail; fi
   [[ $got == "$want" ]] || { echo "UNEXPECTED $got (want $want): HALF=$1 SETUP=$2 HOLD=$3 ${EXTRA:-}"; bad=1; }; }
-# Recorded (245-point sweep: 215 pass, the hand-mapped slice's envelope).
+# Recorded on the test mesh (3 x 5 candidate); the sweep (--sweep) is to
+# match the hand-mapped slice's 215 of 245.
 expect pass 40 10 10; EXTRA=+UART expect pass 40 10 10; EXTRA=+UART expect pass 4 1 4
 EXTRA=+UART expect pass 20 1 4; EXTRA=+UART expect fail 20 2 2; EXTRA=+UART expect fail 8 1 3
 # Step 4 L0 (cell-side hardware): transmit from the reader on a push-pull

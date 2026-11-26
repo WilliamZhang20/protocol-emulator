@@ -296,16 +296,22 @@ shifter's FIFO port here).
     decodes the bits with its own code. Under every combination of FSM
     states it compares every sink and transition row with the source's
     meaning, and every unused sink must read 0.
-- **Result on the 3 x 3 prototype mesh.** The compiler chose its own
-  placement:
-  - the ACK FSM on an I/O cell;
-  - the address FSM at the word port;
-  - the UART in the bottom row.
+- **Result.** The first runs used a small 3 x 3 test configuration (a
+  test fixture only, never a fabric proposal). The test configuration is
+  now a wide 3 x 5 candidate (rows x columns, like the 8 x 4 Tiny
+  Tapeout die), `test_3x5b`:
+  - row 0: timer, io, timer, io, timer;
+  - row 1: shifter, crc (word port), shifter, crc, shifter;
+  - row 2: timer, io, timer, io, timer;
+  - contexts on the io and crc cells.
 
-  It routed in 4 PathFinder iterations, and the check passed. Run on the
-  mesh, the I2C target plus UART pass the slice's stimulus. The
-  245-point sweep with the UART running gives **215 pass, the same 30
-  failures as the hand mapping** (SCL low for 4 clocks or fewer).
+  On it:
+  - The compiler places the ACK FSM on an I/O cell and the address FSM
+    at the word port, routes, and the check passes.
+  - At the pins, the I2C target plus UART pass the slice's stimulus. The
+    245-point sweep with the UART running gives **215 pass, the same 30
+    failures as the hand mapping** (SCL low for 4 clocks or fewer).
+  - The 3 x 3 configuration gave the same 215 before.
 - **Found on the way.** A mesh RTL bug: the shifter's line vector was
   65 bits, so `in` landed on line 34. The pin test caught it; the
   configuration check could not, because it models the switch, not the
@@ -378,12 +384,7 @@ Not yet covered by criterion 3:
      `out`/`active` as local outputs; a CRC cell (`fabric_crc`, linked
      to its neighbouring shifters) carrying the word-network bit port;
      I/O cells with two pad drivers (open drain or push-pull, polarity).
-     *Done (2026-11-26).* The default 3 x 3 mesh is now:
-     - io, io, shifter;
-     - timer, crc (word port), shifter;
-     - io, shifter, timer.
-
-     The compiler checked each fixture before it ran, and each passes at
+     *Done (2026-11-26)*, on the test configuration above. The compiler checked each fixture before it ran, and each passes at
      the pins (`run_mesh.sh`, `test_fabric_map.py`):
      - UART TX: 12 bytes from the reader, gapless 8N1, on a push-pull pad;
      - `crc_tx`: a 6-word burst plus the linked CRC cell's CRC-16 tail,
@@ -427,6 +428,34 @@ Not yet covered by criterion 3:
    - routing demand and timing;
    - SRAM bandwidth;
    - why any mapping fails.
+
+   First finding: arrangement matters, not just counts. In a 3 x 5
+   arrangement with the io cells in the corners (row 1 all timers;
+   shifter, crc, shifter between corner io cells in rows 0 and 2), the
+   I2C target + UART did not route in 400 placements:
+   - The address FSM is pinned to the word-port crc cell, because the
+     constant-1 word gate is read there.
+   - Its `rx.start` mux must take START and ACK-END from two different
+     sides on the same track index.
+   - Tracks 2-3 end travelling horizontally, so a corner io cell cannot
+     supply the second side.
+
+   With io cells directly above and below the crc cells (`test_3x5b`) it
+   routes.
+
+   This failure is heuristic, not proven: the exhaustive oracle is still
+   to run. It points at a placement rule for the mix: io beside contexted
+   crc cells.
+
+   User's refined brief (2026-11-26):
+   - Spare capacity is not waste; it may carry protocol combinations or
+     routing. Maximum utilisation is not the goal.
+   - Classify each failure as a hardware limit, a compiler limitation or
+     a heuristic failure.
+   - Measure area and physical feasibility for the promising candidates.
+   - Recommend a size and mix, and state for each candidate the
+     workloads it can and cannot support, plus the requirements still to
+     be decided.
 
    Failures from the exhaustive oracle (where it is feasible) or from
    resource counting are proven; failures from the heuristic flow are
