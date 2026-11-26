@@ -162,7 +162,7 @@ module grid_lane_core(
     (live_idx[2] ? word[4]!=16'd0 : word[0]!=16'd0);
   wire [15:0] live_first=live_idx[0] ? word[{3'b0,live_idx[2],2'b00}] : ctl_cfg_data;
   wire [15:0] live_period=live_idx[0] ? ctl_cfg_data : word[{3'b0,live_idx[2],2'b01}];
-  grid_lane_controller #(.OWN_FIRST(8'd0),.OWN_LAST(8'd7)) ctl(clk,rst_n,arm && configured,start,abort,
+  grid_lane_controller #(.ABITS(4),.OWN_FIRST(8'd0),.OWN_LAST(8'd7)) ctl(clk,rst_n,arm && configured,start,abort,
     word[36][9:0],word[36][15:10],
     mem_req,mem_ready,mem_addr,mem_rvalid,mem_rdata,owns_port,resp_pending,
     events,levels,readback,word[37][7:4],
