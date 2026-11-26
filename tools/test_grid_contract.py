@@ -54,6 +54,9 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
     bad = copy.deepcopy(contract); bad['lane']['buffer_instructions'] = 32; lane_mutations.append(('buffer depth', bad))
     bad = copy.deepcopy(contract); bad['resources']['shifter0']['config_fields']['restart'] = [7, 7]; lane_mutations.append(('shifter restart bit', bad))
     bad = copy.deepcopy(contract); bad['configuration']['timer_mode_words'] = [200, 207]; lane_mutations.append(('timer mode words', bad))
+    bad = copy.deepcopy(contract); bad['resources']['coded_shifter']['coder_fields']['manchester'] = [14, 14]; lane_mutations.append(('coder manchester bit', bad))
+    bad = copy.deepcopy(contract); bad['resources']['coded_shifter']['coder_fields']['receive'] = [6, 6]; lane_mutations.append(('coder receive bit', bad))
+    bad = copy.deepcopy(contract); bad['resources']['coded_shifter']['coder_word'] = 120; lane_mutations.append(('coder word', bad))
     bad = copy.deepcopy(contract); bad['configuration']['timer_functions']['capture'] = 3; lane_mutations.append(('timer function code', bad))
     bad = copy.deepcopy(contract); bad['configuration']['timer_mode_fields']['resync_limit'] = [15, 9]; lane_mutations.append(('resync limit field', bad))
     bad = copy.deepcopy(contract); bad['resources']['timer2']['mode_words'] = [214, 215]; lane_mutations.append(('timer mode owner', bad))
@@ -64,4 +67,4 @@ with tempfile.TemporaryDirectory(prefix='grid-contract-mutations-') as tmp:
         except AssertionError:
             continue
         raise SystemExit(f'ERROR: lane {name} mutation was accepted')
-print('PASS: contract checker rejects topology, FIFO, switch, CRC-link, lane-controller and timer-mode mutations')
+print('PASS: contract checker rejects topology, FIFO, switch, CRC-link, lane-controller, timer-mode and coder-field mutations')

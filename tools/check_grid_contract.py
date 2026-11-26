@@ -127,6 +127,7 @@ def check(contract, modules):
     assert len(modules[tree['module']]['ports']['leaves']['bits']) == tree['leaves'] * tree['leaf_bits']
     check_lane(contract, modules, top)
     check_timers(contract, modules)
+    check_coder(contract)
     # Shifter configuration fields: the core's validity check and port wiring.
     core_text = (ROOT / 'src/grid_core.v').read_text()
     for name, instance in (('shifter0', 'shifter'), ('shifter1', 'shifter1')):
@@ -137,6 +138,35 @@ def check(contract, modules):
                   re.escape(f"cfg[{word}][{fields['width'][0]}:{fields['width'][1]}],cfg[{word}][{fields['msb_first'][0]}],"
                             f"cfg[{word}][{fields['restart'][0]}],"))
         assert re.search(wiring, core_text), name
+
+
+def check_coder(contract):
+    """Coded shifter register 5 fields and the configuration rules the
+    fabric enforces, against the tile and grid_core source."""
+    coder = contract['resources']['coded_shifter']
+    f = coder['coder_fields']
+    word = coder['coder_word']
+    assert word == coder['config_words'][0] + 4   # words 117-122 are tile registers 1-6; register 5 is the coder
+    tile = (ROOT / 'src/fabric_shifter.v').read_text()
+    for name, rtl in [('stuff_run', 'stuff_n'), ('runs_of_ones', 'ones_run'), ('receive', 'coder_rx'),
+                      ('arm_at_first_zero', 'sof_arm'), ('tail_invert', 'tail_inv'), ('bit_strobe', 'bit_strobe'),
+                      ('tail_length', 'tail_n')]:
+        hi, lo = f[name]
+        select = f'coder[{hi}:{lo}]' if hi != lo else f'coder[{hi}]'
+        assert re.search(r'wire\s+(\[\d+:0\]\s+)?%s\s*=\s*%s;' % (rtl, re.escape(select)), tile), name
+    nrzi, rx, manch = f['nrzi'][0], f['receive'][0], f['manchester'][0]
+    assert f'wire       nrzi_rx    = coder[{nrzi}] && coder_rx;' in tile
+    assert f'wire       manch      = coder[{manch}] && !coder[{rx}];' in tile
+    assert f'wire       manch_rx   = coder[{manch}] && coder[{rx}];' in tile
+    status = coder['coder_status_bits']
+    assert status == {'post_capture': [3, 0], 'stuff_error': [4, 4], 'manchester_violation': [5, 5]}
+    assert 'assign status = {active_r, overrun, push_pending, 7\'b0, manch_err, stuff_err, post_cap};' in tile
+    core = (ROOT / 'src/grid_core.v').read_text()
+    stuff_hi, stuff_lo = f['stuff_run']
+    rule = (f"coder_word_valid<=!(ld[8][{stuff_hi}:{stuff_lo}]==3'd1 && !ld[8][{f['runs_of_ones'][0]}]) && "
+            f"!(ld[8][{manch}] && ld[8][{nrzi}]);")
+    assert f'if(la[8]=={word}) begin' in core and rule in core
+    assert 'packet_configured_now=(&coder_written) && coder_word_valid &&' in core
 
 
 def check_timers(contract, modules):

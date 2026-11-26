@@ -26,7 +26,7 @@
 //            of equal bits)  [4] NRZI  [5] code the received bits (else
 //            the transmitted ones)  [6] arm at the first 0
 //            [7] invert tail bits  [8] word line pulses every frame bit
-//            [14:9] tail length  [15] Manchester (transmit)
+//            [14:9] tail length  [15] Manchester
 //   6 coder  [4:0] stuffing gate level (signal space 32-63)  [5] gated
 //            [12:6] frame bits not given to the CRC link
 //
@@ -37,7 +37,9 @@
 //   sends one complemented bit without advancing the frame; a receiver
 //   drops the sample after them, and flags the frame err (status bit 4) if
 //   that sample was not the complement. A stuff position restarts the run
-//   either way. Runs carry across words, bursts
+//   either way; in equal-bits mode the stuff bit is the first bit of the
+//   next run (CAN), so N=1 there would stuff forever and is invalid (the
+//   fabric refuses it). Runs carry across words, bursts
 //   and back-to-back frames; they restart when the tile starts from idle.
 //   Stuffing waits for the first 0 if [6] is set (CAN's SOF ends an idle
 //   bus) and acts only while the gate level is high if [5] of register 6.
@@ -58,6 +60,13 @@
 //   as itself, so a 1 is low-high (IEEE 802.3) and every bit has a mid-bit
 //   transition. Only the second tick of a bit advances the frame, so
 //   stuffing, the tail and the CRC link work per bit as above.
+// - Manchester receive ([15] with [5], not with NRZI). The sample line
+//   ticks every half bit (shift and sample lines the same): the first
+//   tick of a bit keeps the first half, the second takes the bit (the
+//   second half: low-high is 1) and checks the halves differ. Equal halves
+//   are a code violation: status bit 5, and the word is tagged err. Only
+//   the second tick advances the frame, so stuffing, parity, post bits
+//   and the CRC link work per bit.
 // - Bit strobe. With [8] the word line pulses for every frame bit instead
 //   of every word (an RX bit counter for CAN); FIFO pushes stay per word.
 // A receiving coder needs the shift and sample lines to be the same.
@@ -162,6 +171,7 @@ module fabric_shifter (
   wire       bit_strobe = coder[8];
   wire [5:0] tail_n     = coder[14:9];
   wire       manch      = coder[15] && !coder[5];
+  wire       manch_rx   = coder[15] && coder[5];
   wire [6:0] skip_n     = coder2[12:6];
 
   // Coder state.
@@ -175,6 +185,8 @@ module fabric_shifter (
   reg [5:0] tail_left;   // tail bits after the current one
   reg       prev_in;     // RX NRZI: line level at the previous sample
   reg       stuff_err;   // RX: a stuff bit was not the complement
+  reg       first_half;  // RX Manchester: the line in the bit's first half
+  reg       manch_err;   // RX Manchester: a bit with equal halves
   reg       crc_absorb_r, crc_bit_r, crc_emit_r;
 
   // Frame boundaries depend only on the frame register, so they are
@@ -232,8 +244,10 @@ module fabric_shifter (
   wire shift_line = active_r && lines[step[5:0]];
   // Manchester: the first half-bit tick of a bit only flips the line.
   wire half_tick  = manch && shift_line && !lead_wait && !mid;
-  wire shift_raw  = shift_line && !half_tick;
-  wire sample_raw = active_r && lines[step[11:6]] && !lead_wait;
+  // Manchester receive: the first half-bit sample only keeps the line.
+  wire half_rx    = manch_rx && active_r && lines[step[11:6]] && !lead_wait && !mid;
+  wire shift_raw  = shift_line && !half_tick && !half_rx;
+  wire sample_raw = active_r && lines[step[11:6]] && !lead_wait && !half_rx;
   // A stuff bit is due once the run is long enough; a transmitter sends
   // it at this boundary instead of advancing, a receiver drops this
   // sample. Neither moves the frame, so they mask the shift and sample.
@@ -295,7 +309,8 @@ module fabric_shifter (
 
   assign stop_pulse = done && !start;
   assign rx_data    = rx_word;
-  assign status = {active_r, overrun, push_pending, 8'b0, stuff_err, post_cap};
+  assign status = {active_r, overrun, push_pending, 7'b0, manch_err, stuff_err, post_cap};
+  wire manch_bad = manch_rx && sample_raw && first_half == in_line;
   assign crc_absorb = crc_absorb_r;
   assign crc_bit    = crc_bit_r;
   assign crc_emit   = crc_emit_r;
@@ -401,6 +416,8 @@ module fabric_shifter (
       tail_left    <= 6'd0;
       prev_in      <= 1'b0;
       stuff_err    <= 1'b0;
+      first_half   <= 1'b0;
+      manch_err    <= 1'b0;
       crc_absorb_r <= 1'b0;
       crc_bit_r    <= 1'b0;
       crc_emit_r   <= 1'b0;
@@ -412,6 +429,7 @@ module fabric_shifter (
         armed     <= !sof_arm;
         skip_left <= skip_n;
         stuff_err <= 1'b0;
+        manch_err <= 1'b0;
         prev_in   <= idle_next;
       end
       if (coded_evt && run) begin
@@ -438,9 +456,13 @@ module fabric_shifter (
       end
       if (sample_raw && nrzi_rx)
         prev_in <= in_line;
-      if (half_tick)
+      if (half_rx)
+        first_half <= in_line;
+      if (manch_bad)
+        manch_err <= 1'b1;
+      if (half_tick || half_rx)
         mid <= 1'b1;
-      else if (tx_evt || !active_r || done || !run)
+      else if (tx_evt || (manch_rx && sample_raw) || !active_r || done || !run)
         mid <= 1'b0;
       // Transmit phase: a stuff bit or the tail is on the line.
       if (tx_evt || !active_r || done || !run)
@@ -492,7 +514,7 @@ module fabric_shifter (
         // Include a data bit captured on this same cycle.
         push_byte <= rx_next[7:0];
         push_eop  <= done && burst_mode;
-        push_err  <= done && (post_bad || par_bad || stuff_err || stuff_bad);
+        push_err  <= done && (post_bad || par_bad || stuff_err || stuff_bad || manch_err || manch_bad);
       end
 
       if (start || burst_next) begin

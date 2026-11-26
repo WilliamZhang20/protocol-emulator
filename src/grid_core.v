@@ -37,7 +37,7 @@ module grid_core(
   reg [11:0] crc_written;
   reg [5:0] coder_written;
   reg [5:0] coder_tick_select;
-  reg coder_tail_required,crc_link_valid;
+  reg coder_tail_required,crc_link_valid,coder_word_valid;
   reg [2:0] temporal_oe_gate;
   reg temporal_oe_gate_valid;
   reg [15:0] crc_routes[0:3];
@@ -68,7 +68,7 @@ module grid_core(
   wire coder_serial,coder_active,coder_absorb,coder_bit,coder_emit;
   wire coder_pulls,coder_rx_request,coder_rx_eop,coder_rx_err,coder_word;
   wire [7:0] coder_rx_byte;wire [15:0] coder_rx_data,coder_status;
-  wire packet_configured_now=(&coder_written) && (!coder_tail_required ||
+  wire packet_configured_now=(&coder_written) && coder_word_valid && (!coder_tail_required ||
     (cfg[4][8] && (&crc_written) && crc_shape_valid && crc_link_valid));
   wire [35:0] switch_valid;
   wire [18:0] sink_valid;
@@ -151,10 +151,16 @@ module grid_core(
   end endgenerate
   // CRC and coded-shifter cell 8: words 69-80 and 117-122.
   always @(posedge clk) begin
-    if(!rst_n) begin crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;crc_shape_valid<=0;end
+    if(!rst_n) begin crc_written<=0;coder_written<=0;coder_tick_select<=0;coder_tail_required<=0;crc_link_valid<=0;crc_shape_valid<=0;coder_word_valid<=1;end
     else if(leaf_we[8]) begin
       if(la[8]==118) coder_tick_select<=ld[8][5:0];
-      if(la[8]==121) coder_tail_required<=|ld[8][14:9];
+      // Coder word (register 5): stuffing after one equal bit never ends
+      // (the stuff bit starts the next run, as in CAN), so N=1 is valid only
+      // for runs of ones; Manchester does not combine with NRZI.
+      if(la[8]==121) begin
+        coder_tail_required<=|ld[8][14:9];
+        coder_word_valid<=!(ld[8][2:0]==3'd1 && !ld[8][3]) && !(ld[8][15] && ld[8][4]);
+      end
       if(la[8]>=117 && la[8]<=122) coder_written[la[8]-117]<=1;
       if(la[8]>=69 && la[8]<=80) begin
         crc_written[la[8]-69]<=1;
