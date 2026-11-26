@@ -515,10 +515,12 @@ corner (fix in CI), sequencer rows full for I²C.
    16 rows plus 5 contexts each live in the host SRAM bank and load on a page
    row; rows still execute from registers, so timing inside a page is
    exact ([paged programs](experiments/grid_fabric/TEMPORAL_CONTROL.md#paged-programs)).
-   Cost: +119 flops, +13.7k µm² in local synthesis. Remaining: the compiler
-   must split programs into pages at stretchable points, and a later
-   encoding change ("pulse on entry, then wait") would halve Ethernet-style
-   programs.
+   Cost: +119 flops, +13.7k µm² in local synthesis. The compiler pages
+   programs over 16 rows at rows its lowerings mark stretchable (branch
+   `work/sequencer-paging`); a forced two-page `write_read` passes its source
+   tests at the pins. Remaining: mark stretchable rows in SPI and the
+   Ethernet session, and a later "pulse on entry, then wait" row encoding
+   would halve Ethernet-style programs.
 5. **Protocol bring-up at the pins.** Agree the demo set (SPI, UART, I²C,
    JTAG, USB low-speed TX, 10BASE-T TX). For each, report parsed, mapped,
    RTL-pin, gate-level and physical status in PROTOCOL_COVERAGE.md, with

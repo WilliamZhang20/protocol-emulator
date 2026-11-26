@@ -217,6 +217,10 @@ async def run_test(dut, image, program, plan, test):
         await chip.command(4, 0x0C)
         if not int(dut.uio_oe.value) & 0x80:
             raise Failure('the image did not arm (configuration rejected)')
+        # Static SRAM contents, such as sequencer pages (host SRAM needs arm).
+        for region in interface.get('setup_sram', []):
+            for i, byte in enumerate(region['bytes']):
+                await chip.write(region['base'] + i, byte)
         await chip.idle(7)
         attached = {}
         for spec in test['peers']:

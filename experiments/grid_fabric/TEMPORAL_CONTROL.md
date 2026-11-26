@@ -36,7 +36,12 @@ with an error.
 port stalls, checks held actions, contexts, return to page 0 and cancel on
 abort. The pin-level `programmed_i2c_write_paged` test runs the I²C
 transaction with its STOP sequence on page 1, through clock stretch and both
-NACK cases. The compiler does not emit paged programs yet.
+NACK cases. The compiler pages programs longer than 16 rows itself (sibling
+repo `circt_lab/grid_pager.py`), cutting only in front of rows its lowering
+marks as safe to stretch; `test/data/compiled/i2c-write-read-paged` is
+`write_read` forced onto two pages, and `test_compiled.py` replays the I²C
+source's own tests on it at the pins. Pages occupy the top of the host bank
+(bytes 896–1023 for two pages), which such programs must leave free.
 
 Five independently programmed sparse context overrides can redirect any five
 eligible tile-input selectors between two runtime contexts; the four tracks

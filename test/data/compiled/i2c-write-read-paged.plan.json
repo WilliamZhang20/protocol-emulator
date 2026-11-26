@@ -1,0 +1,388 @@
+{
+  "calls": {
+    "channel": 0,
+    "fails": [
+      "nack"
+    ],
+    "functions": {
+      "write_only": {
+        "id": 0,
+        "params": [
+          {
+            "max": 127,
+            "min": 0,
+            "name": "address",
+            "type": "int"
+          },
+          {
+            "name": "payload",
+            "type": "bytes",
+            "via": null
+          }
+        ],
+        "result": null,
+        "sends": [
+          {
+            "value": {
+              "a": {
+                "param": "address"
+              },
+              "b": 1,
+              "op": "<<"
+            }
+          },
+          {
+            "body": [
+              {
+                "value": {
+                  "element": "b"
+                }
+              }
+            ],
+            "for": "b",
+            "in": "payload"
+          }
+        ]
+      },
+      "write_read": {
+        "id": 1,
+        "params": [
+          {
+            "max": 127,
+            "min": 0,
+            "name": "address",
+            "type": "int"
+          },
+          {
+            "name": "payload",
+            "type": "bytes",
+            "via": null
+          },
+          {
+            "max": 16,
+            "min": 1,
+            "name": "count",
+            "type": "int"
+          }
+        ],
+        "result": "replies",
+        "sends": [
+          {
+            "value": {
+              "a": {
+                "param": "address"
+              },
+              "b": 1,
+              "op": "<<"
+            }
+          },
+          {
+            "body": [
+              {
+                "value": {
+                  "element": "b"
+                }
+              }
+            ],
+            "for": "b",
+            "in": "payload"
+          },
+          {
+            "value": {
+              "a": {
+                "a": {
+                  "param": "address"
+                },
+                "b": 1,
+                "op": "<<"
+              },
+              "b": 1,
+              "op": "|"
+            }
+          },
+          {
+            "body": [],
+            "repeat": {
+              "a": {
+                "param": "count"
+              },
+              "b": 1,
+              "op": "-"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "clock_hz": 50000000,
+  "invariants": [],
+  "pins": {
+    "scl": 0,
+    "sda": 1
+  },
+  "tests": [
+    {
+      "line": 89,
+      "name": "reads a register",
+      "peers": [
+        {
+          "args": {
+            "address": 72,
+            "registers": [
+              0,
+              25,
+              128
+            ],
+            "scl": {
+              "pin": 0
+            },
+            "sda": {
+              "pin": 1
+            }
+          },
+          "kind": "i2c_target",
+          "line": 90,
+          "name": "sensor"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "address": 72,
+            "count": 2,
+            "payload": [
+              1
+            ]
+          },
+          "expect": [
+            25,
+            128
+          ],
+          "function": "write_read",
+          "line": 91,
+          "op": "call"
+        },
+        {
+          "count": 1,
+          "expect": [
+            1
+          ],
+          "line": 92,
+          "op": "read",
+          "target": {
+            "peer": "sensor"
+          }
+        }
+      ],
+      "wires": []
+    },
+    {
+      "line": 95,
+      "name": "writes a multi-byte payload",
+      "peers": [
+        {
+          "args": {
+            "address": 72,
+            "registers": [
+              0
+            ],
+            "scl": {
+              "pin": 0
+            },
+            "sda": {
+              "pin": 1
+            }
+          },
+          "kind": "i2c_target",
+          "line": 96,
+          "name": "sensor"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "address": 72,
+            "count": 1,
+            "payload": [
+              1,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22
+            ]
+          },
+          "expect": [
+            255
+          ],
+          "function": "write_read",
+          "line": 97,
+          "op": "call"
+        },
+        {
+          "count": 8,
+          "expect": [
+            1,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22
+          ],
+          "line": 98,
+          "op": "read",
+          "target": {
+            "peer": "sensor"
+          }
+        }
+      ],
+      "wires": []
+    },
+    {
+      "line": 101,
+      "name": "empty payload skips the byte loop",
+      "peers": [
+        {
+          "args": {
+            "address": 72,
+            "registers": [
+              0
+            ],
+            "scl": {
+              "pin": 0
+            },
+            "sda": {
+              "pin": 1
+            }
+          },
+          "kind": "i2c_target",
+          "line": 102,
+          "name": "sensor"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "address": 72,
+            "count": 1,
+            "payload": []
+          },
+          "expect": [
+            0
+          ],
+          "function": "write_read",
+          "line": 103,
+          "op": "call"
+        }
+      ],
+      "wires": []
+    },
+    {
+      "line": 106,
+      "name": "an absent device is reported",
+      "peers": [
+        {
+          "args": {
+            "address": 72,
+            "registers": [
+              0
+            ],
+            "scl": {
+              "pin": 0
+            },
+            "sda": {
+              "pin": 1
+            }
+          },
+          "kind": "i2c_target",
+          "line": 107,
+          "name": "sensor"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "address": 80,
+            "count": 1,
+            "payload": [
+              0
+            ]
+          },
+          "fails": "nack",
+          "function": "write_read",
+          "line": 108,
+          "op": "call"
+        },
+        {
+          "args": {
+            "address": 72,
+            "count": 1,
+            "payload": [
+              0
+            ]
+          },
+          "expect": [
+            0
+          ],
+          "function": "write_read",
+          "line": 109,
+          "op": "call"
+        }
+      ],
+      "wires": []
+    },
+    {
+      "line": 112,
+      "name": "waits for a device that stretches the clock",
+      "peers": [
+        {
+          "args": {
+            "address": 72,
+            "registers": [
+              17,
+              34
+            ],
+            "scl": {
+              "pin": 0
+            },
+            "sda": {
+              "pin": 1
+            },
+            "stretch": 600
+          },
+          "kind": "i2c_target",
+          "line": 113,
+          "name": "slow"
+        }
+      ],
+      "step_timeout_cycles": null,
+      "steps": [
+        {
+          "args": {
+            "address": 72,
+            "count": 2,
+            "payload": [
+              0
+            ]
+          },
+          "expect": [
+            17,
+            34
+          ],
+          "function": "write_read",
+          "line": 114,
+          "op": "call"
+        }
+      ],
+      "wires": []
+    }
+  ]
+}
