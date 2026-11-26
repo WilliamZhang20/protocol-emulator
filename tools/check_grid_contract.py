@@ -9,9 +9,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['grid_stream_fabric.v', 'grid_stream_tiles.v', 'grid_stream_memory.v',
-           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'grid_lane_core.v', 'grid_timer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
+           'grid_core.v', 'grid_sequencer.v', 'grid_lane_controller.v', 'lane_prog_store.v', 'grid_lane_core.v', 'grid_timer.v', 'grid_switch.v', 'fabric_v2_tiles.v', 'fabric_crc.v',
            'fabric_shifter.v', 'config_bank.v', 'memory_tiles.v', 'program_memory.v']
 
+
+
+def is_module(name, base):
+    """A yosys module name for `base`: plain, or specialised by parameters
+    ($paramod\\base\\P=V..., or $paramod$<hash>\\base when the list is long)."""
+    return name == base or (name.startswith('$paramod') and
+                            (name.startswith('$paramod\\' + base + '\\') or name.endswith('\\' + base)))
 
 def check(contract, modules):
     grid = contract['grid']
@@ -173,7 +180,7 @@ def check_lane_core(contract):
     readback against src/grid_lane_core.v and the validity proof's tables."""
     core = contract['lane_core']
     rtl = (ROOT / 'src/grid_lane_core.v').read_text()
-    assert f"module {core['module']}(" in rtl
+    assert re.search(rf"module {core['module']}\s*(#\(.*?\))?\(", rtl), core['module']
     assert f"reg [15:0] word[0:{core['words'] - 1}];" in rtl
     # Line table: every bit of the lines vector, defined or constant zero.
     bits = concat_items(rtl, 'lines')
@@ -341,10 +348,13 @@ def check_lane(contract, modules, top):
     controller the compiler assembles for."""
     lane = contract['lane']
     core = contract['lane_core']
-    assert top[lane['instance']]['type'] == lane['core'] == core['module']
+    # The core is parameterized (USE_MACRO: its program store), so yosys may
+    # name the instance's type $paramod\\grid_lane_core\\...
+    core_type = top[lane['instance']]['type']
+    assert lane['core'] == core['module'] and is_module(core_type, core['module']), core_type
     # The core's controller is parameterized (its owned words), so yosys
     # names it $paramod\\grid_lane_controller\\...; exactly one such module.
-    names = [n for n in modules if n == lane['controller'] or n.startswith('$paramod\\' + lane['controller'] + '\\')]
+    names = [n for n in modules if is_module(n, lane['controller'])]
     assert len(names) == 1, names
     module = modules[names[0]]
     ports = module['ports']
@@ -367,7 +377,7 @@ def check_lane(contract, modules, top):
     fabric = (ROOT / 'src/grid_stream_fabric.v').read_text()
     assert re.search(r'leaf_addr==%d\) begin temporal_mode<=leaf_data\[%d\];lane_mode<=leaf_data\[%d\]'
                      % (lane['mode_word'], lane['mode_exclusive_with_bit'], lane['mode_bit']), fabric)
-    assert 'grid_lane_core lane_core(clk,rst_n,arm && configured && lane_mode,' in fabric
+    assert 'grid_lane_core #(.USE_MACRO(USE_MACRO)) lane_core(clk,rst_n,arm && configured && lane_mode,' in fabric
     # Page 1 reaches the core through the tree's lane leaf; lane 0 only.
     assert lane['core_page'] == 1 and lane['core_words_base'] == 0 and lane['core_words_per_lane'] == 64
     assert "wire core_cfg_we=lane_leaf[25] && !lane_leaf[24] && lane_leaf[23:22]==2'd0;" in fabric
@@ -378,7 +388,7 @@ def check_lane(contract, modules, top):
         assert f'host_addr[7:0]=={word}' in project, name
     # Live writes: the controller owns the core words; the core accepts timer first/period.
     first, final = lane['live_write_words']
-    assert f"grid_lane_controller #(.OWN_FIRST(8'd{first}),.OWN_LAST(8'd{final})) ctl(" in rtl_core
+    assert f"grid_lane_controller #(.USE_MACRO(USE_MACRO),.OWN_FIRST(8'd{first}),.OWN_LAST(8'd{final})) ctl(" in rtl_core
     assert lane['live_write_accepted'] == [layout['timer0'][0], layout['timer0'][0] + 1,
                                            layout['timer1'][0], layout['timer1'][0] + 1]
     assert "wire live_ok=ctl_cfg_addr<=8'd7 && !live_idx[1] && ctl_cfg_data!=16'd0 &&" in rtl_core

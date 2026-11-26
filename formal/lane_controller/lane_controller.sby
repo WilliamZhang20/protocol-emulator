@@ -13,10 +13,11 @@ prove: smtbmc boolector
 cover: smtbmc boolector
 
 [script]
-read -formal -sv -DFORMAL grid_lane_controller.v
+read -formal -sv -DFORMAL grid_lane_controller.v lane_prog_store.v
 read -formal -sv lane_controller_properties.sv
 prep -top lane_controller_properties
 
 [files]
 ../../src/grid_lane_controller.v
+../../src/lane_prog_store.v
 lane_controller_properties.sv

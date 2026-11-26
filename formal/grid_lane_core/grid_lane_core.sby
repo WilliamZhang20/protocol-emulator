@@ -13,13 +13,14 @@ prove: smtbmc boolector
 cover: smtbmc boolector
 
 [script]
-read -formal -sv grid_lane_core.v grid_lane_controller.v grid_timer.v fabric_shifter.v fabric_crc.v config_bank.v
+read -formal -sv grid_lane_core.v grid_lane_controller.v lane_prog_store.v grid_timer.v fabric_shifter.v fabric_crc.v config_bank.v
 read -formal -sv grid_lane_core_properties.sv
 prep -top grid_lane_core_properties
 
 [files]
 ../../src/grid_lane_core.v
 ../../src/grid_lane_controller.v
+../../src/lane_prog_store.v
 ../../src/grid_timer.v
 ../../src/fabric_shifter.v
 ../../src/fabric_crc.v

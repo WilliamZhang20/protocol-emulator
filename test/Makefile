@@ -12,7 +12,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing --assert -DGRID_STREAM_ASSERT -Wno-fatal
 endif
-PROJECT_SOURCES = project.v fabric_v2_tiles.v fabric_v2.v fabric_v2_unified.v grid_switch.v grid_core.v grid_sequencer.v grid_lane_controller.v grid_lane_core.v grid_timer.v grid_memory.v grid_unified.v grid_stream_tiles.v grid_stream_memory.v grid_stream_fabric.v fabric_crc.v fabric_shifter.v config_bank.v spi_tiles.v memory_tiles.v memory_shift.v memory_spi_fabric.v program_memory.v
+PROJECT_SOURCES = project.v fabric_v2_tiles.v fabric_v2.v fabric_v2_unified.v grid_switch.v grid_core.v grid_sequencer.v grid_lane_controller.v lane_prog_store.v grid_lane_core.v grid_timer.v grid_memory.v grid_unified.v grid_stream_tiles.v grid_stream_memory.v grid_stream_fabric.v fabric_crc.v fabric_shifter.v config_bank.v spi_tiles.v memory_tiles.v memory_shift.v memory_spi_fabric.v program_memory.v
 
 ifneq ($(GATES),yes)
 SIM_BUILD = sim_build/rtl
@@ -29,7 +29,7 @@ VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13cmos5l/libs.ref/sg13cmos5l_stdcell/verilo
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
 endif
 
-VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
+VERILOG_SOURCES += models/RM_IHPSG13_1P_core_behavioral_bm_bist.v models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v models/RM_IHPSG13_1P_core_behavioral.v models/RM_IHPSG13_1P_64x16_c2.v
 COMPILE_ARGS += -I$(SRC_DIR)
 VERILOG_SOURCES += $(CURDIR)/tb.v
 TOPLEVEL = tb

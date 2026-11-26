@@ -1,6 +1,10 @@
 `default_nettype none
 
 // Lane controller against an independently written ISA reference model.
+// The program store is the synchronous model of the on-chip macro; the
+// fetch invariant (the store's output is the instruction at pc whenever the
+// controller runs) is proved with everything else. Loading ends with one
+// priming clock that reads address 0.
 // The program is a symbolic 8-byte SRAM image (up to four instructions,
 // addresses alias modulo 8) at a symbolic base, so every opcode, operand,
 // branch, wait and stall is explored. Start, abort, enable, events, levels,
@@ -49,11 +53,12 @@ module lane_controller_properties (input wire clk);
     events, levels, readback, idle, actions, fire, tx_word, tx_load,
     rd_valid, rd_data, rd_consume, rd_want, wr_valid, wr_data, wr_ready,
     cfg_we, cfg_addr, cfg_data, cfg_ok, active, loading, done, error, pc, acc, count,
-    d_latched, d_act, d_sent, d_got, d_low, d_shift_fire, d_prog);
+    d_latched, d_act, d_sent, d_got, d_low, d_shift_fire, d_prog, d_priming, d_ir);
   wire [7:0] d_latched, d_sent, d_got, d_low; wire [3:0] d_act; wire d_shift_fire; wire [63:0] d_prog;
+  wire d_priming; wire [15:0] d_ir;
 
   // ---------------- reference model ----------------
-  localparam IDLE = 2'd0, LOAD = 2'd1, RUN = 2'd2;
+  localparam IDLE = 2'd0, LOAD = 2'd1, RUN = 2'd2, PRIME = 2'd3;
   reg [1:0] mode = IDLE;
   reg [7:0] m_sent = 0, m_got = 0;
   reg [5:0] m_pc = 0;
@@ -114,7 +119,7 @@ module lane_controller_properties (input wire clk);
     if (e_cfg) assert (cfg_addr == k[7:0] && cfg_data == m_a);
     assert (actions == e_actions);
     assert (active == (mode != IDLE));
-    assert (loading == (mode == LOAD));
+    assert (loading == (mode == LOAD || mode == PRIME));
   end
   // The write fence holds whatever the program does, and a refused value is
   // never written.
@@ -142,8 +147,10 @@ module lane_controller_properties (input wire clk);
         if (mem_req && mem_ready) m_sent <= m_sent + 8'd1;
         if (mem_rvalid) begin
           m_got <= m_got + 8'd1;
-          if (m_got == m_bytes - 8'd1) mode <= RUN;
+          if (m_got == m_bytes - 8'd1) mode <= PRIME;
         end
+      end else if (mode == PRIME) begin
+        mode <= RUN;
       end else if (in_run && off_end) begin
         mode <= IDLE; m_done <= 1'b1; m_err <= 1'b1;
       end else if (step) begin
@@ -183,8 +190,12 @@ module lane_controller_properties (input wire clk);
   // model's, so k-induction proves the output predictions for all time.
   always @(*) if (rst_n) begin
     assert (active == (mode != IDLE));
-    assert (loading == (mode == LOAD));
-    assert (mode != 2'd3);
+    assert (loading == (mode == LOAD || mode == PRIME));
+    assert (d_priming == (mode == PRIME));
+    // Loading and priming start the program at pc 0.
+    if (mode == LOAD || mode == PRIME) assert (m_pc == 6'd0);
+    // Fetch invariant: the store's output is the instruction at pc.
+    if (mode == RUN && m_pc <= last) assert (d_ir == words[m_pc[1:0]]);
     if (mode != IDLE) assert (!m_err && !m_done);
     assert (d_latched == m_seen);
     assert (d_act == m_act);
@@ -204,7 +215,7 @@ module lane_controller_properties (input wire clk);
   end
   genvar wi;
   generate for (wi = 0; wi < 4; wi = wi + 1) begin: loaded
-    always @(*) if (rst_n && ((mode == RUN && wi <= last) || (mode == LOAD && 2 * wi + 1 < m_got)))
+    always @(*) if (rst_n && (((mode == RUN || mode == PRIME) && wi <= last) || (mode == LOAD && 2 * wi + 1 < m_got)))
       assert (d_prog[wi*16 +: 16] == words[wi]);
   end endgenerate
 

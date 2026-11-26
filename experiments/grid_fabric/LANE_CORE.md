@@ -267,6 +267,207 @@ Also fixed: the tile experiment's timer testbench still expected the old
 non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
 (target phase + period) and the near-edge cases.
 
+## Program store: design (2026-11-26)
+
+**Problem.** Every GDS since 7193f31 stalls in detailed routing, including
+9a3e66e, where the fabric-wide lane wiring was already gone. What 7193f31
+added and the lane core kept is the controller's program buffer:
+`reg [15:0] prog[0:63]`. That is 1024 storage flops, each with a write
+enable, all written from one 16-bit broadcast (`{mem_rdata, low}`), and
+read through a combinational 16-bit 64:1 mux:
+`pc -> prog[pc] -> decode -> fire, cfg_we, wr_valid, rd_consume`. It is
+about 80k of the core's 247k um2 synthesized, and its wiring is fan-in
+everywhere: every bit of storage goes to one mux, every write goes to
+every bit. The probe `probe/route-buffer16` (c38b62b, 16 entries, never
+merged) tests whether this is the congestion.
+
+**Requirements.**
+1. One instruction per clock, waits hold. The decision time stated in
+   the ISA does not change.
+2. Capacity: the largest shipped programs are i2c-target (38
+   instructions) and slip-uart-tx (27); the receive programs are 8-17.
+   64 entries keep headroom; 16 would drop two shipped protocols.
+3. Routing demand bounded by construction, not by placement luck.
+4. The lane-controller reference proof still applies.
+5. Per controller, so it still works when controllers are independent
+   resources (next section).
+
+| Option | Routing demand | Capacity | Timing | Verdict |
+|---|---|---|---|---|
+| 64 flops + 64:1 mux (today) | 1024 placed bits into one mux tree, one broadcast write | 64 | pc -> mux -> decode | suspect |
+| 16 flops (the probe) | 256 bits | 16: i2c-target, slip-uart-tx no longer fit | shorter | probe only |
+| Latches instead of flops | ~30% less storage area, same mux and broadcast | 64 | same | does not change the wiring |
+| Registered read (prefetch into an `ir` flop) | same storage and mux | 64 | adds a bubble on taken branches | changes decision time: no |
+| One shared program SRAM, controllers in turn (barrel) | one macro | large | decision time x N controllers | breaks requirement 1 |
+| **Per-controller `RM_IHPSG13_1P_64x16_c2` macro** | 16 DIN + 16 DOUT + 6 ADDR + 4 control pins at fixed places; no storage or read mux in placement | 64 | clk -> DOUT 5.0-5.2 ns (slow corner, 1.08 V, 125 C) of the 20 ns clock; address setup negative | **chosen** |
+
+The macro is 236.8 x 64.36 um (15.2k um2, against ~80k for the flops
+and mux). It is in the same IHP SRAM family as the 1024x8 banks, so it
+takes the same integration rules: halo, Metal2-4 body obstructions,
+power from ExtendPowerStripes, and buffered DOUT (the 1024x8 notes on
+weak DOUT pins).
+
+**Fetch (the invariant).** Whenever the controller is running and not
+loading, the macro's DOUT is `prog[pc]`. The macro reads synchronously,
+so this clock presents the address of the next instruction:
+`addr = !retire ? pc : taken ? arg[5:0] : pc + 1`, and DOUT holds the
+instruction for the new pc on the next clock. Waits present `pc` again,
+so DOUT holds. Branch, wait and retire behaviour, and with them the
+decision time, are unchanged. The path is DOUT (5.1 ns) -> decode ->
+next-address mux -> ADDR, which replaces today's pc -> 64:1 mux ->
+decode.
+
+**Load.** As today: the loader writes word `got >> 1` with WEN. After the
+last word, `loading` stays high one more clock to read address 0, so the
+first instruction issues one clock later than today. The contract and
+the pin tests are checked for any stated start latency, and it is
+restated if one exists.
+
+**Simulation and formal model.** A wrapper `lane_prog_store #(ABITS)`
+instantiates the macro in synthesis (ABITS=6 only). In simulation and
+formal it is a behavioural synchronous RAM with the macro's cycle
+semantics, at ABITS=3 for the proof, as today. Tying the model to the
+macro:
+- A Verilator test drives the IHP behavioural model and the wrapper
+  model with the same random write/read sequences, then compares DOUT
+  every clock.
+- The gate-level test runs the real netlist with the IHP model, as the
+  1024x8 banks already do.
+
+**Tests and proofs.**
+- The reference-model proof is unchanged, because the ISA semantics do
+  not change.
+- New property: running and not loading implies `ir == model_prog[pc]`.
+- New mutations, each of which must be caught:
+  - the address presents `pc` instead of the next pc (stale fetch);
+  - no prefetch clock after the load;
+  - the taken-branch target is not fed to the address;
+  - a write lands during execution.
+- Pin tests: all lane programs, i2c-target and slip-uart-tx included.
+
+**Gate.**
+- If the probe routes, the buffer was the congestion, and the macro
+  removes it by construction.
+- If the probe does not route, the buffer is not the only cause. The
+  macro still removes 80k um2 and the 64:1 mux, but the next suspect
+  (the core's 64-line local set, or placement regions, step 4.3) is
+  diagnosed first, with the fail-fast run's (dc539bf) DRT artifacts.
+
+### Program store: status (RTL done locally, physical integration next)
+
+- `src/lane_prog_store.v`: the macro (`USE_MACRO`, ABITS 6) or the
+  behavioural model with its cycle semantics. `USE_MACRO` is threaded
+  `project -> grid_stream_fabric -> grid_lane_core -> grid_lane_controller`.
+- Controller fetch: `fetch_pc` comes from the same `jump_taken` term the
+  sequential branch uses, so fetch and execute cannot disagree. Loading
+  ends with one priming clock.
+- Proof: a priming phase in the reference model, the fetch invariant, and
+  "pc is 0 through loading" (induction needed it). Prove and cover pass;
+  12/12 mutations are caught (4 new: stale fetch, no priming clock, taken
+  branch fetching pc + 1, last word not written). The `grid_lane_core`
+  proof passes, 10/10 mutations.
+- `prog_store_tb` (in `make lane-core-test`): the model against the IHP
+  vendor model (`test/models`, FUNCTIONAL). 10k reads, 5k writes and 5k
+  held clocks agree, and a write-through mutant is caught at cycle 3.
+- Full cocotb regression 47/47, including i2c-target and slip-uart-tx;
+  lane-core tests 5/5; lint; `synth-check` (exactly one
+  `RM_IHPSG13_1P_64x16_c2`); `grid-contract-check`. The checker now
+  accepts yosys's parameterized module names (`is_module`).
+- The macro's views (lef, gds, lib, cdl, verilog) exist at the PDK
+  revision the GDS action pins (2bbec755, 2026-09-08; the macro was added
+  2026-08-11). `sg13cmos5l_sram` is a symlink to `sg13g2_sram`.
+- **Next, physical:** a `MACROS` entry with a fixed location, Metal2-4 body
+  obstructions and placement keep-outs, `PDN_MACRO_CONNECTIONS`, and
+  `odb_sram_stripes.py` generalized per macro type. The 64x16 LEF declares
+  every supply column as a Metal4 pin (20 VDD!, 20 VSS!, 16 VDDARRAY!,
+  5.62 um alternation, the same VDD!/VDDARRAY! break near y 39-45), so
+  the tile stripes snap onto declared pins. Signal pins are Metal2 on the
+  bottom edge. Verified only by GDS runs.
+
+## Independent assignment of resources: assessment (2026-11-26)
+
+**The proposal.** Every controller, timer, shifter, CRC and stream port
+is a separate resource that the compiler selects and connects for a
+protocol. A lane becomes a logical grouping the compiler forms, not a
+fixed hardware bundle: a protocol needing two shifters and one CRC gets
+exactly those, and another gets a different mix. The switch-box mesh
+connects them; word-wide transfers may need data paths of their own.
+
+**What it fixes.**
+- Fit:
+  - A full-duplex UART needs two shifters. Today `grid_lower.py`
+    refuses it ("a lane core has one coded shifter").
+  - A receive-only design wastes its core's second timer.
+  - A protocol with no decisions (a timer, a shifter and auto push/pull)
+    still occupies a controller.
+- Co-design: this is VPR's own model, heterogeneous blocks that are
+  packed, placed and routed. The compiler pieces already built apply
+  directly: the RRG from the contract, PathFinder, the annealer, and
+  latency constraints.
+
+**What it costs: three risks.**
+1. *Word paths.*
+   - Today these are fixed wires inside the core:
+     - controller -> shifter tx word (16 bits);
+     - shifter rx word and status, CRC value and timer captures ->
+       controller readback (16 bits each);
+     - stream bytes -> shifter auto pull/push;
+     - WCFG -> timer shadows.
+   - Over the bit mesh, each becomes a 16-bit bus. Fabric-wide word
+     wiring (7193f31: readback gathered from cells, WCFG into
+     contexts) is what first stopped routing converging.
+2. *Bit-path latency.*
+   - Tick -> shift and done -> stop are 1-clock local paths today.
+   - On the mesh they cost what the route costs. The compiler can hold
+     them exact (R5 `exact` constraints), and pin-referenced timing
+     must add the route's latency to the class latencies (`hardware.rs`,
+     contract).
+   - That is more for the compiler to get right, but every part of it
+     is already in the router.
+3. *Ownership.*
+   - 2.5 makes ownership structural: a core's WCFG reaches only its own
+     words.
+   - Independently assigned resources need ownership by configuration:
+     a compiler-written owner per resource, checked by the static
+     validity rule, as pin owners are.
+
+**Recommendation: independent at the bit level, bounded at the word
+level (VPR clusters).**
+- *Cluster.* A cluster is a word domain. It contains:
+  - one controller with its program-store macro;
+  - a small word bus (address plus 16-bit data, owned by the
+    controller);
+  - a typed set of resources attached to that bus. The first cluster
+    type is today's core with a second coded shifter: 2 timers, 2
+    shifters, 1 CRC, 1 stream pair.
+- *Bit level.* Every resource's bit inputs and outputs reach the mesh
+  through the cluster's line set, which serves as its local crossbar.
+  Any resource in any cluster can be assigned to any protocol for
+  bit-level work: a timer driving a pin, an edge detector, a shifter
+  with auto push/pull and no controller. That is the independent
+  assignment.
+- *Word level.* Words never cross the mesh. A word moves only:
+  - on the bus of the cluster it is in; or
+  - through a stream port (SRAM-backed).
+
+  The packer therefore keeps every resource whose word a controller reads
+  or writes in that controller's cluster. That is one packing
+  constraint, and the "additional data paths" the proposal mentions are
+  the cluster bus plus stream ports, both bounded by construction.
+- *Ownership.* Per-resource owner fields written by the compiler and
+  checked statically. Inside a cluster, word-bus reach is structural.
+
+**Plan effect, if adopted.**
+1. The program-store macro, needed in any case. It lands first.
+2. 2.5 becomes two clusters, not two fixed cores: the same core module
+   with resources addressed individually in the contract, and owner
+   fields replacing structural lane ownership for bit-level resources.
+3. The compiler gains a pack stage before placement (VPR's pack):
+   protocol resources go into clusters under the word-domain constraint.
+   R7 lowering then maps to resources, not fixed slots.
+4. Two-shifter protocols (UART full duplex, I2C) lower to one cluster
+   instead of waiting for step 2.6's two-lane pairing.
+
 ## 2.5 plan: two lane cores, ownership by construction, per-lane status
 
 Decisions (each with its reason):

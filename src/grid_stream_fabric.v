@@ -247,7 +247,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   // PUSH with the writer closed (capacity used), PULL with no bytes left;
   // so does a controller PULL/PUSH on a stream the coded shifter owns.
   wire lane_stream_fail=(lane_wr_valid && !wr_active) || (lane_rd_want && lane_left==0) || core_stream_fault;
-  grid_lane_core lane_core(clk,rst_n,arm && configured && lane_mode,
+  grid_lane_core #(.USE_MACRO(USE_MACRO)) lane_core(clk,rst_n,arm && configured && lane_mode,
     core_cfg_we,lane_leaf[21:16],lane_leaf[15:0],core_configured,
     lane_mode && host_start,(lane_b_done && lane_b_error) || lane_stream_fail,
     lane_mem_req,mem_ready[0] && lane_owns_port,lane_mem_addr,mem_rvalid[0],mem_rdata[7:0],lane_owns_port,lane_resp_pending,

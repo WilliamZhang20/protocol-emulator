@@ -18,6 +18,7 @@ RTL_SOURCES := \
 	src/grid_core.v \
 	src/grid_sequencer.v \
 	src/grid_lane_controller.v \
+	src/lane_prog_store.v \
 	src/grid_lane_core.v \
 	src/grid_timer.v \
 	src/grid_memory.v \
@@ -36,9 +37,11 @@ RTL_SOURCES := \
 
 SRAM_MODELS := \
 	test/models/RM_IHPSG13_1P_core_behavioral_bm_bist.v \
-	test/models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
+	test/models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v \
+	test/models/RM_IHPSG13_1P_core_behavioral.v \
+	test/models/RM_IHPSG13_1P_64x16_c2.v
 
-SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
+SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v src/RM_IHPSG13_1P_64x16_c2.v
 
 .PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
@@ -112,7 +115,7 @@ one-hop-check:
 	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 t:RM_IHPSG13_1P_64x16_c2; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py
@@ -216,10 +219,10 @@ grid-fabric-experiment:
 	$(BUILD_DIR)/verilator/grid_crc_reuse/Vcrc_reuse_tb
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module grid_stream_fabric_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/grid_stream_fabric) \
-		experiments/grid_stream/grid_stream_fabric_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v \
+		experiments/grid_stream/grid_stream_fabric_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/lane_prog_store.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v \
 		src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/grid_stream_fabric/Vgrid_stream_fabric_tb +SPI_IMAGE=$(abspath $(if $(GRID_SPI_IMAGE),$(GRID_SPI_IMAGE),test/data/grid-spi.mem)) +UART_IMAGE=$(abspath $(if $(GRID_UART_IMAGE),$(GRID_UART_IMAGE),test/data/grid-uart.mem))
-	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_stream_fabric -chparam USE_MACRO 1; synth -top grid_stream_fabric -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; stat'
+	$(ROUTING_YOSYS) -Q -T -p 'read_verilog -lib $(SRAM_BLACKBOX); read_verilog src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/lane_prog_store.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v; hierarchy -top grid_stream_fabric -chparam USE_MACRO 1; synth -top grid_stream_fabric -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 t:RM_IHPSG13_1P_64x16_c2; stat'
 
 grid-stream-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module stream_tb \
@@ -266,7 +269,7 @@ grid-stream-test:
 grid-coded-abort-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DFUNCTIONAL -DGRID_STREAM_ASSERT --top-module coded_abort_tb \
 		--Mdir $(abspath $(BUILD_DIR)/verilator/coded_abort) \
-		experiments/grid_fabric/reuse/coded_abort_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v \
+		experiments/grid_fabric/reuse/coded_abort_tb.sv src/grid_stream_fabric.v src/grid_stream_tiles.v src/grid_stream_memory.v src/grid_core.v src/grid_sequencer.v src/grid_lane_controller.v src/lane_prog_store.v src/grid_lane_core.v src/grid_timer.v src/grid_switch.v \
 		src/fabric_v2_tiles.v src/fabric_crc.v src/fabric_shifter.v src/config_bank.v src/memory_tiles.v src/program_memory.v $(SRAM_MODELS) -MAKEFLAGS -j1
 	$(BUILD_DIR)/verilator/coded_abort/Vcoded_abort_tb
 
@@ -279,7 +282,7 @@ grid-coder-reuse-test:
 # Lane core (step 2.4a), standalone: strict lint, then the cocotb tests
 # (UART transmit with auto pull, 8E1 receive with resync at +-5% drift,
 # capture, invalid configurations refused).
-LANE_CORE_SOURCES := src/grid_lane_core.v src/grid_lane_controller.v src/grid_timer.v \
+LANE_CORE_SOURCES := src/grid_lane_core.v src/grid_lane_controller.v src/lane_prog_store.v src/grid_timer.v \
 	src/fabric_shifter.v src/fabric_crc.v src/config_bank.v
 # Waived: the shifter's intentionally open `.next()` bank pins, and `abort`
 # matching a C++ word (a verilator naming note, not a design issue).
@@ -289,6 +292,12 @@ lane-core-test:
 	$(PYTHON) tools/check_pure_functions.py $(LANE_CORE_SOURCES)
 	$(PYTHON) tools/check_part_selects.py $(LANE_CORE_SOURCES)
 	$(MAKE) -C experiments/grid_fabric/lane_core SIM=$(SIM)
+	mkdir -p $(BUILD_DIR)/verilator/prog_store
+	$(VERILATOR) --binary --timing -Wno-fatal -DFUNCTIONAL --top-module prog_store_tb \
+		--Mdir $(abspath $(BUILD_DIR)/verilator/prog_store) \
+		experiments/grid_fabric/lane_core/prog_store_tb.sv src/lane_prog_store.v \
+		test/models/RM_IHPSG13_1P_core_behavioral.v test/models/RM_IHPSG13_1P_64x16_c2.v -MAKEFLAGS -j1
+	$(BUILD_DIR)/verilator/prog_store/Vprog_store_tb
 
 tile-spi-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/tile_spi_experiment

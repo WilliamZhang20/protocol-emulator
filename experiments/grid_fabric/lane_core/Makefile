@@ -6,7 +6,7 @@ TOPLEVEL = grid_lane_core
 COCOTB_TEST_MODULES = test_lane_core
 ROOT := $(abspath ../../..)
 export PYTHONPATH := $(ROOT)/test:$(CURDIR):$(PYTHONPATH)
-VERILOG_SOURCES = $(ROOT)/src/grid_lane_core.v $(ROOT)/src/grid_lane_controller.v $(ROOT)/src/grid_timer.v \
+VERILOG_SOURCES = $(ROOT)/src/grid_lane_core.v $(ROOT)/src/grid_lane_controller.v $(ROOT)/src/lane_prog_store.v $(ROOT)/src/grid_timer.v \
 	$(ROOT)/src/fabric_shifter.v $(ROOT)/src/fabric_crc.v $(ROOT)/src/config_bank.v
 ifeq ($(SIM),verilator)
 COMPILE_ARGS += --timing -Wno-fatal

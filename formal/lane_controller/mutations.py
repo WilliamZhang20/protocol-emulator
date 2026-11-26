@@ -18,6 +18,11 @@ MUTATIONS = [
     ('WANY consumes the whole mask register', "latched<=seen & ~arg[7:0];", "latched<=0;"),
     ('SHL shifts right', "4'd9: acc<={acc[14:0],1'b0};", "4'd9: acc<={1'b0,acc[15:1]};"),
     ('outputs live while disabled', "wire running=enable && active && !loading;", "wire running=active && !loading;"),
+    # Program store (synchronous macro): the fetch must present the next pc.
+    ('fetch presents the old pc', "retire ? next_pc : pc;", "retire ? pc : pc;"),
+    ('no priming clock after the load', "if(got==bytes-1'b1) priming<=1;", "if(got==bytes-1'b1) loading<=0;"),
+    ('taken branch fetches pc + 1', "jump_taken && target_ok) ? arg[5:0] :", "jump_taken && target_ok) ? next_pc :"),
+    ('last word not written', "resp_pending && mem_rvalid && got[0];", "resp_pending && mem_rvalid && got[0] && got!=bytes-1'b1;"),
 ]
 
 
@@ -35,7 +40,8 @@ def main(sby, build):
         (work / 'grid_lane_controller.v').write_text(source.replace(before, after))
         shutil.copy(HERE / 'lane_controller_properties.sv', work)
         sby_text = (HERE / 'lane_controller.sby').read_text().replace(
-            '../../src/grid_lane_controller.v', 'grid_lane_controller.v')
+            '../../src/grid_lane_controller.v', 'grid_lane_controller.v').replace(
+            '../../src/lane_prog_store.v', str(RTL.parent / 'lane_prog_store.v'))
         (work / 'lc.sby').write_text(sby_text)
         subprocess.run([sby, '-f', '-d', 'run', 'lc.sby', 'prove'], cwd=work,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)

@@ -25,6 +25,7 @@ project:
     - "grid_core.v"
     - "grid_sequencer.v"
     - "grid_lane_controller.v"
+    - "lane_prog_store.v"
     - "grid_lane_core.v"
     - "grid_timer.v"
     - "grid_memory.v"

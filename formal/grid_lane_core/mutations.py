@@ -10,7 +10,7 @@ import pathlib, shutil, subprocess, sys
 HERE = pathlib.Path(__file__).resolve().parent
 SRC = HERE.parents[1] / 'src'
 RTL = SRC / 'grid_lane_core.v'
-OTHERS = ['grid_lane_controller.v', 'grid_timer.v', 'fabric_shifter.v', 'fabric_crc.v', 'config_bank.v']
+OTHERS = ['grid_lane_controller.v', 'lane_prog_store.v', 'grid_timer.v', 'fabric_shifter.v', 'fabric_crc.v', 'config_bank.v']
 MUTATIONS = [
     ('line 19 accepted', "line_ok=s<=6'd18 ||", "line_ok=s<=6'd19 ||"),
     ('line 51 accepted', "(s>=6'd32 && s<=6'd50)", "(s>=6'd32 && s<=6'd51)"),

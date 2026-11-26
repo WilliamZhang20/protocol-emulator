@@ -55,7 +55,7 @@
 // the writer when its auto push is set; otherwise the controller's PULL and
 // PUSH do. A controller PULL or PUSH on a stream the shifter owns is a
 // stream fault (`stream_fault`), which the fabric turns into an abort.
-module grid_lane_core(
+module grid_lane_core #(parameter USE_MACRO=0)(
   input wire clk,rst_n,
   input wire arm,                     // fabric armed and this lane's configuration valid
   input wire cfg_we,input wire [5:0] cfg_addr,input wire [15:0] cfg_data,
@@ -162,7 +162,7 @@ module grid_lane_core(
     (live_idx[2] ? word[4]!=16'd0 : word[0]!=16'd0);
   wire [15:0] live_first=live_idx[0] ? word[{3'b0,live_idx[2],2'b00}] : ctl_cfg_data;
   wire [15:0] live_period=live_idx[0] ? ctl_cfg_data : word[{3'b0,live_idx[2],2'b01}];
-  grid_lane_controller #(.OWN_FIRST(8'd0),.OWN_LAST(8'd7)) ctl(clk,rst_n,arm && configured,start,abort,
+  grid_lane_controller #(.USE_MACRO(USE_MACRO),.OWN_FIRST(8'd0),.OWN_LAST(8'd7)) ctl(clk,rst_n,arm && configured,start,abort,
     word[36][9:0],word[36][15:10],
     mem_req,mem_ready,mem_addr,mem_rvalid,mem_rdata,owns_port,resp_pending,
     events,levels,readback,word[37][7:4],

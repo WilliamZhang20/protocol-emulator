@@ -5,9 +5,13 @@
 // action levels and starts tiles. Responses that must land inside a window
 // (an ACK slot, the next SPI byte) are bounded by its fixed decision time.
 //
-// The program is copied from SRAM into a local 64-instruction buffer when
+// The program is copied from SRAM into a local 64-instruction store when
 // the lane starts, so execution never waits on memory: one instruction per
-// clock, except waits, which retire on their condition. Instructions are 16
+// clock, except waits, which retire on their condition. The store is a
+// 64 x 16 SRAM macro on chip (lane_prog_store, below): it reads
+// synchronously, so every clock presents the address of the next
+// instruction and its output is always the instruction at pc. Loading ends
+// with one priming clock that reads address 0. Instructions are 16
 // bits, little-endian in SRAM, {op[3:0], arg[11:0]}:
 //
 //   0 SYS  arg[3:0]: 0 NOP, 1 HALT (done), 2 FAIL (done with error),
@@ -33,7 +37,7 @@
 //          empty mask fails
 // A is 16 bits (immediates zero-extend); C is 8 bits. Jumps and execution
 // beyond the loaded program fail. Abort fails. Everything fails closed.
-module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112,parameter [7:0] OWN_LAST=8'd116)(
+module grid_lane_controller #(parameter ABITS=6,parameter USE_MACRO=0,parameter [7:0] OWN_FIRST=8'd112,parameter [7:0] OWN_LAST=8'd116)(
   input wire clk,rst_n,enable,start,abort,
   input wire [9:0] prog_base,input wire [5:0] prog_last,
   // Program load: borrows a memory client like grid_page_loader.
@@ -52,12 +56,13 @@ module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112
 `ifdef FORMAL
   // Internal state for the reference-model proof (formal/lane_controller).
   ,output wire [7:0] dbg_latched,output wire [3:0] dbg_act,output wire [7:0] dbg_sent,dbg_got,dbg_low,
-  output wire dbg_shift_fire,output wire [(16<<ABITS)-1:0] dbg_prog
+  output wire dbg_shift_fire,output wire [(16<<ABITS)-1:0] dbg_prog,output wire dbg_priming,output wire [15:0] dbg_ir
 `endif
   );
-  // Program buffer: 2**ABITS instructions (64 on chip; the formal harness
-  // uses 8 to keep the proof small).
-  reg [15:0] prog [0:(1<<ABITS)-1];
+  // Program store: 2**ABITS instructions (64 on chip; the formal harness
+  // uses 4 to keep the proof small).
+  wire [15:0] ir;
+  reg priming;
   reg [7:0] latched;
   reg [3:0] act;
   reg [7:0] sent,got;
@@ -74,7 +79,6 @@ module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112
   wire running=enable && active && !loading;
   // Outputs decode only a loaded instruction: past the end the lane fails.
   wire exec=running && pc<=prog_last;
-  wire [15:0] ir=prog[pc[ABITS-1:0]];
   wire [3:0] op=ir[15:12];
   wire [11:0] arg=ir[11:0];
   wire [3:0] sys=arg[3:0];
@@ -116,26 +120,43 @@ module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112
   end endgenerate
   wire [15:0] rb=rb_word[sel];
   wire [5:0] next_pc=pc+1'b1;
+  // ---- program store port
+  // Load: each completed word is written (DOUT holds). Priming reads
+  // address 0. Running: the address is the pc the clock edge will set, so
+  // DOUT is always the instruction at pc (formal: the fetch invariant).
+  wire store_write=loading && !priming && resp_pending && mem_rvalid && got[0];
+  wire jump_taken=op==4'h9 || (op==4'hA && acc==0) || (op==4'hB && acc!=0) || (op==4'hC && count!=8'd1);
+  wire [5:0] fetch_pc=(retire && op>=4'h9 && op<=4'hC && jump_taken && target_ok) ? arg[5:0] :
+                      retire ? next_pc : pc;
+  wire store_read=priming || running;
+  wire [ABITS-1:0] store_addr=store_write ? got[ABITS:1] : priming ? {ABITS{1'b0}} : fetch_pc[ABITS-1:0];
+  lane_prog_store #(.ABITS(ABITS),.USE_MACRO(USE_MACRO)) store(clk,store_write || store_read,store_write,
+    store_read && !store_write,store_addr,{mem_rdata,low},ir
+`ifdef FORMAL
+    ,dbg_prog
+`endif
+    );
   always @(posedge clk) begin
     done<=0;
     resp_pending<=rst_n && issue;
     shift_fire<=rst_n && enable && tx_load;
     if(!rst_n || !enable) begin
-      active<=0;loading<=0;error<=0;pc<=0;acc<=0;count<=0;latched<=0;act<=0;sent<=0;got<=0;
+      active<=0;loading<=0;priming<=0;error<=0;pc<=0;acc<=0;count<=0;latched<=0;act<=0;sent<=0;got<=0;
       if(!rst_n) tx_word<=0;
     end else begin
       // Pulse events latch until a WAIT consumes them or CLEAR runs.
       latched<=latched | events;
-      if(active && abort) begin active<=0;loading<=0;done<=1;error<=1;end
+      if(active && abort) begin active<=0;loading<=0;priming<=0;done<=1;error<=1;end
       else if(start && !active) begin
-        active<=1;loading<=1;error<=0;pc<=0;acc<=0;count<=0;latched<=0;act<=idle_actions;sent<=0;got<=0;
+        active<=1;loading<=1;priming<=0;error<=0;pc<=0;acc<=0;count<=0;latched<=0;act<=idle_actions;sent<=0;got<=0;
+      end else if(priming) begin
+        priming<=0;loading<=0;
       end else if(loading) begin
         if(issue) sent<=sent+1'b1;
         if(resp_pending && mem_rvalid) begin
           got<=got+1'b1;
           if(!got[0]) low<=mem_rdata;
-          else prog[got[ABITS:1]]<={mem_rdata,low};
-          if(got==bytes-1'b1) loading<=0;
+          if(got==bytes-1'b1) priming<=1;
         end
       end else if(running && pc>prog_last) begin
         active<=0;done<=1;error<=1;
@@ -165,7 +186,7 @@ module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112
           4'h8: acc<=acc + {4'b0,arg};
           4'h9,4'hA,4'hB,4'hC: begin
             if(op==4'hC) count<=count-1'b1;
-            if(op==4'h9 || (op==4'hA && acc==0) || (op==4'hB && acc!=0) || (op==4'hC && count!=8'd1)) begin
+            if(jump_taken) begin   // the same term the fetch address uses
               if(target_ok) pc<=arg[5:0];
               else begin active<=0;done<=1;error<=1;end
             end
@@ -181,11 +202,7 @@ module grid_lane_controller #(parameter ABITS=6,parameter [7:0] OWN_FIRST=8'd112
   wire unused=&{1'b0,sys_ok,next_pc};
 `ifdef FORMAL
   assign dbg_latched=latched;assign dbg_act=act;assign dbg_sent=sent;assign dbg_got=got;assign dbg_low=low;
-  assign dbg_shift_fire=shift_fire;
-  genvar gi;
-  generate for(gi=0;gi<(1<<ABITS);gi=gi+1) begin: dbg_words
-    assign dbg_prog[gi*16+:16]=prog[gi];
-  end endgenerate
+  assign dbg_shift_fire=shift_fire;assign dbg_priming=priming;assign dbg_ir=ir;
 `endif
 endmodule
 `default_nettype wire
