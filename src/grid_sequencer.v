@@ -7,6 +7,14 @@
 // event[2:0], action[3:0]}. A halt row with bit 14 set is a page row:
 // {1,1,2'b00,page[3:0],entry[3:0],action[3:0]}. Its action is held while the
 // page loads, then execution continues at entry in the new page.
+// A halt row with bit 14 set and mode[13:12] nonzero is a descriptor that
+// covers two rows of work and then falls through to the next row:
+//   mode 01 phases: {1,1,01,a0[3:0],a1[3:0],event[2:0],0} drives a0 until
+//     the event, then a1 until the event, then continues at the next row.
+//   mode 10 entry-wait: {1,1,10,pulse[3:0],hold[3:0],event[2:0],0} drives
+//     pulse for one clock, then hold until the event, then the next row.
+// Each is cycle-for-cycle equal to the two plain rows it replaces. Mode 11,
+// bit 0, and falling through row 15 or into an unwritten row halt with error.
 // On each active clock, branch on events[event]. A self-branch waits without
 // changing actions. A halt row reports action bit 2 as the terminal error
 // flag. Events and actions are generic fabric signals; their
@@ -31,31 +39,46 @@ module grid_sequencer(
   wire [3:0] next_state=events[row[6:4]] ? row[10:7] : row[14:11];
   assign programmed=written;
   reg [3:0] load_entry,load_actions;
-  wire page_row=row[15] && row[14];
-  assign actions=!(enable && active) ? 4'b0000 : loading ? load_actions : written[state] ? row[3:0] : 4'b0000;
+  reg phase;
+  wire page_row=row[15] && row[14] && row[13:12]==2'b00;
+  wire descriptor=row[15] && row[14] && row[13:12]!=2'b00;
+  wire descriptor_bad=row[13:12]==2'b11 || row[0];
+  wire descriptor_event=events[row[3:1]];
+  wire [3:0] descriptor_next=state+1'b1;
+  wire [3:0] row_actions=!descriptor ? row[3:0] : phase ? row[7:4] : row[11:8];
+  assign actions=!(enable && active) ? 4'b0000 : loading ? load_actions : written[state] ? row_actions : 4'b0000;
   assign halting=enable && active && !loading && written[state] && row[15] && !row[14];
 
   always @(posedge clk) begin
     if(!rst_n) begin
-      written<=0; active<=0; done<=0; error<=0; state<=0; loading<=0; load_page<=0; load_entry<=0; load_actions<=0;
+      written<=0; active<=0; done<=0; error<=0; state<=0; loading<=0; load_page<=0; load_entry<=0; load_actions<=0; phase<=0;
     end else begin
       if(!enable) begin
-        active<=0; done<=0; error<=0; state<=0; loading<=0;
+        active<=0; done<=0; error<=0; state<=0; loading<=0; phase<=0;
         if(clear_program) written<=0;
         else if(cfg_we) begin rows[cfg_addr]<=cfg_data;written[cfg_addr]<=1;end
       end else begin
         done<=0;
         if(load_we) begin rows[load_addr]<=load_data;written[load_addr]<=1;end
-        if(active && abort) begin active<=0;done<=1;error<=1;loading<=0;end
+        if(active && abort) begin active<=0;done<=1;error<=1;loading<=0;phase<=0;end
         else if(start && !active) begin
-          error<=0;
+          error<=0;phase<=0;
           if(paging) begin active<=1;loading<=1;load_page<=0;load_entry<=entry;load_actions<=idle_actions;end
           else if(!written[entry]) begin error<=1;done<=1;end
           else begin state<=entry;active<=1;end
         end else if(active && loading) begin
           if(load_done) begin loading<=0;state<=load_entry;end
         end else if(active) begin
-          if(page_row) begin
+          if(descriptor) begin
+            if(descriptor_bad) begin active<=0;done<=1;error<=1;phase<=0;end
+            else if(!phase) begin if(row[13] || descriptor_event) phase<=1;end
+            else if(descriptor_event) begin
+              phase<=0;
+              if(state==4'd15 || !written[descriptor_next]) begin active<=0;done<=1;error<=1;end
+              else state<=descriptor_next;
+            end
+          end
+          else if(page_row) begin
             if(!paging || row[13:12]!=0) begin active<=0;done<=1;error<=1;end
             else begin loading<=1;load_page<=row[11:8];load_entry<=row[7:4];load_actions<=row[3:0];end
           end
@@ -73,6 +96,8 @@ module grid_sequencer(
     loading |-> active);
   assert property (@(posedge clk) disable iff(!rst_n || !enable)
     active && !loading && !abort && !row[15] && next_state==state |=> abort || $stable(actions));
+  assert property (@(posedge clk) disable iff(!rst_n || !enable)
+    phase |-> active && !loading && descriptor);
   assert property (@(posedge clk) disable iff(!rst_n || !enable)
     enable && cfg_we |=> $stable(programmed));
 `endif

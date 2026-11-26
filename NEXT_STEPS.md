@@ -202,10 +202,13 @@ Grouped so that image-breaking changes regenerate the SPI/UART images once.
      table, so it distributes the bottleneck rather than removing it, and
      costs +29.6k um2 (+8.5%), mostly row flops.
    - a. **Descriptor row format, shared by both lanes** (the keynote's
-     amortized control): a row sets actions on entry and waits for an event
-     or a count, and a stream row runs an engine for N bytes until done.
-     This removes the pulse/self-loop rows, so 16 rows cover more protocol
-     and lanes can shrink.
+     amortized control). Done: phases and entry-wait rows (see
+     TEMPORAL_CONTROL.md "Descriptor rows"), exact folds of row pairs; an
+     entry-wait with a frame request and `frame_done` runs one stream field.
+     Folding saves 2 rows per program in the tree (I2C 14 to 12, write-read
+     15 to 13, SPI 7 to 5) for +1.3k um2. A count field was dropped: no
+     program waits on repeated events. The fold lives in
+     `test/cocotb_tests/descriptor_fold.py` until the compiler adopts it (d).
    - b. **Per-lane contexts,** so each lane switches only its own routing.
    - c. **Generalize the lanes** onto the descriptor format; lane B's fabric
      placement and completion logic carry over.

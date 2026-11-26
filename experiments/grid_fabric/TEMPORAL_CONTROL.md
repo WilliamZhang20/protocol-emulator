@@ -11,6 +11,39 @@ runtime memory access. Unwritten state transitions, frame errors and
 overlapping frame requests fail closed. Its configuration words and event
 assignments are in [the hardware contract](../../architecture/grid_3x3.json).
 
+## Descriptor rows
+
+A plain row does one thing per state: set actions and branch on one event.
+The compiled programs spend many rows on two patterns, a wait that runs
+straight into another wait on the same event (waveform phases), and a
+one-clock pulse followed by a hold-until-event (a frame request held until
+`frame_done`, which is how the stream engine runs a whole field). Descriptor
+rows encode each pattern in one row and fall through to the next row, as a
+descriptor list does. They use the encodings that were reserved under page
+rows (`{1,1,mode,...}`, mode nonzero):
+
+| Mode | Row | Behaviour |
+|---|---|---|
+| 01 phases | `{1,1,01,a0[3:0],a1[3:0],event[2:0],0}` | drive a0 until the event, then a1 until the event, then the next row |
+| 10 entry-wait | `{1,1,10,pulse[3:0],hold[3:0],event[2:0],0}` | drive pulse for one clock, then hold until the event, then the next row |
+
+Each is cycle-for-cycle equal to the two plain rows it replaces, so a
+program can be folded after lowering without changing its timing
+(`test/cocotb_tests/descriptor_fold.py`). Folding the programs in the tree:
+temporal I2C 14 live rows to 12, compiled I2C write-read 15 to 13, SPI 7
+to 5. `sequencer_tb` runs each legacy program beside its folded form on
+random events and requires identical actions, halts, done and error on
+every clock; `test_temporal_i2c.programmed_i2c_write_descriptors` runs the
+folded I2C transaction at the pins in exactly the same time as the plain
+one. Mode 11, bit 0 set, and falling through row 15 or into an unwritten
+row halt with error. Both lanes share `grid_sequencer`, so both accept
+descriptors. Cost: about 1.3k um2 for both lanes (one phase flop each and
+the action mux).
+
+A count field ("wait for N events") was considered and left out: no program
+in the tree waits on a repeated event, because timers and the stream
+engine's byte count already absorb counting.
+
 ## Lane B: a second sequencer in the fabric
 
 Lane A is the sequencer in cell 6 that drives the frame, packet and coded

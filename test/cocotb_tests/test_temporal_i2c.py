@@ -4,6 +4,7 @@ import os
 import json
 
 import cocotb
+from cocotb_tests.descriptor_fold import fold
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 from cocotb.utils import get_sim_time
@@ -72,12 +73,18 @@ async def programmed_i2c_write_watchdog(dut):
 
 
 @cocotb.test()
+async def programmed_i2c_write_descriptors(dut):
+    """The same transaction with row pairs folded into descriptor rows."""
+    await _temporal_i2c(dut, paged=False, descriptors=True)
+
+
+@cocotb.test()
 async def i2c_bus_hang_watchdog(dut):
     """A target that holds SCL low forever: lane B times out and aborts lane A."""
     await _temporal_i2c(dut, paged=False, watchdog=3000, hang=True)
 
 
-async def _temporal_i2c(dut, paged, watchdog=None, hang=False):
+async def _temporal_i2c(dut, paged, watchdog=None, hang=False, descriptors=False):
     cocotb.start_soon(Clock(dut.clk, 20, unit='ns').start())
     dut.ena.value = 1; dut.rst_n.value = 0; dut.ui_in.value = 0
     state = {'op':0, 'strobe':0, 'scl':1, 'sda':1}
@@ -112,6 +119,11 @@ async def _temporal_i2c(dut, paged, watchdog=None, hang=False):
     image_path = Path(os.environ.get('TEMPORAL_I2C_IMAGE', str(Path(__file__).parents[1] / 'data/temporal-i2c.mem')))
     image = [int(x, 16) for x in image_path.read_text().splitlines()]
     assert len(image) == 117
+    if descriptors:
+        rows = fold(image[96:112], entry=image[92] & 15)
+        assert len(rows) < 16 and any(r >> 12 in (0xD, 0xE) for r in rows), rows
+        dut._log.info('descriptor program: %d rows instead of 16: %s', len(rows), ' '.join(f'{r:04x}' for r in rows))
+        image[96:112] = rows + [0x8007] * (16 - len(rows))
     program_path = os.environ.get("TEMPORAL_I2C_PROGRAM")
     program = json.loads(Path(program_path).read_text()) if program_path else {"payload_bytes": [1, 0x21, 1, 0x4d]}
     payload = program["payload_bytes"]

@@ -24,8 +24,54 @@ module sequencer_tb;
   end
   grid_page_loader loader(clk,rst_n,loading,load_page,base,req,ready,addr,rvalid,rdata,
                           row_we,row_addr,row_data,ctx_we,ctx_data,load_done,owns,resp_pending);
+  // Descriptor checks: a legacy program and its descriptor form run side by
+  // side on the same events and must match cycle for cycle.
+  reg d_clear=0,l_en=0,l_we=0,l_start=0,d_en=0,d_we=0,d_start=0;reg [3:0] l_addr=0,d_addr=0;reg [15:0] l_data=0,d_data=0;
+  reg [7:0] fuzz_events=8'b1;
+  wire [3:0] l_act,d_act,l_state,d_state,l_page,d_page;wire l_active,d_active,l_done,d_done,l_err,d_err,l_halt,d_halt,l_load,d_load;
+  wire [15:0] l_prog,d_prog;
+  grid_sequencer legacy_seq(clk,rst_n,l_en,l_we,l_addr,l_data,d_clear,l_start,1'b0,4'd0,fuzz_events,
+    l_act,l_halt,l_active,l_done,l_err,l_state,l_prog,1'b0,4'h0,l_load,l_page,1'b0,4'h0,16'h0,1'b0);
+  grid_sequencer desc_seq(clk,rst_n,d_en,d_we,d_addr,d_data,d_clear,d_start,1'b0,4'd0,fuzz_events,
+    d_act,d_halt,d_active,d_done,d_err,d_state,d_prog,1'b0,4'h0,d_load,d_page,1'b0,4'h0,16'h0,1'b0);
+  function automatic [15:0] phases(input [3:0] a0,input [3:0] a1,input [2:0] ev);
+    return {4'b1101,a0,a1,ev,1'b0};
+  endfunction
+  function automatic [15:0] entry_wait(input [3:0] pulse,input [3:0] hold,input [2:0] ev);
+    return {4'b1110,pulse,hold,ev,1'b0};
+  endfunction
+  task automatic load_pair(input [15:0] legacy[16],input [15:0] desc[16]);
+    integer k;
+    @(negedge clk);l_en=0;d_en=0;d_clear=1;tick();@(negedge clk);d_clear=0;
+    for(k=0;k<16;k=k+1) begin
+      @(negedge clk);l_we=1;l_addr=k;l_data=legacy[k];d_we=desc[k]!==16'hxxxx && desc[k]!=16'hffff;d_addr=k;d_data=desc[k];
+      tick();
+    end
+    @(negedge clk);l_we=0;d_we=0;l_en=1;d_en=1;
+  endtask
+  task automatic fuzz_pair(input integer trials,input integer seed_in);
+    integer t,c,seed,halts;seed=seed_in;halts=0;
+    for(t=0;t<trials;t=t+1) begin
+      @(negedge clk);l_start=1;d_start=1;fuzz_events=8'b1;tick();@(negedge clk);l_start=0;d_start=0;
+      for(c=0;c<400 && (l_active || d_active);c=c+1) begin
+        @(negedge clk);fuzz_events={$random(seed)}%4==0 ? {$random(seed)} | 8'b1 : 8'b1;
+        #1;
+        if(l_act!==d_act || l_active!==d_active || l_halt!==d_halt)
+          $fatal(1,"descriptor mismatch trial %0d cycle %0d: legacy act=%h active=%b halt=%b state=%0d, desc act=%h active=%b halt=%b state=%0d",
+                 t,c,l_act,l_active,l_halt,l_state,d_act,d_active,d_halt,d_state);
+        tick();
+        if(l_done!==d_done || l_err!==d_err) $fatal(1,"descriptor done/error mismatch trial %0d cycle %0d",t,c);
+        if(l_done) halts=halts+1;
+      end
+      if(l_active || d_active) begin
+        // Still running (an endless wait): disable and restart both.
+        @(negedge clk);l_en=0;d_en=0;tick();@(negedge clk);l_en=1;d_en=1;
+      end
+    end
+    if(halts<trials/4) $fatal(1,"fuzz rarely reached a halt (%0d/%0d)",halts,trials);
+  endtask
   always #5 clk=~clk;
-  initial begin #100000;$fatal(1,"timeout");end
+  initial begin #20000000;$fatal(1,"timeout");end
   function automatic [15:0] row(input bit halt,input [3:0] no,input [3:0] yes,
                                  input [2:0] event_id,input [3:0] action);
     return {halt,no,yes,event_id,action};
@@ -140,11 +186,62 @@ module sequencer_tb;
     write_row(0,page_row(1,0,3));
     @(negedge clk);enable=1;launch(0);check(1,0,3,0,0);tick();check(0,0,0,1,1);
     @(negedge clk);enable=0;tick();
-    begin reg [15:0] bad;bad=page_row(1,0,3)|16'h1000;mem[base]=bad[7:0];mem[base+1]=bad[15:8];end
+    begin reg [15:0] bad;bad=page_row(1,0,3)|16'h3000;mem[base]=bad[7:0];mem[base+1]=bad[15:8];end
     @(negedge clk);paging=1;enable=1;launch(0);
     wait_loaded();
-    check(1,0,3,0,0);
+    check(1,0,1,0,0); // reserved descriptor mode 11: shows a0, then fails closed
     tick();check(0,0,0,1,1);
+    // Descriptors: exact cycles of phases and entry-wait.
+    begin
+      reg [15:0] lg[16],dc[16];integer k;
+      for(k=0;k<16;k=k+1) begin lg[k]=16'h8000;dc[k]=16'hffff;end
+      dc[0]=phases(4'h1,4'h2,3'd1);dc[1]=entry_wait(4'h4,4'h8,3'd2);dc[2]=16'h8003;
+      load_pair(lg,dc);
+      @(negedge clk);d_start=1;tick();@(negedge clk);d_start=0;fuzz_events=8'b1;
+      if(d_state!==0 || d_act!==4'h1) $fatal(1,"phases a0");
+      repeat(3) begin tick();if(d_state!==0 || d_act!==4'h1) $fatal(1,"phases waits in a0");end
+      @(negedge clk);fuzz_events=8'b11;tick();if(d_state!==0 || d_act!==4'h2) $fatal(1,"phases a1");
+      @(negedge clk);fuzz_events=8'b1;tick();if(d_state!==0 || d_act!==4'h2) $fatal(1,"phases waits in a1");
+      @(negedge clk);fuzz_events=8'b11;tick();if(d_state!==1 || d_act!==4'h4) $fatal(1,"entry-wait pulse");
+      @(negedge clk);fuzz_events=8'b1;tick();if(d_state!==1 || d_act!==4'h8) $fatal(1,"entry-wait pulse lasts one clock");
+      repeat(3) begin tick();if(d_state!==1 || d_act!==4'h8) $fatal(1,"entry-wait holds");end
+      @(negedge clk);fuzz_events=8'b101;tick();if(d_state!==2 || d_act!==4'h3 || !d_halt) $fatal(1,"falls through to halt");
+      @(negedge clk);fuzz_events=8'b1;tick();if(d_active || !d_done || d_err) $fatal(1,"descriptor program halts clean");
+      // An entry-wait whose event is already true still pulses for one clock.
+      dc[0]=entry_wait(4'h5,4'h6,3'd0);dc[1]=16'h8000;load_pair(lg,dc);
+      @(negedge clk);d_start=1;tick();@(negedge clk);d_start=0;
+      if(d_act!==4'h5) $fatal(1,"pulse with event true");
+      tick();if(d_act!==4'h6 || d_state!==0) $fatal(1,"hold sees the event on its first clock");
+      tick();if(d_state!==1) $fatal(1,"advance after hold");
+      // Fail closed: reserved mode, reserved bit 0, falling off row 15, into an unwritten row.
+      for(k=0;k<4;k=k+1) begin
+        integer j;for(j=0;j<16;j=j+1) dc[j]=16'hffff;
+        case(k)
+          0: begin dc[0]=16'hF000;end
+          1: begin dc[0]=phases(4'h1,4'h2,3'd0)|16'h1;end
+          2: begin dc[0]=16'h0780;dc[15]=phases(4'h1,4'h2,3'd0);end
+          3: begin dc[0]=entry_wait(4'h1,4'h2,3'd0);end
+        endcase
+        load_pair(lg,dc);
+        @(negedge clk);d_start=1;tick();@(negedge clk);d_start=0;
+        repeat(6) if(d_active) tick();
+        if(d_active || !d_err) $fatal(1,"descriptor fail-closed case %0d",k);
+      end
+    end
+    // Real programs: legacy rows vs their descriptor form (scratch compressor).
+    begin
+      reg [15:0] lg[16],dc[16];
+      lg='{16'h0887,16'h0912,16'h1190,16'h2204,16'h2a8c,16'h2b68,16'h3c58,16'h2478,16'h4c84,16'h4d10,16'h5592,16'h5e13,16'h6f53,16'h8003,16'h8007,16'h8007};
+      dc='{16'he722,16'h0910,16'h1984,16'hec8c,16'h2b58,16'h1b78,16'he402,16'hd232,16'h4d53,16'h8003,16'h8007,16'h8007,16'hffff,16'hffff,16'hffff,16'hffff};
+      load_pair(lg,dc);fuzz_pair(300,1);
+      lg='{16'h0887,16'h0912,16'h1190,16'h2204,16'h2a8c,16'h2b68,16'h3cf8,16'h44d8,16'h2738,16'h4d10,16'h5592,16'h6e73,16'h8003,16'h8007,16'h7791,16'h7893};
+      dc='{16'h0887,16'hd202,16'h1984,16'hec8c,16'h2bf8,16'h33d8,16'h1db8,16'hd022,16'h54f3,16'h8003,16'h8007,16'h5e11,16'h6093,16'hffff,16'hffff,16'hffff};
+      load_pair(lg,dc);fuzz_pair(300,2);
+      lg='{16'h0881,16'h110c,16'h11e0,16'h0a70,16'h2a82,16'h2b30,16'h33c0,16'h8000,16'h8000,16'h8000,16'h8000,16'h8000,16'h8000,16'h8000,16'h8000,16'h8000};
+      dc='{16'h0881,16'hec0c,16'h09f0,16'he206,16'h22c0,16'h8000,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff,16'hffff};
+      load_pair(lg,dc);fuzz_pair(300,3);
+    end
+    $display("PASS: descriptor rows (phases, entry-wait) match their legacy rows cycle for cycle on I2C and SPI");
     $display("PASS: programmable sequencer waits, branches, halts and fails closed");
     $display("PASS: sequencer pages and contexts load from SRAM under port stalls");
     $finish;
