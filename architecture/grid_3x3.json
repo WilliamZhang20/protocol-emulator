@@ -209,7 +209,7 @@
     ],
     "reserved_bits": [
       [8, [15, 12]], [9, [15, 12]], [10, [15, 12]],
-      [12, [15, 12]], [13, [15, 13]], [14, [15, 13]], [16, [15, 13]],
+      [12, [15, 12]], [13, [15, 13]], [14, [15, 13]], [16, [15, 14]],
       [21, [15, 11]], [22, [15, 11]], [23, [15, 10]], [24, [15, 12]],
       [25, [15, 12]], [26, [15, 12]], [27, [15, 12]], [28, [15, 12]],
       [29, [15, 12]], [30, [15, 12]], [31, [15, 12]], [32, [15, 12]],
@@ -221,7 +221,7 @@
       "coder.io": {"word": 13, "fields": {"auto_pull": [11, 11], "auto_push": [12, 12]}},
       "coder.burst": {"word": 14, "fields": {"burst": [5, 5], "eop_ends_burst": [6, 6]}},
       "coder.coder": {"word": 15, "fields": {"stuff_run": [2, 0], "runs_of_ones": [3, 3], "nrzi": [4, 4], "receive": [5, 5], "arm_at_first_zero": [6, 6], "tail_invert": [7, 7], "bit_strobe": [8, 8], "tail_length": [14, 9], "manchester": [15, 15]}},
-      "coder.coder2": {"word": 16, "fields": {"crc_skip": [12, 6]}},
+      "coder.coder2": {"word": 16, "fields": {"crc_skip": [12, 6], "link_data_only": [13, 13]}},
       "crc.polynomial": {"words": [17, 18]},
       "crc.residue": {"words": [19, 20]},
       "crc.shape": {"word": 23, "fields": {"width_minus_1": [4, 0], "init_ones": [5, 5], "linked": [6, 6], "link_select": [7, 7], "additive": [8, 8], "twos_complement": [9, 9]}}

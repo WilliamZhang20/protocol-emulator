@@ -211,3 +211,51 @@ Found and fixed on the way:
 - **Sample timing rule:** a receiver's first count and resync phase are
   half a bit less the 2-clock tick-to-sample latency; input latency
   delays the edge and the sampled level alike and cancels.
+
+## 2.4c status: done locally (awaiting CI)
+
+Three receive modes only the core can do, as compiled designs at the pins
+(`test/cocotb_tests/test_lane_receive.py`, designs in the compiler's
+`circt_lab/lanes/`):
+
+- **UART 8E1 receive, tagged** (`uart_rx_8e1`): timer0 resync, the coded
+  shifter checks even parity and the stop bit. The `rx_tagged` program
+  pushes every byte followed by a tag byte (coder status bit 6: 0 good,
+  0x40 bad), so a bad frame is kept and marked rather than ending the
+  transfer. A flipped-parity frame and a low-stop frame are tagged; all
+  bytes arrive at 0 and +-5 % baud.
+- **Manchester receive** (`manchester_rx`): timer0 ticks every half bit
+  (10 clocks), resyncs on every falling edge (always on a half-bit
+  boundary), first count and phase 3 (a quarter bit less the 2-clock
+  sample latency). Each frame is a sync 1 then 8 data bits. Equal halves
+  in a data bit tag the byte; good frames decode at 0 and +-5 %.
+- **LIN classic checksum in the CRC tile** (`lin_checksum`): 8N1 receive,
+  the CRC tile additive one's complement over 8-bit words, linked to the
+  shifter. Four data bytes and the checksum sum to 0xFF (checked with
+  carries wrapping twice, all-FF and 0x01); the lane pushes the sum and
+  fails on a corrupted checksum.
+
+New in the RTL: **coder register 6 bit 13, CRC link data bits only.** The
+link used to carry every frame bit, start, parity and stop included, so a
+UART checksum summed its framing. With the bit set only data bits reach
+the CRC tile (the skip count counts data bits too). Sent bits are
+classified at the index they are presented at (a new frame at 0, the next
+burst word at its first data bit, an advance at index + 1); received bits
+at the sample's index. A new bounded check (`formal/fabric_shifter`
+`link_bmc`, depth 40, plus cover) proves on the transmit side that for any
+framing (0-3 pre bits, any parity, 0-3 post bits, 1-16 bit words, either
+order, bursts or single frames) the link carries exactly each word's data
+bits in wire order; 4 mutations (`make -C formal fabric_shifter-mutations`,
+CI) are each caught. The lane core's validity rule, the contract
+(`coder.coder2.link_data_only`, reserved bits 15:14) and its checker, and
+the core's formal reserved-bit property follow.
+
+Compiler: a linked CRC on a shifter that samples (`coder.sample`
+connected) now needs `coder.coder.receive`: without it the link carries the
+coded *sent* bits and sums the idle output, which is what the first LIN run
+did (sum 0). The compiler suite checks all nine shipped designs build to
+the exact RTL test data.
+
+Also fixed: the tile experiment's timer testbench still expected the old
+non-cyclic resync (CI failure on 9a3e66e); it now checks both the late-edge
+(target phase + period) and the near-edge cases.

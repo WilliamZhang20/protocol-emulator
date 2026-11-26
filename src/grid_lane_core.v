@@ -249,7 +249,7 @@ module grid_lane_core(
     line_ok(word[13][5:0]) && level_ok(word[13][10:6]) && word[13][15:13]==0 &&
     level_ok(word[14][4:0]) && line_ok(word[14][12:7]) && word[14][15:13]==0 &&
     !(word[15][2:0]==3'd1 && !word[15][3]) && !(word[15][15] && word[15][4]) &&
-    level_ok(word[16][4:0]) && word[16][15:13]==0;
+    level_ok(word[16][4:0]) && word[16][15:14]==0;
   wire crc_ok_cfg=line_ok(word[21][5:0]) && level_ok(word[21][10:6]) && word[21][15:11]==0 &&
     line_ok(word[22][5:0]) && word[22][10:6]<=5'd18 && word[22][15:11]==0 &&
     word[23][15:10]==0 && !word[23][7] && !(word[23][9] && !word[23][8]) &&

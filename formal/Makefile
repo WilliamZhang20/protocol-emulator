@@ -28,7 +28,7 @@ program_memory_TASKS := bmc prove cover
 byte_fifo_TASKS := bmc prove cover
 host_interface_TASKS := bmc prove cover
 fabric_timer_TASKS := bmc cover
-fabric_shifter_TASKS := bmc cover coder_bmc coder_cover manch_bmc manch_cover
+fabric_shifter_TASKS := bmc cover coder_bmc coder_cover manch_bmc manch_cover link_bmc link_cover
 fabric_counter_TASKS := bmc prove cover
 fabric_crc_TASKS := bmc prove cover add_prove add_cover
 fabric_logic_TASKS := bmc prove cover
@@ -40,7 +40,7 @@ grid_timer_TASKS := prove cover
 grid_lane_core_TASKS := prove cover
 fabric_core_TASKS := bmc cover
 
-.PHONY: all modules lane_controller-mutations grid_timer-mutations fabric_crc-mutations grid_lane_core-mutations $(TARGETS) $(PROTOCOLS) $(SLOW_PROTOCOLS) protocol-negative \
+.PHONY: all modules lane_controller-mutations grid_timer-mutations fabric_crc-mutations grid_lane_core-mutations fabric_shifter-mutations $(TARGETS) $(PROTOCOLS) $(SLOW_PROTOCOLS) protocol-negative \
 	protocol-negative-slow mutation-check clean list list-protocols
 
 all: $(TARGETS) $(PROTOCOLS) protocol-negative mutation-check
@@ -88,6 +88,9 @@ fabric_crc-mutations:
 
 grid_lane_core-mutations:
 	$(PYTHON) grid_lane_core/mutations.py $(SBY) $(BUILD_DIR)/grid_lane_core_mutations
+
+fabric_shifter-mutations:
+	$(PYTHON) fabric_shifter/link_mutations.py $(SBY) $(BUILD_DIR)/fabric_shifter_mutations
 
 clean:
 	if [ -d "$(BUILD_DIR)" ]; then find "$(BUILD_DIR)" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; fi

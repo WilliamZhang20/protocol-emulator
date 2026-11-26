@@ -80,11 +80,18 @@ module timer_tb;
     last = dut.remaining;
     @(negedge clk); aux = 1; @(negedge clk); aux = 0; #1;
     if (dut.remaining != last - 1 - 3) begin fail("limited resync"); $display("  %0d -> %0d", last, dut.remaining); end
+    //    The phase error is cyclic: an edge nearer the previous boundary
+    //    (remaining above phase + period/2) targets phase + period instead.
     configure(100, 100, 16'd3, 16'd10);
     pulse_start;
     repeat (20) @(negedge clk);
     aux = 1; @(negedge clk); aux = 0; #1;
-    if (dut.remaining != 10) fail("unlimited resync");
+    if (dut.remaining != 110) begin fail("late edge resync"); $display("  remaining %0d", dut.remaining); end
+    configure(100, 100, 16'd3, 16'd10);
+    pulse_start;
+    repeat (60) @(negedge clk);
+    aux = 1; @(negedge clk); aux = 0; #1;
+    if (dut.remaining != 10) begin fail("unlimited resync"); $display("  remaining %0d", dut.remaining); end
     // The next tick lands 10 clocks after the edge.
     t0 = 0;
     while (!tick && t0 < 50) begin @(negedge clk); #1; t0 = t0 + 1; end

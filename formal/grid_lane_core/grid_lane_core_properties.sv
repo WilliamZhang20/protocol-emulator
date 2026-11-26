@@ -93,7 +93,7 @@ module grid_lane_core_properties (input wire clk);
     `RESERVED(12, 15, 12)
     `RESERVED(13, 15, 13)
     `RESERVED(14, 15, 13)
-    `RESERVED(16, 15, 13)
+    `RESERVED(16, 15, 14)
     `RESERVED(21, 15, 11)
     `RESERVED(22, 15, 11)
     `RESERVED(23, 15, 10)

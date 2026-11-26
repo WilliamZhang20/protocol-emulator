@@ -74,6 +74,7 @@ sends the complemented sum LSB first.
   the tile test's mutation of that case changed nothing, so the case was
   removed and the argument recorded in the RTL.
 
-Not covered by the tile: the coder link gives the CRC tile every frame bit
-including start and stop bits, so a UART checksum on a lane needs the link
-to carry data bits only. That is a lane-core wiring choice (2.4).
+The coder link used to give the CRC tile every frame bit, start and stop
+included, so a UART checksum would sum its framing. Coder register 6 bit 13
+(2.4c) makes the link carry data bits only; the LIN checksum pin test
+(`test_lane_receive.py`) and the shifter's `link_bmc` check cover it.

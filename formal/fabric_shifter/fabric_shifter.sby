@@ -5,6 +5,8 @@ coder_bmc coder
 coder_cover coder
 manch_bmc manch
 manch_cover manch
+link_bmc link
+link_cover link
 
 [options]
 bmc: mode bmc
@@ -19,6 +21,10 @@ manch_bmc: mode bmc
 manch_bmc: depth 30
 manch_cover: mode cover
 manch_cover: depth 40
+link_bmc: mode bmc
+link_bmc: depth 40
+link_cover: mode cover
+link_cover: depth 60
 
 [engines]
 bmc: smtbmc bitwuzla
@@ -27,6 +33,8 @@ coder_bmc: smtbmc bitwuzla
 coder_cover: btor btormc
 manch_bmc: smtbmc bitwuzla
 manch_cover: btor btormc
+link_bmc: smtbmc bitwuzla
+link_cover: btor btormc
 
 [script]
 read -formal -sv config_bank.v
@@ -37,6 +45,8 @@ coder: read -formal -sv fabric_shifter_coder_properties.sv
 coder: prep -top fabric_shifter_coder_properties
 manch: read -formal -sv fabric_shifter_manchester_properties.sv
 manch: prep -top fabric_shifter_manchester_properties
+link: read -formal -sv fabric_shifter_link_properties.sv
+link: prep -top fabric_shifter_link_properties
 
 [files]
 ../../src/config_bank.v
@@ -44,3 +54,4 @@ manch: prep -top fabric_shifter_manchester_properties
 fabric_shifter_properties.sv
 fabric_shifter_coder_properties.sv
 fabric_shifter_manchester_properties.sv
+fabric_shifter_link_properties.sv

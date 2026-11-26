@@ -223,7 +223,8 @@ def check_lane_core(contract):
                              ('coder.io', 'auto_pull', 'wire       auto_pull = io[%s];'),
                              ('coder.io', 'auto_push', 'wire       auto_push = io[%s];'),
                              ('coder.burst', 'burst', 'wire       burst_mode = burst[%s];'),
-                             ('coder.coder2', 'crc_skip', 'wire [6:0] skip_n     = coder2[%s];')]:
+                             ('coder.coder2', 'crc_skip', 'wire [6:0] skip_n     = coder2[%s];'),
+                             ('coder.coder2', 'link_data_only', 'wire       link_data_only = coder2[%s];')]:
         hi, lo = regs[reg]['fields'][field]
         assert decl % (f'{hi}:{lo}' if hi != lo else f'{hi}') in shifter, (reg, field)
     frame = regs['coder.frame']['fields']

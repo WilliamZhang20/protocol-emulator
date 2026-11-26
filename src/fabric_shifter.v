@@ -29,6 +29,8 @@
 //            [14:9] tail length  [15] Manchester
 //   6 coder  [4:0] stuffing gate level (signal space 32-63)  [5] gated
 //            [12:6] frame bits not given to the CRC link
+//            [13] CRC link carries data bits only (no pre, parity or
+//            post bits: a UART checksum such as LIN's)
 //
 // Bit coder (registers 5 and 6; all zero: off). It codes the bit stream
 // between the frame and the pin, so the stuffing, NRZI and CRC-sequencing
@@ -54,7 +56,8 @@
 // - CRC link. The tile gives the CRC tile every frame bit it codes (sent or
 //   sampled, never a stuff or tail bit), from the arming 0 on and after
 //   the first `register 6 [12:6]` such bits, and steps it once per tail
-//   bit, over a direct registered link (the CRC tile selects it).
+//   bit, over a direct registered link (the CRC tile selects it). With
+//   register 6 [13] only data bits count (the skip counts data bits too).
 // - Manchester (transmit, not with NRZI). The shift line ticks every half
 //   bit: each bit goes out as its complement, then (at the half-bit tick)
 //   as itself, so a 1 is low-high (IEEE 802.3) and every bit has a mid-bit
@@ -137,7 +140,7 @@ module fabric_shifter (
   wire [12:0] io;
   wire [12:0] burst;
   wire [15:0] coder;
-  wire [12:0] coder2;
+  wire [13:0] coder2;
   reg [15:0] rx_word;
   reg [3:0]  post_cap;
   reg        par_cap, post_wrong;    // RX framing check (see below)
@@ -178,6 +181,7 @@ module fabric_shifter (
   wire       manch      = coder[15] && !coder[5];
   wire       manch_rx   = coder[15] && coder[5];
   wire [6:0] skip_n     = coder2[12:6];
+  wire       link_data_only = coder2[13];
 
   // Coder state.
   reg [2:0] run_len;     // equal bits (or ones) in a row, saturating
@@ -347,8 +351,8 @@ module fabric_shifter (
   config_bank #(.WIDTH(16)) coder_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd5), .write_bank(cfg_bank), .data(cfg_data),
       .ctx_next(ctx_next), .value(coder), .next());
-  config_bank #(.WIDTH(13)) coder2_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 3'd6), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+  config_bank #(.WIDTH(14)) coder2_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd6), .write_bank(cfg_bank), .data(cfg_data[13:0]),
       .ctx_next(ctx_next), .value(coder2), .next());
 
   // The output is a register so downstream logic cells and tiles start their
@@ -406,8 +410,17 @@ module fabric_shifter (
   wire bit_taken = coder_rx ? sample_now : present_data;
   // Preserve the stuff/tail priority when a word boundary and a new start
   // share a clock. The CRC link sees only an accepted frame bit.
-  wire crc_frame_bit = coder_rx ? sample_now :
-                       (present_data && !stuff_tx && !tail_step);
+  // Whether the coded frame bit is a data bit: received, the sample's
+  // index; sent, the index the bit is presented at (a new frame at 0, the
+  // next burst word at its first data bit, an advance at index + 1).
+  wire [4:0] next_index = index + 5'd1;
+  wire coded_data = coder_rx   ? in_data :
+                    start      ? pre_n == 5'd0 :
+                    burst_next ? 1'b1 :
+                    next_index >= pre_n && next_index < data_end;
+  wire crc_frame_bit = (coder_rx ? sample_now :
+                        (present_data && !stuff_tx && !tail_step)) &&
+                       (!link_data_only || coded_data);
   wire word_end = done || burst_next;
   assign word_pulse = bit_strobe ? bit_taken : word_end;
   wire [2:0] run_b   = fresh ? 3'd0 : run_len;
