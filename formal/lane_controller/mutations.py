@@ -15,6 +15,7 @@ MUTATIONS = [
     ('write fence admits word 117', "arg[7:0]<=8'd116", "arg[7:0]<=8'd117"),
     ('LOOP tests the old count', "(op==4'hC && count!=8'd1)", "(op==4'hC && count!=8'd0)"),
     ('refused value is written', "assign cfg_we=exec && op==4'hE && owned && cfg_ok;", "assign cfg_we=exec && op==4'hE && owned;"),
+    ('WANY consumes the whole mask register', "latched<=seen & ~arg[7:0];", "latched<=0;"),
     ('outputs live while disabled', "wire running=enable && active && !loading;", "wire running=active && !loading;"),
 ]
 

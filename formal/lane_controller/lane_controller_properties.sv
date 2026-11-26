@@ -75,7 +75,10 @@ module lane_controller_properties (input wire clk);
   wire is_shift = is_sys && k[3:0] == 4'd4;
   wire level_wait = k[3];
   wire ready_wait = level_wait ? levels[k[2:0]] : (m_seen[k[2:0]] | events[k[2:0]]);
-  wire blocked = (is_wait && !ready_wait) || (is_pull && !rd_valid) || (is_push && !wr_ready);
+  wire is_any = o == 4'hF;
+  wire any_bad = k[11:8] != 4'd0 || k[7:0] == 8'd0;
+  wire [7:0] any_hit = (m_seen | events) & k[7:0];
+  wire blocked = (is_any && !any_bad && any_hit == 8'd0) || (is_wait && !ready_wait) || (is_pull && !rd_valid) || (is_push && !wr_ready);
   wire step = in_run && !off_end && !blocked;
   wire owned = k[11:8] == 4'd0 && k[7:0] >= 8'd112 && k[7:0] <= 8'd116;
   // The fabric's check of the value (cfg_ok) is arbitrary here.
@@ -84,7 +87,7 @@ module lane_controller_properties (input wire clk);
   wire taken = (o == 4'h9) || (o == 4'hA && m_a == 16'd0) || (o == 4'hB && m_a != 16'd0) ||
                (o == 4'hC && m_c != 8'd1);
   wire is_jump = o >= 4'h9 && o <= 4'hC;
-  wire bad = (is_sys && k[3:0] > 4'd8) || o == 4'hF || (o == 4'hE && !may_write) ||
+  wire bad = (is_sys && k[3:0] > 4'd8) || (is_any && any_bad) || (o == 4'hE && !may_write) ||
              (is_jump && taken && !jump_ok);
   wire halts = is_sys && (k[3:0] == 4'd1 || k[3:0] == 4'd2);
 
@@ -153,6 +156,7 @@ module lane_controller_properties (input wire clk);
           if (is_sys && k[3:0] == 4'd7) m_c <= m_a[7:0];
           if (is_sys && k[3:0] == 4'd8) m_a <= {8'd0, m_c};
           if (is_wait && !level_wait) m_seen[k[2:0]] <= 1'b0;
+          if (is_any) begin m_a <= {8'd0, any_hit}; m_seen <= (m_seen | events) & ~k[7:0]; end
           if (o == 4'h2) m_act <= k[3:0];
           if (o == 4'h4) m_a <= {4'd0, k};
           if (o == 4'h5) m_a <= readback[{k[3:0], 4'd0} +: 16];
@@ -209,6 +213,7 @@ module lane_controller_properties (input wire clk);
     cover (rst_n && done && !error);
     cover (rst_n && done && error && mode == IDLE);
     cover (rst_n && in_run && is_jump && taken && jump_ok);
+    cover (rst_n && in_run && is_any && !any_bad && any_hit != 8'd0 && any_hit != k[7:0]);
   end
 endmodule
 `default_nettype wire

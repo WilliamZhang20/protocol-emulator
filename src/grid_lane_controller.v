@@ -26,7 +26,9 @@
 //          alternate-context words 112-116); any other address fails, and
 //          so does a value the fabric refuses (cfg_ok low: the word would
 //          break the rules static configuration is checked against)
-//   F reserved: fails
+//   F WANY m = arg[7:0]: wait until any latched pulse event in m is set;
+//          A = the set bits of m, which are consumed. arg[11:8] != 0 or an
+//          empty mask fails
 // A is 16 bits (immediates zero-extend); C is 8 bits. Jumps and execution
 // beyond the loaded program fail. Abort fails. Everything fails closed.
 module grid_lane_controller #(parameter ABITS=6)(
@@ -80,10 +82,14 @@ module grid_lane_controller #(parameter ABITS=6)(
   wire sys_ok=sys<=4'd8;
   wire owned=arg[7:0]>=8'd112 && arg[7:0]<=8'd116 && arg[11:8]==0;
   wire do_wait=exec && op==4'h1;
+  wire [7:0] seen=latched | events;
+  wire [7:0] any_hit=seen & arg[7:0];
+  wire any_bad=arg[11:8]!=0 || arg[7:0]==0;
+  wire do_any=exec && op==4'hF && !any_bad;
   wire do_pull=exec && op==4'h0 && sys==4'd5;
   wire do_push=exec && op==4'h0 && sys==4'd6;
   // An instruction retires this clock unless it waits.
-  wire retire=running && !(do_wait && !wait_ok) && !(do_pull && !rd_valid) && !(do_push && !wr_ready);
+  wire retire=running && !(do_wait && !wait_ok) && !(do_any && any_hit==0) && !(do_pull && !rd_valid) && !(do_push && !wr_ready);
   assign rd_consume=do_pull && rd_valid;
   assign wr_valid=do_push;
   assign wr_data=acc[7:0];
@@ -151,7 +157,8 @@ module grid_lane_controller #(parameter ABITS=6)(
           end
           4'hD: count<=arg[7:0];
           4'hE: if(!owned || !cfg_ok) begin active<=0;done<=1;error<=1;end
-          default: begin active<=0;done<=1;error<=1;end
+          4'hF: if(any_bad) begin active<=0;done<=1;error<=1;end
+                else begin acc<={8'b0,any_hit};latched<=seen & ~arg[7:0];end
         endcase
       end
     end

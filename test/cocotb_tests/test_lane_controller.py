@@ -14,7 +14,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, Timer
 
-from cocotb_tests.lane_asm import assemble, program_bytes, program_word
+from cocotb_tests.lane_asm import assemble, program_bytes, program_word, EV_EDGE0, EV_EDGE1
 
 IMAGE = Path(__file__).parents[1] / 'data/temporal-i2c.mem'
 PROGRAM_BASE = 768
@@ -214,6 +214,42 @@ async def lane_refused_context_write(dut):
     runs = [r for r in await watch_oe(dut, 1000) if r[1] > 2]
     assert [oe for oe, _ in runs if oe] == [SDA], f'image override lost after the refused write: {runs}'
     assert not (await chip.status()) & 0x40
+
+
+@cocotb.test()
+async def lane_wait_any(dut):
+    """WANY waits for either pin edge and says which one fired: the program
+    halts cleanly only when it saw the SDA edge alone."""
+    chip = Chip(dut)
+    await chip.reset()
+    program = assemble(f'''
+        CLEAR
+        WANY {1 << EV_EDGE0 | 1 << EV_EDGE1}
+        XOR {1 << EV_EDGE1}
+        JNZ wrong
+        HALT
+    wrong: FAIL
+    ''')
+    await chip.configure(lane_words(program))
+    await chip.load_program(program)
+    for pin, expect_error in (('sda', False), ('scl', True)):
+        await chip.command(5, 0)
+        await ClockCycles(dut.clk, 300)
+        assert not int(dut.uio_out.value) & 0x80, 'finished before any edge'
+        # A low pulse gives an edge in either configured polarity; the done
+        # strobe is one clock, so watch every clock.
+        finished = False
+        for cycle in range(220):
+            if cycle in (0, 20):
+                chip.state[pin] = int(cycle == 20); chip.drive()
+            await FallingEdge(dut.clk); await Timer(1, unit='ns')
+            if int(dut.uio_out.value) & 0x80:
+                finished = True
+                break
+        assert finished, f'WANY missed the {pin} edge'
+        chip.state[pin] = 1; chip.drive()
+        error = bool((await chip.status()) & 0x40)
+        assert error == expect_error, f'{pin} edge: error {error}'
 
 
 @cocotb.test()
