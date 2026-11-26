@@ -29,7 +29,7 @@ and host commands only; they do not access internal RTL hierarchy.
 The JTAG compiler reports `peer_checks` for source assertions on the simulated
 attached TAP. These are checked by the independent peer model; they are not
 hardware read operations. The USB and Ethernet route descriptions are routed
-by CIRCT and encoded against the grid contract (`architecture/grid_3x3.json`, which describes the 5×3 grid); the compiler also emits an ASCII route/resource map. They place the coded
+by CIRCT and encoded against the grid contract (`architecture/grid_5x3.json`, which describes the 5×3 grid); the compiler also emits an ASCII route/resource map. They place the coded
 shifter with the CRC in grid cell 8. The coded shifter's four control lines
 share the four routed CRC selectors. Two additional local outputs expose its
 serial signal and activity; the existing grid LUT can invert the signal.

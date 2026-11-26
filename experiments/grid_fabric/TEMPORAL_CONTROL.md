@@ -9,7 +9,7 @@ an event, a true/false successor and a halt flag. The table is one page of the
 program. Without paging it is loaded from configuration and there is no
 runtime memory access. Unwritten state transitions, frame errors and
 overlapping frame requests fail closed. Its configuration words and event
-assignments are in [the hardware contract](../../architecture/grid_3x3.json).
+assignments are in [the hardware contract](../../architecture/grid_5x3.json).
 
 ## Descriptor rows
 

@@ -436,7 +436,7 @@ def prove_switch(contract, yosys, tmp):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--contract', type=Path, default=ROOT / 'architecture/grid_3x3.json')
+    parser.add_argument('--contract', type=Path, default=ROOT / 'architecture/grid_5x3.json')
     parser.add_argument('--yosys', default='yosys')
     args = parser.parse_args()
     contract = json.loads(args.contract.read_text())

@@ -9,7 +9,7 @@ from pathlib import Path
 from check_grid_contract import check, SOURCES
 
 ROOT = Path(__file__).resolve().parents[1]
-contract = json.loads((ROOT / 'architecture/grid_3x3.json').read_text())
+contract = json.loads((ROOT / 'architecture/grid_5x3.json').read_text())
 mutations = []
 bad = copy.deepcopy(contract); bad['grid']['cells'][0]['column'] = 1; mutations.append(('coordinate', bad))
 bad = copy.deepcopy(contract); bad['memory']['reader_fifo_bytes'] = 3; mutations.append(('FIFO depth', bad))

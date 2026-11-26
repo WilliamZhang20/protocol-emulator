@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a 3x3 candidate swapping timer 0 and the LUT, without touching RTL."""
+"""Generate a candidate swapping timer 0 and the LUT, without touching RTL."""
 import argparse
 import json
 from pathlib import Path
@@ -22,7 +22,7 @@ def main():
         if rtl.count(original) != 1:
             raise ValueError('grid_core.v no longer matches the candidate transformation')
         rtl = rtl.replace(original, replacement)
-    contract = json.loads((ROOT / 'architecture/grid_3x3.json').read_text())
+    contract = json.loads((ROOT / 'architecture/grid_5x3.json').read_text())
     cells = contract['grid']['cells']
     for key in ('resources', 'local_outputs'):
         cells[2][key], cells[4][key] = cells[4][key], cells[2][key]
@@ -32,11 +32,11 @@ def main():
         contract['bit_network']['sink_cells'][i] = 4
     for i in (10, 11):
         contract['bit_network']['sink_cells'][i] = 2
-    contract['name'] = 'grid-3x3-centre-timer-candidate'
+    contract['name'] = 'grid-5x3-centre-timer-candidate'
     contract['implementation']['status'] = 'generated_candidate'
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / 'grid_core.v').write_text(rtl)
-    (args.output / 'grid_3x3.json').write_text(json.dumps(contract, indent=2) + '\n')
+    (args.output / 'grid_5x3.json').write_text(json.dumps(contract, indent=2) + '\n')
     print(args.output)
 
 

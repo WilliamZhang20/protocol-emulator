@@ -32,7 +32,7 @@ RB_RX, RB_STATUS, RB_CAP0, RB_CAP1, RB_CRC_LO, RB_CRC_HI, RB_PADS, RB_LEFT = ran
 PROG_BASE = 0
 # Edge to sample, as the contract states it (the compiler subtracts the
 # same value); sample_latency_matches_contract measures it.
-EDGE_TO_SAMPLE = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_3x3.json')
+EDGE_TO_SAMPLE = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_5x3.json')
                             .read_text())['lane_core']['edge_to_sample_cycles']
 
 
@@ -456,7 +456,7 @@ async def start_to_shift_matches_contract(dut):
         dut._log.info('first %d: start bit %d clocks, data bit %d', first, start_bit, data_bit)
         assert data_bit == period, (first, data_bit, period)
         latencies.append(start_bit - first)
-    contract = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_3x3.json')
+    contract = json.loads((Path(__file__).resolve().parents[3] / 'architecture/grid_5x3.json')
                           .read_text())['lane_core']
     assert len(set(latencies)) == 1, latencies
     assert latencies[0] == contract.get('start_to_shift_cycles'), (latencies, contract.get('start_to_shift_cycles'))

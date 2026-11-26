@@ -27,9 +27,9 @@ LIMIT = {'WAIT': 15, 'ACT': 15, 'RD': 15, 'SETC': 255, 'WCFG': 255, 'WANY': 255}
 MAX_INSTRUCTIONS = 64
 
 # Lane core (src/grid_lane_core.v): lines, selectors and words come from the
-# contract's lane_core section (architecture/grid_3x3.json), which
+# contract's lane_core section (architecture/grid_5x3.json), which
 # tools/check_grid_contract.py checks against the RTL.
-_CONTRACT = json.loads((Path(__file__).resolve().parents[2] / 'architecture/grid_3x3.json').read_text())
+_CONTRACT = json.loads((Path(__file__).resolve().parents[2] / 'architecture/grid_5x3.json').read_text())
 CORE = _CONTRACT['lane_core']
 LANE = _CONTRACT['lane']
 LINES = {name: index for index, name, _ in CORE['lines']}

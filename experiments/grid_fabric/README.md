@@ -5,7 +5,7 @@ shared-selector fabric. It has no instruction fetch. Configuration is static
 while armed; the grid is an architecture experiment, not a final floorplan or a
 complete protocol compiler.
 
-The machine-readable [grid contract](../../architecture/grid_3x3.json) (the file
+The machine-readable [grid contract](../../architecture/grid_5x3.json) (the file
 name predates the two extension rows; it describes the 5 × 3 grid) records
 the current tile inventory, coordinates, ports, routing, memory, configuration,
 and programmable temporal sequencer. `make grid-contract-check` compares elaborated

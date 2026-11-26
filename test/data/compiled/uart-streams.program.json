@@ -337,5 +337,5 @@
     }
   ],
   "source_validated": true,
-  "target": "grid-3x3-uart-experiment"
+  "target": "grid-5x3-uart-experiment"
 }

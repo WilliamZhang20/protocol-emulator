@@ -188,7 +188,7 @@ contexts, `export stream` → stream PE.
 ## How a held-out protocol is supported
 
 1. Written in `.spt` from its specification, without reference to the chip.
-2. Compiled by the general lowering against `architecture/grid_3x3.json`
+2. Compiled by the general lowering against `architecture/grid_5x3.json`
    alone; the compiler reports resource use (PEs, tracks, rows, contexts) or
    a precise unmappable-construct diagnostic.
 3. Its own `test` blocks run at the pins against specification-written peers
