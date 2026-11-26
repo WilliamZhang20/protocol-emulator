@@ -42,27 +42,40 @@ mesh, which is what the lane core's 64-line crossbar was.
 2. **Placement of lane-core functions**: decide where state, sequencing,
    edge detection and events go: existing tiles, switch boxes, or small
    distributed control resources. Each decision comes with its reason.
-3. **Neighbour exchange**: how adjacent cells exchange bit signals and
-   events, including which hops are registered, the latency the compiler
-   sees, and the switch behaviour and its configuration.
-4. **Word and stream paths**: separate from the bit mesh, for shifters,
-   CRCs and SRAM, with flow control (valid/ready or credit) and who may
-   reach what.
-5. **The revised 5 x 3 arrangement**: a drawing of every cell's
-   resources, switch connections and SRAM interfaces, and the contract
-   v2 that states it. The checker reads it.
-6. **Compiler architecture model**: build the RRG and resource tables from
-   contract v2, and map one real protocol (UART RX from source) onto it.
-7. **Implement and test**:
-   - that mapping in RTL, tested at the pins;
-   - concurrent protocols;
-   - constrained physical placement (placement regions), through to a GDS.
+3. **Vertical slice: an I2C target on distributed logic** (replaces the
+   earlier steps 3-7; user, 2026-11-26). One narrow slice instead of a
+   full rewrite, with each sub-step sturdy before the next:
+   - **3a. Clocked bit/event interface.** Define:
+     - pulse capture;
+     - simultaneous events;
+     - reset;
+     - the latency of a route (which hops are registered);
+     - configuration ownership.
+   - **3b. A logic+state resource** (LUT4 + register + sticky event)
+     attached to the existing switches, reusable and independently
+     assignable.
+   - **3c. Map the I2C target** onto 3b's resources, a timer/shifter and
+     the SRAM stream path: START, address match, ACK, byte reception,
+     STOP. Test it at the pins.
+   - **3d. Compare** against:
+     - the existing lane-core implementation (pin behaviour, resources,
+       area, routing, timing);
+     - a table state-machine implementation (mapping success, area,
+       routing, timing, concurrency).
 
-Workflow (user, 2026-11-26): RTL changes do not wait for review. Steps
-2-5 may each use RTL experiments (standalone modules, synth area, formal,
-small sims) to settle a decision. Those decisions are recorded here with
-their evidence. Step 7 moves the existing protocol tests over one at a
-time, and nothing old is deleted while a test depends on it.
+     Then add a second concurrent workload. A table tile is added only if
+     the results show a meaningful need, and then independently
+     assignable through the mesh.
+4. **Compiler.** Update the architecture contract and the CIRCT mapping
+   from the slice's result: the RRG gains the logic+state resources and
+   the word network, and the I2C target is mapped from source.
+5. **Placement regions.** Experiment with rectangular placement regions
+   (physical), then a GDS.
+
+Workflow (user, 2026-11-26): RTL changes do not wait for review; RTL
+experiments settle decisions, and the evidence is recorded here. Existing
+protocol tests move over one at a time, and nothing old is deleted while
+a test depends on it.
 
 ## Step 1: inventory (2026-11-26, branch experiment/two-sram-placement @ 4470df8)
 
@@ -204,7 +217,177 @@ Shipped lane designs use 1 timer, 1 coder and at most 3 lines per input
 The compiler has to know all of them: the routing model covers only the
 mesh, and lane designs bypass it entirely (`grid_lane.py` never routes).
 
-## Step 2: where the lane-core functions go (in progress)
+## Step 2: where the lane-core functions go
+
+### Decisions (hardened 2026-11-26, user direction)
+
+Target picture (illustrative; the real arrangement is the 5 x 3 grid,
+drawn in step 5):
+
+```
+                 configurable bit/event routes
+       ┌─────────────┬─────────────┬─────────────┐
+       │ timer       │ logic+state │ shifter     │
+       │      [switch + local logic/state]       │
+       ├─────────────┼─────────────┼─────────────┤
+       │ logic+state │ CRC         │ I/O         │
+       │      [switch + local logic/state]       │
+       ├─────────────┼─────────────┼─────────────┤
+       │ shifter     │ timer       │ logic+state │
+       │      [switch + local logic/state]       │
+       └─────────────┴─────────────┴─────────────┘
+                │                 │
+          explicit word/stream connections
+                │                 │
+              SRAM 0            SRAM 1
+```
+
+- **D1. Mesh.** The 5 x 3 switch mesh with configurable neighbour
+  connections stays as the starting point. There is no global all-to-all
+  crossbar. The turn restrictions and the four-track width are
+  candidates to measure (steps 3 and 6), not fixed assumptions.
+- **D2. Control is distributed logic + state.**
+  - The control primitive is the **logic+state cell**: the existing LUT4 +
+    register, extended so one cell can do a Boolean decision, remember
+    state (hold, set/clear), detect an edge, or capture an event.
+  - The compiler connects several such cells through the mesh to make a
+    protocol's state machine.
+  - There is **no instruction fetch**. The lane controller, the page
+    loader and the frame and packet FSMs retire as their protocols
+    migrate. (Refined below: a table state-machine tile is kept for
+    sequencing.)
+  - Whether to merge a cell physically with a switch box is an
+    implementation choice to measure, not a prerequisite.
+  - (Refined below: the two-event table becomes the state-machine
+    tile.)
+- **D3. Time-critical work stays in specialised tiles.** Timers generate
+  timed events; shifters serialise, frame and code; the CRC computes
+  checksums. They run concurrently. Logic+state cells connect their
+  events and decide what happens next.
+- **D4. Word and stream paths are explicit and bounded.**
+  - SRAM, shifters, CRCs and word-processing resources connect through
+    documented paths with valid/ready flow control.
+  - Each word sink lists the sources it can take: there is **no
+    all-to-all word crossbar**.
+  - Useful direct links (coded shifter -> CRC) are local fast paths the
+    compiler sees.
+  - Word-processing resources (compare -> bit, gate <- bit, escape,
+    split, interleave) are prototyped in `reorg/wnet.v`. Their reach is
+    a listed set per sink.
+- **D5. Configuration defines the circuit; distributed state runs it.**
+  - The host loads switch and tile settings.
+  - During a run only registers and tile state change.
+  - Runtime configuration changes (WCFG, alternate contexts) are added
+    only where a protocol and a test show the need.
+- **D6. No logic on every track.** Sticky events, edge detectors and
+  general computation are not added to every track or sink by default.
+  - First provide enough independently routable logic+state sites to
+    express the protocols.
+  - Then measure where adding capability to a switch or sink improves
+    mappings.
+  - The sink edge modes proposed earlier in this section are withdrawn
+    as a default.
+
+### Critique of D1-D6, with measurements, and the refinement
+
+**Measured (D2 sizing).** The I2C target's control (program B, 13
+states; `reorg/i2c_target_fsm.v` and `i2c_target_onehot.v`, yosys
+`abc -lut 4`):
+
+| | Logic+state cells only | Table state-machine tile |
+|---|---|---|
+| cells | 13 registered + 6 combinational = 19 LUT4 cells (binary encoding: 4 FF + 41 LUTs) | 1 |
+| mesh nets | about 50 (every cell input is routed) | 11 (7 events in, 4 actions out) |
+| configuration flops | about 19 x (16 truth + 4 x 5-bit selects) = 680 | 16 rows x 19 = 304 |
+
+The grid has 4 LUT4 cells today, and the heaviest shipped workload
+routes 9 nets in 2 tracks.
+
+**Problems this exposes.**
+
+1. **Pure LUT composition does not fit (D2 as written).** One
+   control-heavy protocol needs about 5x today's LUT cells and about 5x
+   the heaviest mesh load; two at once do not fit 15 cells. FPGAs make
+   this work with thousands of LUTs. A 15-cell fabric cannot.
+   Control-flow-heavy machines need a denser primitive.
+2. **"No controller tiles" and "specialised tiles for time-critical
+   work" (D3) are the same argument.** A table state machine (states x
+   two conditions -> next, actions from the state) is a fixed-function
+   tile like a timer:
+   - it has no instruction set, no word datapath, no fetch from SRAM,
+     and no private wiring;
+   - its events and actions are mesh pins;
+   - its table is configuration (D5).
+
+   What made the lane controller wrong was its CPU shape (A/C
+   registers, readback of every tile's words, WCFG, a 64-instruction
+   buffer) and its position beside the mesh, not the existence of a
+   state-holding tile.
+3. **Simultaneous conditions belong in LUT cells, not rows** (the
+   prototype sweep): START/STOP qualification fixed a latency bug that
+   a row-based check has. So the two primitives have different jobs.
+   - **Glue:** qualify, gate, edge-capture, sticky event, small
+     counters' compare. This goes in logic+state cells.
+   - **Sequence:** wait, branch, emit actions. This goes in a
+     state-machine tile.
+4. **Mesh load and timing (D1).** Today's mesh is 1 bit, 4 tracks and
+   combinational. More control nets mean longer combinational paths
+   (cell -> several switches -> cell). Step 3 must register at least
+   every logic+state cell output, so any path is one mesh traversal per
+   clock. The latency the compiler sees is then a fixed number of clocks
+   per cell boundary crossed.
+5. **Concurrency is bounded by the stream ports, not just the mesh
+   (D4).** There is one reader and one writer today, so two concurrent
+   protocols can only stream one direction each. Two readers and two
+   writers (one pair per SRAM bank) are needed for two full protocols.
+6. **Word stages can grow into a zoo (D4).** Compare, gate, split,
+   interleave and escape are justified by the 8 shipped programs. A new
+   stage must come from a protocol census, not per protocol. The reach
+   of each is a listed set, not all-to-all (the `wnet.v` prototype's
+   any-to-any selection is to be restricted to those lists).
+7. **Pins.** There are 2 inputs and 3 outputs today. Two concurrent
+   protocols (for example an I2C target and a UART) already need 4
+   inputs and 3 outputs. The I/O tile has to grow (step 3's eight pads).
+
+### Refined decisions (hardened)
+
+- **D1** as above. In addition, every logic+state cell output and
+  every tile output is registered (step 3 fixes the per-hop rule).
+- **D2 (refined; the table-tile half VETOED by the user, 2026-11-26).**
+  Distributed logic+state is the **baseline**. A table state machine
+  still bundles state and transitions into a specialised cell. Two fixed
+  instances could become a bottleneck or steer the compiler back to
+  centralised control. So it is only a **comparison** in step 3d, added
+  only if the results show a meaningful need, and then independently
+  assignable through the mesh. The 19-cell / 50-net estimate above is
+  what the slice tests on real hardware. The text below is kept as the
+  vetoed proposal:
+  - **logic+state cells**: the existing LUT4 + register, extended with
+    a set/clear (sticky) mode, for glue: qualification, gating, edge and
+    event capture, small decisions. Target count: enough for two
+    protocols' glue at once. The I2C target needs 2 (START, STOP); the
+    count is set by the step 6 mappings.
+  - **state-machine tiles**: a table of 16 rows. Each row holds 4
+    actions and two (event -> next) conditions, otherwise stay; there is
+    a halt row. Each tile has 7 event sinks and 4 action outputs. It has
+    no instruction fetch, no word datapath and no configuration writes.
+    There are two, at the positions of today's two sequencers.
+
+  Event storage (latching) is not built in. Where a protocol needs it, a
+  logic+state cell in sticky mode provides it, so it is paid only where
+  used.
+- **D3, D5, D6** as above.
+- **D4 (refined).**
+  - The word network has explicit reach lists.
+  - There are two readers and two writers, one per SRAM bank.
+  - The coded shifter -> CRC link is a local fast path.
+  - The word stages are compare -> bit, gate <- bit, split, interleave
+    and escape, each a placeable resource with its own reach list.
+- **I/O.** Pads grow to the step-3 count (8). This is a constraint on
+  steps 3 and 5.
+
+
+
 
 ### What the lane programs actually do
 
@@ -327,7 +510,7 @@ today, or more) and whether pages stay. The paging question is decided
 by whether any migrated sequencer protocol (temporal I2C, JTAG) needs
 more than 16 rows; that is checked when each is re-encoded.
 
-### Prototype test (2026-11-26): `make seq2-proto-test`
+### Prototype test (2026-11-26): `make reorg-proto-test`
 
 Files:
 - `experiments/grid_fabric/reorg/seq2.v`: the two-event sequencer.
@@ -384,6 +567,37 @@ Findings:
 - The shifter is a stand-in, not `fabric_shifter`. Porting to the real
   shifter, and running the existing pin test (`test_lane_i2c_target.py`)
   against the reorganised fabric, belongs to step 7.
+
+### Word network prototype (2026-11-26): `reorg/wnet.v`, `make reorg-proto-test`
+
+Structure:
+- Sources: reader, shifter rx, shifter status, timer capture, and the
+  output of each of 5 stages (escape, compare -> bit, gate <- bit, split
+  16 -> 8, interleave).
+- Sinks: writer, shifter tx, and the stage inputs.
+- Flow control: valid/ready.
+- Reach: each sink selects from **its reach list** (not all-to-all), and
+  a source feeds at most one sink.
+- Every stage registers its output, so no selection closes a
+  combinational loop.
+
+Under random backpressure on every endpoint (9 seeds) these all pass:
+- SLIP tx and HDLC tx (one escape stage, two constant sets);
+- a chain of escape -> compare -> tx;
+- an I2C receive: compare drops the address while the gate bit is low
+  and passes data while it is high, and `match` follows each word;
+- status tagging by interleave;
+- a 16-bit capture split into bytes;
+- two configurations running at once;
+- refusals: a source outside a sink's reach list, and one source to two
+  sinks. The test found that an invalid configuration still drained
+  sources, **losing words**. Each source's ready is now gated by
+  validity.
+
+**Step 2 status: done.** Decisions D1, D3-D6 and the D2 baseline
+(distributed logic+state) stand. They have prototype evidence for
+sequencing semantics, I2C timing and the word stages. The table tile is
+a comparison in step 3d.
 
 ### Open questions (settled by experiment, recorded here with evidence)
 

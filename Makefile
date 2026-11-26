@@ -40,7 +40,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test seq2-proto-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -93,10 +93,14 @@ interconnect-scaling:
 	$(PYTHON) tools/interconnect_scaling.py --yosys $(ROUTING_YOSYS) --liberty $(LIBERTY) --lanes 1,3,5,8
 
 # Reorganisation step 2 prototype: two-event sequencer running the I2C
-# target (experiments/grid_fabric/FABRIC_REORG.md). SWEEP=1 for the full
-# timing sweep.
-seq2-proto-test:
+# target, and the word-network stages (experiments/grid_fabric/FABRIC_REORG.md).
+# SWEEP=1 for the full sequencer timing sweep.
+reorg-proto-test:
 	experiments/grid_fabric/reorg/run_seq2.sh $(BUILD_DIR)/seq2 $(if $(SWEEP),--sweep)
+	mkdir -p $(BUILD_DIR)/reorg
+	$(EDA_BIN)/iverilog -g2012 -o $(BUILD_DIR)/reorg/wnet experiments/grid_fabric/reorg/wnet_tb.sv experiments/grid_fabric/reorg/wnet.v
+	timeout 60 $(EDA_BIN)/vvp -N $(BUILD_DIR)/reorg/wnet | grep -q '^PASS word network'
+	@echo "word network: every configuration and refusal passed"
 
 grid-sequencer-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_SEQUENCER_ASSERT --top-module sequencer_tb \
