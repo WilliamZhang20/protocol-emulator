@@ -47,20 +47,29 @@ mesh, which is what the lane core's 64-line crossbar was.
 - Event and route-latency guarantees are made only after verification.
   (Control: in the interconnect, below.)
 
-**Fixed (kept from v2):**
+**Kept from v2 (the prototype baseline; the fabric size and resource mix
+are decided by the grid-size study below, not fixed here):**
 - **Tiles.** Timers (`grid_timer`), coded shifters (`fabric_shifter`;
   it also does plain frames, so the two plain shifters go), the CRC
   (`fabric_crc`), and I/O. Pads grow towards 8.
-- **Bit mesh.** The 5 x 3 grid, one tile plus one switch per cell:
+- **Bit mesh.** One tile plus one switch per cell, on the 5 x 3 grid
+  today (prototype baseline; 3 x 4 and 3 x 5 candidates are compared in
+  the grid-size study before the size is final):
   - 1-bit tracks, 4 per direction;
   - today's switch (straight, two turns, no track change), with the
     width and turn rules still to be measured;
   - tiles drive their cell's 4 local outputs.
-- **Word network beside the mesh** (`reorg/wnet.v`, tested):
+- **Word network beside the mesh** (`reorg/wnet.v`; a *candidate*, tested
+  only as a block with its own bench and in the I2C slice):
   - valid/ready flow control and per-sink reach lists (not all-to-all);
   - stages: escape, compare -> bit, gate <- bit, split, interleave;
-  - two readers and two writers (one pair per SRAM bank);
-  - the shifter -> CRC fast path.
+  - proposed, untested: two readers and two writers (one pair per SRAM
+    bank), and the shifter -> CRC fast path.
+
+  Not yet shown: the topology and its reachable combinations against
+  complete workloads, two protocols at once each through its own SRAM
+  writer, and bank contention. The concurrent I2C + UART tests take the
+  UART's bytes straight from its shifter (no SRAM writer).
 
   Words cross into the bit mesh only through compare -> bit and gate <-
   bit.
@@ -101,12 +110,17 @@ Here this means:
 
 There is no sequencer, no controller and no LUT logic for control.
 
-The I2C target as worked on paper (to be tested in the slice):
+The I2C target as tested (slice and compiled mesh):
 
 | Switch | Contexts (transitions) | Routing that changes |
 |---|---|---|
 | I/O cell | RELEASE -(ACK-GO)-> WAIT -(SCL fall)-> DRIVE -(SCL fall)-> RELEASE | DRIVE: SDA enable sink = 1 |
-| shifter cell | IDLE -(START)-> ADDR -(match)-> ON / -(mismatch)-> OFF; ON, OFF -(START)-> ADDR, -(STOP)-> IDLE | ADDR: match pulse -> ACK-GO track; ON: word -> ACK-GO, gate sink = 1 |
+| shifter cell | IDLE -(START)-> ADDR -(match)-> ON / -(mismatch)-> OFF; ON, OFF -(STOP)-> IDLE | ADDR: match pulse -> ACK-GO; ON: word -> ACK-GO, gate sink = 1 |
+
+A repeated START inside a transaction is **not supported** by either
+tested mapping: ON and OFF have no START transition (in the hand mapping
+the START track carries ACK-END during DRIVE; in the compiled design the
+shifter would also need aborting mid-frame).
 
 The shifter does bits, frames, the byte loop (burst) and abort on STOP.
 
@@ -137,9 +151,12 @@ Extrapolated synth area (at about 0.11% utilisation per 1k µm²):
   - every cell at 4 contexts with latch configuration: about 65%.
 
 Proposal: contexts on a few cells (4-6 temporal cells, the way FPGAs put
-hard blocks in columns), about 51-55%. This leaves headroom even if the
-placement density target rises (the user suggested 60 -> 80).
-Concurrency tests decide whether more cells need contexts.
+hard blocks in columns), an *estimated* 51-55% synth utilisation. This
+is an estimate from synthesis area only, not evidence of physical
+headroom: routing, timing and the physical checks have to be shown by
+a GDS (criterion 5), including at a higher placement density (the user
+suggested 60 -> 80). Concurrency tests and the grid-size study decide
+how many cells need contexts.
 
 **Promotion criteria (user, 2026-11-26).** The contexted switch is a
 prototype until all six hold, each with its evidence recorded here:
@@ -189,9 +206,10 @@ Passed:
 
 Timing sweep, 245 points: **215 pass**. Every failure has SCL low for
 4 clocks or fewer, where the ACK (about 5 clocks after the SCL fall)
-cannot be driven in time. That is the same envelope as the best
-sequencer variant (the LUT-qualified program B), so control in the
-interconnect costs no timing. A 1-clock SDA setup passes, because
+cannot be driven in time. The best sequencer variant (the LUT-qualified
+program B) showed the same pass/fail envelope **on this test**
+(cycle-level behaviour in RTL simulation). That says nothing about
+post-route delay, Fmax, or other mappings. A 1-clock SDA setup passes, because
 qualification happens in the I/O tile in the same clock.
 
 Found on the way:
@@ -235,16 +253,70 @@ Passed:
   the I2C is intact. A route that is not identical in every context is
   a real fault, so the compiler must check it.
 
-The rule this settles, for criterion 3: **a switch's context register
-belongs to one design.** Every other design may only use selectors of
-that switch that are identical in all its contexts (a pass-through or a
-static sink). Two designs that both need contexts in one switch need
-two switches; a product of their contexts is not offered.
+What this shows: a route that changes with another protocol's context
+corrupts that protocol. What it does **not** show: that two
+context-dependent protocols can never share a switch (e.g. through a
+product of their states, or disjoint selectors that each follow one
+design's register).
+
+The compiler therefore adopts, as a **proposed restriction** (a safe
+model, not a proven necessity), that a switch's context register belongs
+to one design, and every other design uses only selectors of that switch
+that are identical in all its contexts (a pass-through or a static
+sink). Its cost has to be measured: how often the restriction forces a
+worse placement or a failure on complete workloads and concurrent
+combinations (the grid-size study reports it).
 
 Not covered: two contexted designs in neighbouring switches exchanging
 events (both stepping contexts on shared tracks), and a second
 word-network writer (the UART's bytes are taken straight from its
 shifter's FIFO port here).
+
+**Criterion 3 evidence, partial (2026-11-26): `reorg/mesh.v`,
+`reorg/mesh_tb.sv`; compiler `circt_lab/fabric_arch.py`,
+`fabric_map.py`, `fabric_designs/`.**
+
+- **Hardware.** `mesh.v` is a parameterised grid of the prototype
+  cells: `ctx_switch` beside an `io_tile`, `grid_timer` or
+  `fabric_shifter`, plus `wnet` at a word-port cell. The cell kinds,
+  context counts and word-port cell are parameters. A mesh contract
+  (written by `fabric_arch.make_contract`) holds the same values and is
+  the only hardware description the compiler reads.
+- **Source.** `i2c_target.json` and `uart_rx.json` are netlists of pin
+  events, drivers, tiles, the word path, FSMs and muxed signals. They
+  name no cell, track or context number.
+- **Compiler.**
+  - It places by annealing, then routes with PathFinder plus mux points.
+    A muxed signal switches only at a selector in its FSM's switch: a
+    sink there, or one track X leaving it. The nets feeding a mux must
+    reach a node that drives X.
+  - It assigns contexts: the reset state is context 0, with at most 2
+    transitions per state.
+  - It emits the vector, then checks it independently. `ConfigSim`
+    decodes the bits with its own code. Under every combination of FSM
+    states it compares every sink and transition row with the source's
+    meaning, and every unused sink must read 0.
+- **Result on the 3 x 3 prototype mesh.** The compiler chose its own
+  placement:
+  - the ACK FSM on an I/O cell;
+  - the address FSM at the word port;
+  - the UART in the bottom row.
+
+  It routed in 4 PathFinder iterations, and the check passed. Run on the
+  mesh, the I2C target plus UART pass the slice's stimulus. The
+  245-point sweep with the UART running gives **215 pass, the same 30
+  failures as the hand mapping** (SCL low for 4 clocks or fewer).
+- **Found on the way.** A mesh RTL bug: the shifter's line vector was
+  65 bits, so `in` landed on line 34. The pin test caught it; the
+  configuration check could not, because it models the switch, not the
+  tile wiring.
+
+Not yet covered by criterion 3:
+- the source is a JSON netlist, not `.spt` through CIRCT (step 4);
+- the exhaustive oracle and its failure classification (proven against
+  heuristic);
+- protocols beyond these two;
+- what the ownership restriction costs.
 
 **Targets to verify, not guarantees:**
 - **Timing.** Every tile output is a register, so tile to tile is one
@@ -275,8 +347,11 @@ shifter's FIFO port here).
      primitive features the I2C mapping needs (I/O output qualification,
      compare as a tap, the shifter's word event before the ACK bit).
    - **3c. Map the I2C target** onto contexted switches, the real
-     shifter, an I/O tile and the SRAM stream path: START, address match, ACK, byte reception,
-     STOP. Test it at the pins.
+     shifter, an I/O tile and the word path: START, address match, ACK,
+     byte reception, STOP. Test it at the pins. *Done as a word-network
+     test* (the network's writer port is the bench's sink); a full
+     SRAM-backed pin test, with both concurrent protocols completing
+     through real SRAM banks, is a separate step and not done.
    - **3d. Compare** against:
      - the existing lane-core implementation (pin behaviour, resources,
        area, routing, timing);
@@ -291,6 +366,24 @@ shifter's FIFO port here).
    the word network, and the I2C target is mapped from source.
 5. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
+6. **Grid-size study (user, 2026-11-26), before the fabric size is
+   final.** Compare 3 x 4 (12 cells) and 3 x 5 (15 cells) with candidate
+   resource mixes on the same complete workloads:
+   - a defined Ethernet workload (the 10BASE-T link session: NLP
+     cadence, Manchester, CRC32, TP_IDL, frame from SRAM);
+   - the baseline protocols;
+   - representative concurrent combinations.
+
+   For each mapping, report:
+   - the resource types and cells used, and the unused resources;
+   - routing demand and timing;
+   - SRAM bandwidth;
+   - why any mapping fails.
+
+   Failures from the exhaustive oracle (where it is feasible) or from
+   resource counting are proven; failures from the heuristic flow are
+   not. Area comes from the measured tile costs, as estimates until a
+   GDS.
 
 Workflow (user, 2026-11-26): RTL changes do not wait for review; RTL
 experiments settle decisions, and the evidence is recorded here. Existing

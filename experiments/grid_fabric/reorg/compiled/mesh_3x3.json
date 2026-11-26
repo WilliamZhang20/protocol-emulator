@@ -1,0 +1,152 @@
+{
+ "schema": "reorg.mesh.v1",
+ "name": "mesh_3x3",
+ "rows": 3,
+ "cols": 3,
+ "cells": [
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "shifter",
+   "contexts": 4
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "shifter",
+   "contexts": 4
+  },
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "shifter",
+   "contexts": 4
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  }
+ ],
+ "word_port": {
+  "cell": 2,
+  "locals": {
+   "match": 2,
+   "mismatch": 3
+  },
+  "sinks": {
+   "gate": 5
+  }
+ },
+ "kinds": {
+  "io": {
+   "code": 0,
+   "locals": [
+    "o0",
+    "o1",
+    "o2",
+    "o3"
+   ],
+   "sinks": [
+    "drive_value",
+    "drive_enable"
+   ]
+  },
+  "timer": {
+   "code": 1,
+   "locals": [
+    "tick",
+    "level",
+    "rise",
+    "fall"
+   ],
+   "sinks": [
+    "start",
+    "stop",
+    "aux"
+   ]
+  },
+  "shifter": {
+   "code": 2,
+   "locals": [
+    "word",
+    "stop",
+    "match",
+    "mismatch"
+   ],
+   "sinks": [
+    "start",
+    "shift",
+    "sample",
+    "abort",
+    "in",
+    "gate"
+   ],
+   "lines": {
+    "start": 1,
+    "shift": 2,
+    "abort": 3,
+    "sample": 4
+   },
+   "in_level": 33
+  }
+ },
+ "encoding": {
+  "track": {
+   "zero": 0,
+   "local_first": 1,
+   "straight": 5,
+   "turn_a": 6,
+   "turn_b": 7,
+   "bits": 3
+  },
+  "turn_inputs": {
+   "vertical": [
+    "west",
+    "east"
+   ],
+   "horizontal": [
+    "north",
+    "south"
+   ]
+  },
+  "turn_split": 2,
+  "sink": {
+   "zero": 0,
+   "one": 1,
+   "local_first": 2,
+   "north_first": 6,
+   "south_first": 10,
+   "west_first": 14,
+   "east_first": 18,
+   "bits": 5
+  }
+ },
+ "layout": {
+  "cell_bits": 512,
+  "track_lsb": 0,
+  "sink_lsb": 192,
+  "sink_slots": 6,
+  "trans_lsb": 312,
+  "tile_lsb": 368,
+  "tile_bits": 144,
+  "wnet_bits": 128,
+  "contexts": 4,
+  "tracks": 4,
+  "transition_rows": 2
+ },
+ "pins": 8
+}

@@ -102,6 +102,7 @@ reorg-proto-test:
 	timeout 60 $(EDA_BIN)/vvp -N $(BUILD_DIR)/reorg/wnet | grep -q '^PASS word network'
 	@echo "word network: every configuration and refusal passed"
 	experiments/grid_fabric/reorg/run_slice.sh $(BUILD_DIR)/slice $(if $(SWEEP),--sweep)
+	experiments/grid_fabric/reorg/run_mesh.sh $(BUILD_DIR)/mesh $(if $(SWEEP),--sweep)
 
 grid-sequencer-test:
 	$(VERILATOR) --binary --assert --timing -Wno-fatal -DGRID_SEQUENCER_ASSERT --top-module sequencer_tb \
