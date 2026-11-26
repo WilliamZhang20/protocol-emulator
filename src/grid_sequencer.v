@@ -140,7 +140,10 @@ module grid_page_loader(
       if(active && resp_pending && rvalid) begin
         got<=got+1'b1;
         if(!got[0]) low<=rdata;
-        else if(got>=6'd32 && got!=6'd41) ctx_buf[(got-6'd33)*8+:16]<={rdata,low};
+        // Context words 0-3 shift in from the top: after four, word 0 is
+        // at [15:0]. No computed part-select (a synthesis flow once dropped
+        // the scale of `(got-33)*8`, placing the words 2 bits apart).
+        else if(got>=6'd32 && got!=6'd41) ctx_buf<={rdata,low,ctx_buf[63:16]};
         else if(got==6'd41) begin active<=0;done<=1;end
       end
     end

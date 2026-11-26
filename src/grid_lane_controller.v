@@ -103,7 +103,14 @@ module grid_lane_controller #(parameter ABITS=6)(
   assign cfg_addr=arg[7:0];
   assign cfg_data=acc;
   assign actions=(enable && active) ? act : idle_actions;
-  wire [15:0] rb=readback[sel*16+:16];
+  // Readback is a word array indexed by sel; part-select bases are
+  // constants only (see grid_page_loader).
+  wire [15:0] rb_word[0:15];
+  genvar ri;
+  generate for(ri=0;ri<16;ri=ri+1) begin: readback_words
+    assign rb_word[ri]=readback[ri*16+:16];
+  end endgenerate
+  wire [15:0] rb=rb_word[sel];
   wire [5:0] next_pc=pc+1'b1;
   always @(posedge clk) begin
     done<=0;

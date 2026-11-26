@@ -38,7 +38,7 @@ SRAM_MODELS := \
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
-.PHONY: help verify precommit install-hooks lint dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -99,6 +99,7 @@ grid-sequencer-test:
 lint:
 	$(VERILATOR) --lint-only --timing -DFUNCTIONAL \
 		--top-module tb test/tb.v $(RTL_SOURCES) $(SRAM_MODELS)
+	$(PYTHON) tools/check_part_selects.py $(RTL_SOURCES)
 
 dead-check:
 	$(PYTHON) tools/dead_rtl_check.py $(VERILATOR) $(EDA_BIN)/yosys tt_um_protocol_emulator \
@@ -124,6 +125,19 @@ pdn-extract-check:
 sim:
 	$(MAKE) -C test clean
 	$(MAKE) -C test SIM=$(SIM)
+
+# Gate-level cocotb run on a CI netlist (the tt_submission artifact's
+# tt_um_protocol_emulator.v) with the public IHP cell models, e.g.
+#   make gl-local NETLIST=.../tt_um_protocol_emulator.v PDK_ROOT=<dir with ihp-sg13cmos5l/>
+# Optional TESTS=module[,module] and FILTER=regex narrow the run.
+# Icarus with the oss-cad-suite cocotb (the venv cocotb is for Verilator).
+gl-local:
+	@test -n "$(NETLIST)" -a -n "$(PDK_ROOT)" || { echo 'set NETLIST and PDK_ROOT'; exit 1; }
+	mkdir -p test/sim_build/gl-local
+	cp -f $(NETLIST) test/sim_build/gl-local/gate_level_netlist.v
+	env PATH="$(EDA_BIN):$(subst $(VENV_BIN):,,$(PATH))" $(MAKE) -C test GATES=yes SIM=icarus COCOTB_CONFIG=$(EDA_BIN)/cocotb-config PDK_ROOT=$(abspath $(PDK_ROOT)) PWD=$(CURDIR)/test/sim_build/gl-local \
+		SIM_BUILD=$(CURDIR)/test/sim_build/gl-local/build \
+		$(if $(TESTS),COCOTB_TEST_MODULES=$(TESTS)) $(if $(FILTER),COCOTB_TEST_FILTER=$(FILTER))
 
 routing-experiment:
 	mkdir -p $(BUILD_DIR)/verilator/routing_experiment
