@@ -98,6 +98,17 @@
       "load": "a page row holds its action while the page loads, then continues at entry; rows execute from registers, never waiting on memory",
       "contexts": "the five alternate-context words commit together after the last byte",
       "port": "the loader borrows the host SRAM port; host accesses wait",
-      "fails_closed": "a page row without paging or with reserved bits set halts with error"}
+      "fails_closed": "a page row without paging or with reserved bits set halts with error"},
+    "lanes": {"count": 2, "lane_a": "the sequencer above (cell 6) with the frame, packet and coded engines",
+      "lane_b": {"cell": 13, "rows": 16, "row_words": [192, 207], "row_encoding": "same as lane A; no page rows (paging disabled)",
+        "settings_word": 188, "settings_fields": {"entry": [3, 0], "idle_actions": [7, 4], "enable": [8, 8], "clear_program": [9, 9], "reserved": [15, 10]},
+        "events": ["always", "timer2_tick", "timer3_tick", "sink43", "sink44", "sink45", "lane_a_running", "zero"],
+        "routed_event_sinks": {"sinks": [43, 44, 45], "selector_words": [185, 186, 187], "cell": 13},
+        "action_sources": {"cell12_local_bits_3_2": "actions[1:0]", "cell14_local_bits_3_2": "actions[3:2]"},
+        "status_sources": {"cell11_local_bit_2": "lane_b_active"},
+        "start": "the host start that starts lane A",
+        "abort": "lane A finishing with error aborts lane B; lane B halting with error aborts a temporal lane A",
+        "completion": "done is reported once both lanes have finished; error is either lane's, held until the next start",
+        "validity": "settings reserved bits zero and, when enabled, the entry row written"}}
   }
 }

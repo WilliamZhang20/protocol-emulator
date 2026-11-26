@@ -47,7 +47,37 @@ async def programmed_i2c_write_paged(dut):
     await _temporal_i2c(dut, paged=True)
 
 
-async def _temporal_i2c(dut, paged):
+def watchdog_words(cycles):
+    """Lane B watches lane A from cell 13: it starts timer 3 through the
+    fabric and fails the transfer if lane A is still running when the timer
+    level rises. Returns {config word: value}."""
+    return {
+        143: 3 | 4 << 3,          # cell 12 east tracks 0,1 = lane B actions 0,1
+        179: 14,                  # timer 3 start <- west track 0 (action 0)
+        180: 15,                  # timer 3 stop  <- west track 1 (action 1)
+        174: cycles, 175: 0xFFFF,  # timer 3 first expiry, then effectively never
+        185: 5,                   # lane B sink 43 <- timer 3 level
+        192: 2 << 11 | 1 << 7 | 6 << 4 | 1,  # 0: lane A done -> 2, else 1; start timer
+        193: 0 << 11 | 3 << 7 | 3 << 4 | 1,  # 1: timer level -> 3, else 0
+        194: 0x8002,              # 2: halt, stop timer
+        195: 0x8006,              # 3: halt with error, stop timer
+        188: 1 << 8 | 2 << 4,     # enable, idle actions stop the timer, entry 0
+    }
+
+
+@cocotb.test()
+async def programmed_i2c_write_watchdog(dut):
+    """Lane B runs a bus watchdog beside the transaction; all cases pass."""
+    await _temporal_i2c(dut, paged=False, watchdog=0xF000)
+
+
+@cocotb.test()
+async def i2c_bus_hang_watchdog(dut):
+    """A target that holds SCL low forever: lane B times out and aborts lane A."""
+    await _temporal_i2c(dut, paged=False, watchdog=3000, hang=True)
+
+
+async def _temporal_i2c(dut, paged, watchdog=None, hang=False):
     cocotb.start_soon(Clock(dut.clk, 20, unit='ns').start())
     dut.ena.value = 1; dut.rst_n.value = 0; dut.ui_in.value = 0
     state = {'op':0, 'strobe':0, 'scl':1, 'sda':1}
@@ -92,6 +122,9 @@ async def _temporal_i2c(dut, paged):
         await config(address, word)
     if paged:
         await config(94, 0x8000 | PAGE_BASE)
+    if watchdog is not None:
+        for address, word in watchdog_words(watchdog).items():
+            await config(address, word)
     await command(4, 0); await command(4, 4)
     assert int(dut.uio_oe.value) & 0x80, 'temporal configuration did not arm'
     for offset, value in enumerate(payload):
@@ -168,6 +201,33 @@ async def _temporal_i2c(dut, paged):
         assert bool(status & 0x40) == (nack_index is not None), f'error status {status:#x}'
         assert values == (expected[:1] if nack_index == 0 else expected), values
 
+    if hang:
+        async def stuck_peer():
+            # Pull SCL low as soon as the master starts and never release it.
+            for _ in range(100000):
+                await FallingEdge(dut.clk); await Timer(1, unit='ns')
+                if int(dut.uio_oe.value) & 0x60:
+                    break
+            state['scl'] = 0; drive()
+        cocotb.start_soon(stuck_peer())
+        start = int(get_sim_time(unit='ns'))
+        await command(5, 0)
+        for _ in range(20000):
+            await FallingEdge(dut.clk); await Timer(1, unit='ns')
+            if int(dut.uio_out.value) & 0x80:
+                break
+        else:
+            assert False, 'watchdog did not end the hung transfer'
+        elapsed = (int(get_sim_time(unit='ns')) - start) // 20
+        await ClockCycles(dut.clk, 2); await FallingEdge(dut.clk)
+        assert int(dut.uio_oe.value) & 0x60 == 0, 'pins not released after the timeout'
+        state['op'] = 4; state['strobe'] = 0; drive()
+        await ClockCycles(dut.clk, 5); await FallingEdge(dut.clk)
+        status = int(dut.uo_out.value)
+        dut._log.info('hung bus ended after %d clocks; status=%#x', elapsed, status)
+        assert status & 0x40, f'timeout not reported as an error: {status:#x}'
+        assert 3000 <= elapsed < 6000, elapsed
+        return
     await run_case(stretch=True)
     received = [await read_byte(i) for i in range(200, 204)]
     assert received == [v for b in expected for v in (((b << 1) >> 8), ((b << 1) & 255))]

@@ -90,12 +90,30 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   reg configured_q;
   always @(posedge clk) if(!rst_n) configured_q<=0; else configured_q<=configured_now;
   assign configured=configured_q;
-  assign tx_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
-  assign spi_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_spi_done;
-  assign tx_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
-  assign spi_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_spi_error;
-  assign tx_active=start_held || (temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active);
-  assign spi_active=start_held || (temporal_mode ? temporal_active : packet_mode ? packet_running : frame_spi_active);
+  // Lane A is the frame, packet or temporal engine. Lane B (grid_core cell
+  // 13) runs beside it from the same start. The host sees one transfer: done
+  // waits until both lanes have finished, and either lane's error is reported.
+  wire lane_a_done=temporal_mode ? temporal_done : packet_mode ? packet_done : frame_tx_done;
+  wire lane_a_error=temporal_mode ? temporal_error : packet_mode ? packet_error : frame_tx_error;
+  wire lane_a_running=temporal_mode ? temporal_active : packet_mode ? packet_running : frame_tx_active;
+  wire lane_b_active,lane_b_done,lane_b_error,host_start;
+  reg lane_a_held,lane_a_held_error,lane_b_failed,finished_error;
+  wire finish_now=(lane_a_done && !lane_b_active) || (lane_a_held && lane_b_done);
+  wire finish_error=lane_a_error || lane_a_held_error || lane_b_failed || (lane_b_done && lane_b_error);
+  always @(posedge clk) begin
+    if(!rst_n || !arm) begin lane_a_held<=0;lane_a_held_error<=0;lane_b_failed<=0;finished_error<=0;end
+    else if(host_start) begin lane_a_held<=0;lane_a_held_error<=0;lane_b_failed<=0;finished_error<=0;end
+    else begin
+      if(lane_a_done && lane_b_active) begin lane_a_held<=1;lane_a_held_error<=lane_a_error;end
+      if(finish_now) begin lane_a_held<=0;lane_b_failed<=0;finished_error<=finish_error;end
+      else if(lane_b_done && lane_b_error) lane_b_failed<=1;
+    end
+  end
+  assign tx_done=finish_now;assign spi_done=finish_now;
+  // Error is a level from finish until the next start, as each engine's was.
+  assign tx_error=finish_now ? finish_error : finished_error;assign spi_error=tx_error;
+  assign tx_active=start_held || lane_a_running || lane_b_active || lane_a_held;
+  assign spi_active=tx_active;
   wire [1:0] busy,finished;wire [15:0] rx0,rx1;
   reg [15:0] txword0,txword1,received;
   wire rd_valid,rd_req,rd_active,rd_done,rd_error;wire [10:0] rd_addr;
@@ -114,7 +132,7 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   assign frame_spi_active=state!=IDLE;
   assign frame_tx_active=state!=IDLE;
   assign tx_queued={1'b0,rd_queued};assign rx_queued={1'b0,wr_queued};
-  wire host_start=arm && start_request && state==IDLE;
+  assign host_start=arm && start_request && state==IDLE;
   wire temporal_request=!packet_mode && temporal_active && sequencer_actions[3] && sequencer_actions[2] && !temporal_request_prev && !temporal_halting;
   wire start=!packet_mode && (temporal_mode ? temporal_request : host_start) && state==IDLE;
   wire [2:0] frame_bytes={1'b0,format[1:0]}+(format[13] ? (format[14] ? 3'd2 : 3'd1) : 3'd0);
@@ -168,7 +186,8 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
   wire reader_consume=packet_mode ? packet_grant : state>=READ0 && state<=READ3 && rd_valid;
   wire fire=state==FIRE;
   wire [7:0] temporal_events={temporal_tx_left==0,(packet_mode ? packet_stop : frame_tx_done),rx0[0],(seq_event_enable[1] ? seq_events[1] : temporal_pins[1]),(seq_event_enable[0] ? seq_events[0] : temporal_pins[0]),(packet_mode ? (packet_grant && !packet_started) : finished[0]),temporal_tick,1'b1};
-  wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active);
+  wire temporal_abort=(packet_mode ? packet_done && packet_error : frame_tx_done && frame_tx_error) || (temporal_request && frame_tx_active) ||
+    (lane_b_done && lane_b_error);
   grid_sequencer sequencer(clk,rst_n,arm && temporal_mode && configured,
     seq_valid && seq_addr>=96 && seq_addr<=111,seq_addr[3:0],seq_data,
     seq_valid && seq_addr==91 && seq_data[1],host_start,temporal_abort,temporal_entry,temporal_events,
@@ -182,7 +201,8 @@ module grid_stream_fabric #(parameter USE_MACRO=0)(
     fire,pin_in,txword0,txword1,rx0,rx1,busy[0],finished[0],busy[1],finished[1],pin_out,pin_oe,grid_configured,
     temporal_mode,temporal_actions,temporal_actions[3],temporal_tick,temporal_pins,contexts_configured,
     packet_mode,packet_running,packet_grant,rd_data,packet_left==1,packet_request,packet_stop,packet_configured,packet_tick,
-    seq_events,seq_event_enable,page_ctx_we,page_ctx_data);
+    seq_events,seq_event_enable,page_ctx_we,page_ctx_data,
+    host_start,lane_a_done && lane_a_error,lane_a_running,lane_b_active,lane_b_done,lane_b_error);
   wire rx_event=rx_autostart && finished[format[4]];
   wire frame_write=!rx_autostart && (state==WRITE0 || state==WRITE1);
   wire writer_valid=rx_autostart ? rx_event : frame_write;

@@ -11,6 +11,29 @@ runtime memory access. Unwritten state transitions, frame errors and
 overlapping frame requests fail closed. Its configuration words and event
 assignments are in [the hardware contract](../../architecture/grid_3x3.json).
 
+## Lane B: a second sequencer in the fabric
+
+Lane A is the sequencer in cell 6 that drives the frame, packet and coded
+engines. Lane B is a second 16-row sequencer placed in cell 13, among the
+timers and LUT cells it drives, and runs beside lane A from the same host
+start. It is fabric-native: its events are timer 2/3 ticks, three routed
+sinks (43-45, selectors at words 185-187) and "lane A running"; its four
+actions are source bits 3:2 of LUT cells 12 and 14, routed through the mesh
+like any other cell output. Cell 11 exposes "lane B active" so lane A can
+route it into its own event sinks 41-42.
+
+Rows are words 192-207 (lane A's row encoding, no page rows). Word 188 is
+`{reserved[15:10]=0, clear[9], enable[8], idle_actions[7:4], entry[3:0]}`.
+The host sees one transfer: done waits until both lanes have finished, and
+either lane's error is reported and held until the next start. Lane A
+failing aborts lane B; lane B halting with error aborts a temporal lane A.
+
+The first use is a bus watchdog (`test_temporal_i2c.i2c_bus_hang_watchdog`):
+lane B starts timer 3 through the fabric, then loops between "lane A
+running?" and "timer 3 level?". A target that holds SCL low forever is cut
+off after the programmed time with an error, and both pins are released.
+A single sequencer cannot do this because it is busy waiting on the stretch.
+
 ## Paged programs
 
 Every protocol program fit in 16 rows until `i2c-write-read` filled all 16

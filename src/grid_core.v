@@ -18,7 +18,11 @@ module grid_core(
   output wire packet_request,packet_stop,packet_configured,packet_tick,
   output wire [1:0] seq_events,seq_event_enable,
   // Sequencer page loads commit all five alternate-context words at once.
-  input wire ctx_load_we,input wire [79:0] ctx_load_data);
+  input wire ctx_load_we,input wire [79:0] ctx_load_data,
+  // Lane B sequencer (cell 13). It starts with the host start, sees lane A's
+  // activity as an event, and its actions are fabric sources in cells 12/14.
+  input wire lane_b_start,lane_b_abort,lane_a_running,
+  output wire lane_b_active,lane_b_done,lane_b_error);
   localparam CELLS=15;
   // Configuration storage is distributed: every register is written only from
   // its own cell's leaf of grid_config_tree, so no configuration bus spans the
@@ -43,13 +47,15 @@ module grid_core(
   wire [3:0] n_in[0:CELLS-1],s_in[0:CELLS-1],w_in[0:CELLS-1],e_in[0:CELLS-1];
   wire [3:0] n_out[0:CELLS-1],s_out[0:CELLS-1],w_out[0:CELLS-1],e_out[0:CELLS-1];
   wire [3:0] local_signal[0:CELLS-1];
-  wire [42:0] sink;
+  wire [45:0] sink;
+  wire lane_b_ready;
+  wire [3:0] lane_b_actions;
   // Extension words 128-184 (index 0-56): 24 switch words for cells 9-14
   // (12 bits), four LUT4 truth tables, 16 LUT4 input selectors, timer 2/3
   // words, six timer input selectors and the sequencer event inputs. Each
   // keeps a validity bit for reserved upper bits; they reset to zero.
-  wire [15:0] ext_value[0:56];
-  wire [56:0] ext_valid;
+  wire [15:0] ext_value[0:59];
+  wire [59:0] ext_valid;
   wire [3:0] crc_in;
   wire [3:0] crc_route_valid;
   wire crc_out,crc_tail,crc_ok;
@@ -67,7 +73,7 @@ module grid_core(
   wire tick1,running1,tvalid1,level1,rise1,fall1,serial1;
   wire live=arm && rst_n && configured;
   wire configured_now=temporal_oe_gate_valid && (&written) && (&switch_valid) && (&sink_valid) && tvalid && tvalid1 && cfg[2][15:6]==0 && cfg[2][4:0]>=1 && cfg[2][4:0]<=16 && cfg[55][15:6]==0 && cfg[55][4:0]>=1 && cfg[55][4:0]<=16 && cfg[3][15:4]==0 && cfg[4][15:9]==0 &&
-    (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid);
+    (!cfg[4][8] || ((&crc_written) && (&crc_route_valid) && crc_shape_valid)) && (&ext_valid) && lane_b_ready;
   assign pin_oe=live ? cfg[4][2:0] & ~(cfg[4][5:3] & pin_out) &
     ~(temporal_enable ? temporal_oe_gate & {3{!temporal_actions[2]}} : 3'b0) : 0;
   assign pin_out={sink[9],sink[8],sink[7]};
@@ -99,10 +105,10 @@ module grid_core(
     assign written[wi]=done;
   end endgenerate
   genvar xi;
-  generate for(xi=0;xi<57;xi=xi+1) begin: ext
+  generate for(xi=0;xi<60;xi=xi+1) begin: ext
     localparam integer LUT=(xi<24)?0:(xi<28)?xi-24:(xi<44)?(xi-28)/4:0;
     localparam integer LUT_CELL=(LUT==0)?9:(LUT==1)?11:(LUT==2)?12:14;
-    localparam integer OWNER=(xi<24)?9+xi/4:(xi<44)?LUT_CELL:(xi<46 || (xi>=48 && xi<51))?10:(xi<54)?13:6;
+    localparam integer OWNER=(xi<24)?9+xi/4:(xi<44)?LUT_CELL:(xi<46 || (xi>=48 && xi<51))?10:(xi<54)?13:(xi<57)?6:13;
     localparam [31:0] ADDR_FULL=128+xi;
     localparam [7:0] ADDR=ADDR_FULL[7:0];
     reg [15:0] value;
@@ -171,10 +177,10 @@ module grid_core(
   assign local_signal[8]={packet_mode && coder_active,packet_mode && coder_serial,crc_ok,crc_out};
   assign local_signal[9]={2'b0,!ble_q[0],ble_q[0]};
   assign local_signal[10]={level2,fall2,rise2,tick2};
-  assign local_signal[11]={2'b0,!ble_q[1],ble_q[1]};
-  assign local_signal[12]={2'b0,!ble_q[2],ble_q[2]};
+  assign local_signal[11]={1'b0,lane_b_active,!ble_q[1],ble_q[1]};
+  assign local_signal[12]={lane_b_actions[1:0],!ble_q[2],ble_q[2]};
   assign local_signal[13]={level3,fall3,rise3,tick3};
-  assign local_signal[14]={2'b0,!ble_q[3],ble_q[3]};
+  assign local_signal[14]={lane_b_actions[3:2],!ble_q[3],ble_q[3]};
   genvar x;
   generate for(x=0;x<CELLS;x=x+1) begin: mesh
     if(x<3) assign n_in[x]=0; else assign n_in[x]=s_out[x-3];
@@ -295,12 +301,14 @@ module grid_core(
   // Extension sinks 19-42 have no alternate-context overrides. Each selector
   // reads constants, its own cell's local outputs or a neighbor's tracks.
   // Sinks: 19-21 timer2, 22-24 timer3, 25-40 LUT4 cells 0-3 inputs a-d,
-  // 41-42 sequencer event inputs (in the sequencer's cell 6).
+  // 41-42 sequencer event inputs (in the sequencer's cell 6), 43-45 lane B
+  // event inputs (in lane B's cell 13).
   genvar y;
-  generate for(y=19;y<43;y=y+1) begin: ext_inputs
-    localparam integer CELL=(y<22)?10:(y<25)?13:(y<29)?9:(y<33)?11:(y<37)?12:(y<41)?14:6;
-    // Selectors: 25-40 at extension words 28-43, 19-24 at 48-53, 41-42 at 54-55.
-    localparam integer EXT=(y>=41) ? y+13 : (y<25) ? y+29 : y+3;
+  generate for(y=19;y<46;y=y+1) begin: ext_inputs
+    localparam integer CELL=(y<22)?10:(y<25)?13:(y<29)?9:(y<33)?11:(y<37)?12:(y<41)?14:(y<43)?6:13;
+    // Selectors: 25-40 at extension words 28-43, 19-24 at 48-53, 41-42 at
+    // 54-55, 43-45 at 57-59 (words 185-187).
+    localparam integer EXT=(y>=43) ? y+14 : (y>=41) ? y+13 : (y<25) ? y+29 : y+3;
     wire [4:0] choice=ext_value[EXT][4:0];
     assign sink[y]=route_input({11'b0,choice},local_signal[CELL],n_in[CELL],s_in[CELL],w_in[CELL],e_in[CELL]);
   end endgenerate
@@ -316,7 +324,34 @@ module grid_core(
   generate for(b=0;b<4;b=b+1) begin: lut4
     grid_lut4_cell tile(clk,rst_n,live,ext_value[24+b],{sink[28+4*b],sink[27+4*b],sink[26+4*b],sink[25+4*b]},ble_q[b]);
   end endgenerate
-  wire unused_ext=&{1'b0,running2,tvalid2,running3,tvalid3,cfg_leaves[16*26-1:15*26]};
+  // Lane B: a second sequencer that lives with the cells it drives. Its rows
+  // (words 192-207) and settings (word 188: {reserved[15:10], clear[9],
+  // enable[8], idle_actions[7:4], entry[3:0]}) come from cell 13's leaf.
+  // Events: always, timer 2 tick, timer 3 tick, routed sinks 43-45, lane A
+  // running. Actions 1:0 are cell 12 sources 3:2, actions 3:2 are cell 14
+  // sources 3:2; cell 11 source 2 is lane B active.
+  reg lane_b_enable,lane_b_settings_valid;
+  reg [3:0] lane_b_entry,lane_b_idle;
+  always @(posedge clk) begin
+    if(!rst_n) begin lane_b_enable<=0;lane_b_settings_valid<=1;lane_b_entry<=0;lane_b_idle<=0;end
+    else if(leaf_we[13] && la[13]==188) begin
+      lane_b_enable<=ld[13][8];lane_b_idle<=ld[13][7:4];lane_b_entry<=ld[13][3:0];
+      lane_b_settings_valid<=ld[13][15:10]==0;
+    end
+  end
+  wire [15:0] lane_b_programmed;
+  wire [3:0] lane_b_seq_actions,lane_b_state,lane_b_load_page;
+  wire lane_b_halting,lane_b_loading;
+  assign lane_b_ready=lane_b_settings_valid && (!lane_b_enable || lane_b_programmed[lane_b_entry]);
+  grid_sequencer lane_b(clk,rst_n,live && lane_b_enable,
+    leaf_we[13] && la[13][7:4]==4'hC,la[13][3:0],ld[13],leaf_we[13] && la[13]==188 && ld[13][9],
+    lane_b_start,lane_b_abort,lane_b_entry,
+    {1'b0,lane_a_running,sink[45],sink[44],sink[43],tick3,tick2,1'b1},
+    lane_b_seq_actions,lane_b_halting,lane_b_active,lane_b_done,lane_b_error,lane_b_state,lane_b_programmed,
+    1'b0,4'b0,lane_b_loading,lane_b_load_page,1'b0,4'b0,16'b0,1'b0);
+  assign lane_b_actions=lane_b_active ? lane_b_seq_actions : lane_b_idle;
+  wire unused_ext=&{1'b0,running2,tvalid2,running3,tvalid3,cfg_leaves[16*26-1:15*26],
+                     lane_b_halting,lane_b_loading,lane_b_load_page,lane_b_state};
 endmodule
 
 // Registered configuration distribution: one root register next to the host
