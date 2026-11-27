@@ -23,11 +23,12 @@ from peers.swd import SwdTarget
 from peers.jtag import JtagTap
 
 from peers.i2c import I2cTarget
+from peers.i2c_controller import I2cController
 from peers.spi import SpiDevice
 from peers.uart import UartDevice
 from peers.usb import UsbHost
 
-KINDS = {"ethernet_link": EthernetLink, "ps2_keyboard": Ps2Keyboard, "swd_target": SwdTarget, "jtag_tap": JtagTap, "i2c_target": I2cTarget, "spi_device": SpiDevice, "uart_device": UartDevice, "usb_host": UsbHost}
+KINDS = {"ethernet_link": EthernetLink, "ps2_keyboard": Ps2Keyboard, "swd_target": SwdTarget, "jtag_tap": JtagTap, "i2c_target": I2cTarget, "i2c_controller": I2cController, "spi_device": SpiDevice, "uart_device": UartDevice, "usb_host": UsbHost}
 
 
 def attach(spec, bus, dut):

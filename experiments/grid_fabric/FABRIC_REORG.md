@@ -490,9 +490,72 @@ Not yet covered by criterion 3:
        5.2k more (257.0k). The counter is 7.9k against the timer's 16.3k;
        a 4-context switch costs about 4.5k over a 1-context one.
 
-     Next: an externally driven I2C target from source, where the address
-     match and ACK must be autonomous (no exported function in its time
-     loop); then the I2C gaps (repeated START, event collisions).
+   - **Externally driven I2C target from source (2026-11-26).** The
+     SPI result shows host sequencing works for a function whose source
+     allows pauses; it says nothing about a target's response deadline.
+     The target therefore runs entirely in the fabric: no host step in
+     its time loop.
+
+     *Language* (compiler README, "State machines and word compares"),
+     defined by behaviour, not by the switch encoding:
+     - `compare C on S { value, mask }`: every word S receives pulses
+       `C.match` or `C.mismatch` once, after S's `word` and before its
+       next;
+     - `machine M { state S { on E -> T ... } }`: the first state is the
+       reset state. The first `on` line (in source order) whose signal is
+       high is taken; the others are ignored in that clock. A transition
+       takes effect at the end of the clock: `M.S` is 1 in exactly the
+       clocks M is in S. `if M.S { a } else { b }` selects by state;
+     - a stream's `gate { open: L }` passes only words received while L.
+
+     A machine over the fabric's bounds (4 states, 2 `on` lines per
+     state) is refused as a hardware limitation, never reshaped.
+     `spatial build`/`check` refuse these constructs (the old fabric
+     cannot implement them); `spatial test-plan` accepts them.
+
+     *Program* (`examples/fabric/i2c_target.spt`): `bus` (IDLE, STARTED,
+     ADDRESS, SELECTED), `ack` (RELEASED, WAIT, DRIVE), a compare on the
+     receive shifter, and the gate. Peer: a new `i2c_controller` (drives
+     SCL/SDA; one message per `write`; a message queued during another
+     follows it with a repeated START; records ACK/NAK per byte; fails
+     the test if the target pulls SDA low outside an acknowledge or moves
+     it during one).
+
+     *Evidence* (`make reorg-compiled-test`), all four source tests pass:
+     - address match with ACK, then data bytes to SRAM;
+     - another address and a read are not acknowledged, and nothing is
+       stored;
+     - repeated STARTs readdress within one transaction (to the target,
+       to the target, to another address that is NAKed, to the target),
+       with a final STOP;
+     - a fast bus.
+
+     *Timing envelope* (swept, half-period 4-10 clocks, hold 1 to
+     half-1): every case passes at a half-period of 5 clocks or more (10
+     clocks per SCL period, 5 MHz SCL at 50 MHz). At 4 the address is
+     still acknowledged (the compare tap), but every data byte's
+     acknowledge comes after SCL has fallen: the shifter's word event
+     follows the synchronised SCL rise too late. This limit is measured,
+     not yet computed: the compiler does not check response deadlines
+     statically (open).
+
+     *Compiler rule found here: exact machine replication.* The gate's
+     constant-1 case pins `bus` to the word-port cell, so the shifter's
+     two selections had to leave that cell on tracks, and they did not
+     route. The compiler now gives a machine that a constant-1 selection
+     pins to one cell, while its other selections are read elsewhere, one
+     copy per pinned site (one more contexted switch). The copies are
+     always in the same state because they have the same reset state and
+     rows **and routes are combinational, so every copy sees every event
+     in the same clock**. That precondition is explicit: if routes get
+     registered hops, replication must equalise latency to every copy or
+     be refused.
+
+     Also fixed: colocation (a machine with a constant-1 case at its
+     reader's cell) is now a hard placement constraint. And
+     `test/Makefile.mesh` keys its build directory on the mesh
+     parameters, after a reused build with stale parameters (shifter
+     cells without contexts) made a correct vector fail at the pins.
    - **L3, exported functions -> control FSMs.** `wait X` is a state
      left on X; `fire E` is the triggering event muxed by state;
      `repeat N { wait next X }` is a count-mode timer; `set_flags`
@@ -508,9 +571,31 @@ Not yet covered by criterion 3:
    Baseline workloads, the `.spt` examples: `uart`, `spi`, `i2c`, `jtag`,
    `usb`, `ps2`, `swd`, and `ethernet_tx_coded` (the defined Ethernet
    workload: the whole `transmit()` link session).
-5. **Placement regions.** Experiment with rectangular placement regions
+5. **Registered routing study (user, 2026-11-26), before deciding where
+   registers belong.** Routes are combinational today (`ctx_switch`
+   track and sink selectors are muxes, `hop_cycles 0`), so "one clock
+   tile to tile" is a target, not a demonstrated guarantee.
+   - **Loop freedom across every legal configuration:** prove it on the
+     synthesized mesh with the configuration as free inputs (a
+     structural check: no combinational cycle in the netlist means none in
+     any configuration of any context). The turn classes and the
+     registered context state are the argument; the proof replaces it.
+   - **Compare** the combinational mesh with selected registered routing
+     points (per hop, at cell boundaries every k hops, at sinks only),
+     using the same mappings (every compiled program). For each, measure
+     worst-case path delay (STA), area, and protocol latency: the I2C
+     target envelope, SPI and UART at the pins.
+   - Then decide. Until then: a contract bound `max_route_hops`, and every
+     compiled program's longest route in hops, recorded.
+6. **Replacement chip top (user, 2026-11-26), the next physical
+   milestone.** Integrate the contexted mesh, the host interface (streams,
+   host events, flags, parameters) and the real SRAM macros into a
+   candidate chip top, without the duplicated old fabric. Run GDS,
+   timing, DRC/LVS, precheck and gate-level tests (top-level pins only).
+   This depends on step 5 for where registers go.
+7. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
-6. **Grid-size study (user, 2026-11-26), before the fabric size is
+8. **Grid-size study (user, 2026-11-26), before the fabric size is
    final.** Compare 3 x 4 (12 cells) and 3 x 5 (15 cells) with candidate
    resource mixes on the same complete workloads:
    - a defined Ethernet workload (the 10BASE-T link session: NLP
@@ -556,7 +641,7 @@ Not yet covered by criterion 3:
    resource counting are proven; failures from the heuristic flow are
    not. Area comes from the measured tile costs, as estimates until a
    GDS.
-7. **Coverage (user, 2026-11-26; also a study metric).**
+9. **Coverage (user, 2026-11-26; also a study metric).**
    - Define a protocol space: designs generated from the chip's
      primitives within its limits (timers, shifters, CRC, pin events and
      drivers, FSMs of up to 4 states with 2 transitions each, muxed
