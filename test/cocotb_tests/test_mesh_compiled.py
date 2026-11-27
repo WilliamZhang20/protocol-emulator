@@ -38,7 +38,7 @@ from pathlib import Path
 import cocotb
 import cocotb.utils
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
+from cocotb.triggers import ClockCycles, FallingEdge, Lock, RisingEdge, Timer
 
 import peers
 from cocotb_tests.test_compiled import Failure, Invariants, fmt
@@ -87,7 +87,14 @@ class MeshBus:
             self.dut.pins.value = sum(self.level(p) << p for p in range(8))
 
 
-TX_BASE, RX_BASE, RX_CAPACITY = 0, 1024, 1024     # bank 0 for sends, bank 1 for receives
+# Bank 0 for sends, bank 1 for receives. Contention stress (direct port):
+# MESH_RX_BASE=512 puts the receive region in bank 0 beside the sends (one
+# single-port bank for reader, writer and host); MESH_STORM=1 adds a host
+# that reads SRAM continuously, between the test's own accesses.
+TX_BASE = 0
+RX_BASE = int(os.environ.get('MESH_RX_BASE', 1024))
+RX_CAPACITY = 512 if RX_BASE < 1024 else 1024
+STORM = os.environ.get('MESH_STORM') == '1'
 
 
 class DirectPort:
@@ -99,6 +106,7 @@ class DirectPort:
     def __init__(self, dut, vector, interface):
         self.dut, self.vector, self.interface = dut, vector, interface
         self.got = {name: [] for name, s in interface['streams'].items() if s['port'] == 'host'}
+        self.lock = Lock()
 
     def bus(self, wires):
         return MeshBus(self.dut, wires)
@@ -121,7 +129,31 @@ class DirectPort:
         raise Failure('the mesh did not finish loading its configuration')
 
     def tasks(self):
-        return [self._collect()]
+        self.together = self.waited = self.storm_reads = 0
+        return [self._collect(), self._contention()] + ([self._storm()] if STORM else [])
+
+    async def _storm(self):
+        """A host reading SRAM continuously in the receive region's bank."""
+        while True:
+            await self.mem(RX_BASE + RX_CAPACITY - 1 - self.storm_reads % 64)
+            self.storm_reads += 1
+
+    async def _contention(self):
+        """Memory contention, measured on mesh_soc's request and grant wires:
+        clocks with two or more of host, reader and writer requesting, and
+        requests that waited (asked, not granted that clock)."""
+        dut = self.dut
+        while True:
+            await FallingEdge(dut.clk)
+            await Timer(1, unit='ps')
+            req = [int(dut.host_req.value) & int(dut.mem_en.value), int(dut.rq.value), int(dut.wq.value)]
+            ready = int(dut.m_ready.value)
+            self.together += sum(req) >= 2
+            self.waited += sum(r and not ready >> i & 1 for i, r in enumerate(req))
+
+    def summary(self):
+        return (f'memory contention: {self.together} clocks with two or more requests, {self.waited} requests waited'
+                + (f', {self.storm_reads} storm reads' if STORM else ''))
 
     async def _collect(self):
         """Collect bytes from direct host ports."""
@@ -135,6 +167,10 @@ class DirectPort:
                     self.got[name].append(int(dut.host_byte.value) >> (8 * s['cell']) & 255)
 
     async def mem(self, addr, data=None):
+        async with self.lock:
+            return await self._mem(addr, data)
+
+    async def _mem(self, addr, data=None):
         """host_ready is the memory's grant for the current clock (combinational),
         so it is sampled between edges: the next rising edge performs the access,
         and a read's rvalid/rdata follow one clock later."""
@@ -153,7 +189,8 @@ class DirectPort:
         if data is None:
             if not int(dut.host_rvalid.value):
                 raise Failure(f'SRAM host read of {addr} returned nothing')
-            return int(dut.host_rdata.value)
+            v = dut.host_rdata.value
+            return int(v) if v.is_resolvable else None     # a never-written location
 
     async def _strobe(self, **values):
         """Drive signals for one clock (from a falling edge), then zero them."""
@@ -339,6 +376,8 @@ async def run_test(dut, port, interface, plan, test, delay=0):
                 raise Failure(f"line {line}: step `{step['op']}` is not lowered yet (step 4 L3)")
         await ClockCycles(dut.clk, 20)
         check_rules(test['line'])
+        if hasattr(port, 'summary'):
+            dut._log.info('%s', port.summary())
         for peer in attached.values():
             if hasattr(peer, 'finish'):
                 peer.finish()

@@ -35,7 +35,7 @@ SRAM_MODELS := \
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 CELL_BLACKBOX := tools/blackbox/sg13cmos5l_dlhrq_1.v
 
-.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test reorg-compiled-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
+.PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test reorg-compiled-test reorg-contention-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
 help:
 	@echo "make grid-fabric-experiment  Run the SRAM-backed spatial grid SPI/UART test"
@@ -110,6 +110,18 @@ reorg-compiled-test:
 			COCOTB_CONFIG=$(EDA_BIN)/cocotb-config MESH=$$m > $(BUILD_DIR)/mesh-$$(basename $$m).log 2>&1 \
 			|| { tail -30 $(BUILD_DIR)/mesh-$$(basename $$m).log; exit 1; }; \
 		grep -E 'test ".*" passed' $(BUILD_DIR)/mesh-$$(basename $$m).log | sed 's/.*cocotb.mesh_soc *//'; \
+	done
+
+# Two protocols at once, each through its own SRAM stream (roadmap 2), under
+# memory contention: a host storm reading SRAM, alone and with the receive
+# region in the send bank (one single-port bank for reader, writer and host).
+reorg-contention-test:
+	@mkdir -p $(BUILD_DIR)
+	@set -e; for v in "MESH_STORM=1" "MESH_STORM=1 MESH_RX_BASE=512"; do \
+		env PATH="$(EDA_BIN):$(subst $(VENV_BIN):,,$(PATH))" $$v timeout 2400 $(MAKE) -s -C test -f Makefile.mesh SIM=icarus \
+			COCOTB_CONFIG=$(EDA_BIN)/cocotb-config MESH=$(CURDIR)/experiments/grid_fabric/reorg/compiled/i2c_uart_tx.test_3x5c \
+			> $(BUILD_DIR)/contention.log 2>&1 || { tail -30 $(BUILD_DIR)/contention.log; exit 1; }; \
+		echo "$$v:"; grep -E 'contention|test ".*" passed' $(BUILD_DIR)/contention.log | sed 's/.*cocotb.mesh_soc *//'; \
 	done
 
 grid-sequencer-test:

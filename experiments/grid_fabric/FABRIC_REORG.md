@@ -571,6 +571,30 @@ Not yet covered by criterion 3:
    Baseline workloads, the `.spt` examples: `uart`, `spi`, `i2c`, `jtag`,
    `usb`, `ps2`, `swd`, and `ethernet_tx_coded` (the defined Ethernet
    workload: the whole `transmit()` link session).
+   *Two protocols through their own SRAM streams, under contention
+   (roadmap 2, 2026-11-26).* `examples/fabric/i2c_uart_tx.spt` (compiler
+   repository): the I2C target's bytes go into SRAM through the stream
+   writer while a UART transmitter sends bytes from SRAM through the stream
+   reader, on 4 pads; compiled from source (26 track segments, longest
+   route 3 hops). Tests: a fast I2C bus (10 clocks per SCL period, a NAK
+   and a repeated START) beside a 2.5 Mbaud UART stream, and a slow bus
+   beside a 16-byte stream. Both pass at the mesh ports and at the chip's
+   pins.
+   - Concurrency is not contention: with the reader on bank 0, the writer
+     on bank 1 and a byte every ~200 clocks per stream, the memory saw no
+     clock with two requests. `make reorg-contention-test` adds a host
+     storm (continuous SRAM reads) and, in a second run, the receive region
+     in the send bank (one single-port bank for reader, writer and host):
+     13 clocks with two or more requests, 13 requests waited, 1,028 storm
+     reads in the fast test; both protocols still complete exactly. The
+     protocol streams are slow next to the memory, so collisions stay few
+     even then.
+   - The pairing is forced by the hardware: the word network has one reader
+     and one writer port, so two receiving protocols (the I2C target and a
+     UART receiver) cannot both reach SRAM. That is a resource-mix input
+     for right-sizing (a second writer against, for example, a third
+     shifter), decided by the workload study.
+
 5. **Registered routing study (user, 2026-11-26), before deciding where
    registers belong.** Routes are combinational today (`ctx_switch`
    track and sink selectors are muxes, `hop_cycles 0`), so "one clock
