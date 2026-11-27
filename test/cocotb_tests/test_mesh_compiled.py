@@ -21,9 +21,10 @@ of the mesh's drive (push-pull or open drain) and the peers' (wired-AND,
 pulled up).
 
 A function call runs its host plan (FABRIC_REORG.md step 4 L3): clear the
-sticky flags, send `via` arguments through SRAM and the reader, write
-parameters into idle tiles, fire host events, wait on flags or result
-bytes, and read the result back from SRAM. The fabric does the rest. A
+sticky flags, select a mode (a host event), send `via` arguments or a loaded
+value through SRAM and the reader, write parameters into idle tiles, fire
+host events, wait on flags or result bytes, and read the result back from
+SRAM (masked if the source says `& mask`). The fabric does the rest. A
 program with functions runs every test twice: with no host delay and with
 HOST_DELAY clocks (default 997) before every host step, which measures that
 the host steps tolerate host latency.
@@ -71,6 +72,9 @@ class MeshBus:
         if oe:
             return int(self.dut.pad_out.value) >> pad & 1, True
         return 1, False
+
+    def chip_driven(self, pad):
+        return self._chip(self.wires.get(pad, pad))[1]
 
     def driven(self, pad):
         pad = self.wires.get(pad, pad)
@@ -262,10 +266,18 @@ async def call(dut, port, interface, step, delay, timeout, clock_ns):
         if op == 'clear':
             await port.clear()
         elif op == 'send':
-            data = args[st['arg']]
+            data = st['bytes'] if 'bytes' in st else args[st['arg']]
+            # Never overwrite the region a previous call's stream still reads.
+            if not await until(dut, clock_ns, port.reader_finished, timeout):
+                raise Failure(f"line {step['line']}: {step['function']}: the previous stream never finished")
             for i, b in enumerate(data):
                 await port.mem(TX_BASE + i, b)
             await port.send(TX_BASE, len(data))
+        elif op == 'load':
+            # One value into the transmit shifter: a byte through SRAM and the
+            # reader (the shifter takes it when its transaction starts).
+            await port.mem(TX_BASE, host_value(st['value'], args) & 0xff)
+            await port.send(TX_BASE, 1)
         elif op == 'param':
             await port.param(st['cell'], st['addr'], host_value(st['value'], args))
         elif op == 'fire':
@@ -281,6 +293,8 @@ async def call(dut, port, interface, step, delay, timeout, clock_ns):
         elif op == 'reply':
             n = await port.written() - start
             result = [await port.mem(RX_BASE + start + i) for i in range(n)]
+            if 'mask' in st:
+                result = [b & st['mask'] for b in result]
     return result
 
 

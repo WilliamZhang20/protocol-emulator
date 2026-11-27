@@ -43,8 +43,11 @@
 //   seen       a sticky flag per cell local output (4 per cell), cleared
 //              by seen_clear, for the host's waits;
 //   param_*    a tile-local register write while the fabric runs: counter
-//              registers 0..2 (the limit is register 0). The compiler only
-//              emits one while the tile is idle.
+//              registers 0..2 (the limit is register 0), shifter registers
+//              1..6 (the frame is register 1) and 7 (a loaded value: the
+//              byte the shifter sends when its transaction starts, if the word
+//              network does not feed it). The compiler only emits one while
+//              the tile is idle.
 // Configuration (CELL_BITS per cell, then the word network):
 //   [0,192) track_cfg, [192,312) sink_cfg (6 sinks), [312,368) trans_cfg,
 //   [368,512) tile:
@@ -108,7 +111,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   wire [5:0] sinks[0:N-1];
   wire [7:0] oe[0:N-1], ov[0:N-1];
   // Shifter FIFO ports, CRC links and the word network's bit pins.
-  wire [7:0] rx_byte[0:N-1]; wire [N-1:0] rx_req, rx_grant, tx_req, tx_grant;
+  wire [7:0] rx_byte[0:N-1]; wire [N-1:0] rx_req, rx_grant, tx_req, tx_grant, held_grant;
   wire [N-1:0] l_absorb, l_bit, l_emit, tail;
   // Each CRC cell's link {select, linked} (its shape register, crc register 6
   // bits [7:6]): linked 1, select 0 west / 1 east.
@@ -165,14 +168,14 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire ea=run && fa[0] && sinks[c][1] && (fa[4] || !va), eb=run && fb[0] && sinks[c][3] && (fb[4] || !vb);
       assign oe[c]=(ea ? 8'd1<<fa[3:1] : 8'd0) | (eb ? 8'd1<<fb[3:1] : 8'd0);
       assign ov[c]=(ea && fa[4] && va ? 8'd1<<fa[3:1] : 8'd0) | (eb && fb[4] && vb ? 8'd1<<fb[3:1] : 8'd0);
-      assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
+      assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else if(kind(c)==TIMER) begin: tm
       wire tick, running, configured, level, rise, fall; wire [15:0] cap;
       grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],1'b0,16'd0,16'd0,tile[47:32],tile[63:48],
         sinks[c][0],sinks[c][1],sinks[c][2],tick,running,configured,level,rise,fall,cap);
       assign lraw={fall,rise,level,tick};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else if(kind(c)==SHIFTER) begin: sh
       wire word, stop, out, active; wire [4:0] nc; wire [15:0] rxd, st;
@@ -183,9 +186,21 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire crc_in = (COL<COLS-1 && kind(NB_E)==CRC && crc_link[NB_E]==2'b01) ? tail[NB_E] :
                     (COL>0 && kind(NB_W)==CRC && crc_link[NB_W]==2'b11) ? tail[NB_W] : 1'b0;
       wire [2:0] sh_addr=load+3'd1;
-      fabric_shifter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded && load<6),.cfg_addr(sh_addr),
-        .cfg_data(tw[load]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
-        .tx_request(tx_req[c]),.tx_grant(tx_grant[c]),.tx_data(wn_tx[7:0]),.tx_eop(1'b0),.tx_err(1'b0),
+      // A host write (param port, registers 1-6) while the tile is idle:
+      // the compiler emits one only before a call's transaction.
+      wire pw=param_we && param_cell==c;
+      // A loaded value (parameter register 7, the shifter idle): a one-byte
+      // holding register the shifter takes when its transaction starts, for a
+      // shifter the word network does not feed.
+      reg [7:0] held; reg full;
+      always @(posedge clk)
+        if(!rst_n || !run) full<=0;
+        else if(loaded && pw && param_addr==3'd7) begin held<=param_data[7:0]; full<=1; end
+        else if(held_grant[c]) full<=0;
+      assign held_grant[c]= tx_cell!=c && tx_req[c] && full;
+      fabric_shifter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we((!loaded && load<6) || (loaded && pw)),
+        .cfg_addr(loaded ? param_addr : sh_addr),.cfg_data(loaded ? param_data : tw[load]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
+        .tx_request(tx_req[c]),.tx_grant(tx_grant[c]),.tx_data(tx_cell==c ? wn_tx[7:0] : held),.tx_eop(1'b0),.tx_err(1'b0),
         .rx_request(rx_req[c]),.rx_grant(rx_grant[c]),.crc_in(crc_in),.rx_byte(rx_byte[c]),.rx_eop(nc[1]),
         .rx_err(nc[2]),.out(out),.active(active),.word_pulse(word),.stop_pulse(stop),.rx_data(rxd),
         .status(st),.crc_absorb(l_absorb[c]),.crc_bit(l_bit[c]),.crc_emit(l_emit[c]));
@@ -199,7 +214,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tw[load][12:0]),
         .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
       assign lraw={2'b0,hit,ge};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else begin: cr
       wire ok, out, tl; wire [31:0] value;
@@ -211,13 +226,13 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .lines(lines),.link_absorb(la),.link_bit(lb),.link_emit(le),.out(out),.tail_out(tl),.ok(ok),.value(value));
       assign tail[c]=tl;
       assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,rd_valid,ok} : {3'b0,ok};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0;
     end
     // A shifter's FIFOs connect to the word network if it is the
     // configured rx / tx cell; a receive FIFO otherwise feeds the host.
     assign rx_grant[c]= rx_cell==c ? rx_req[c] && wn_rx_ready : rx_req[c];
-    assign tx_grant[c]= tx_cell==c && tx_req[c] && wn_txv;
+    assign tx_grant[c]= tx_cell==c ? tx_req[c] && wn_txv : held_grant[c];
     assign host_valid[c]= rx_cell!=c && rx_req[c];
     // Sticky flags for the host's waits.
     reg [3:0] seen_r;

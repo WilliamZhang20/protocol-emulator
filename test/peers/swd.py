@@ -44,6 +44,8 @@ class SwdTarget:
         raise ValueError("write DP registers over SWD")
 
     def chip_drives(self, pad):
+        if hasattr(self.bus, 'chip_driven'):        # a bus that knows the chip's drive (the mesh benches)
+            return self.bus.chip_driven(pad)
         return bool(int(self.dut.uio_oe.value) >> pad & 1)
 
     def clk(self) -> int:

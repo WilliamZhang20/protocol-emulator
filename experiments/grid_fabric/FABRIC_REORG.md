@@ -747,6 +747,41 @@ Not yet covered by criterion 3:
      how much the fabric covers, and whether everything that can be mapped
      onto the I/O has been mapped (step 9).
 
+   *More complete protocols while CI runs (2026-11-27).* SWD, JTAG,
+   stored_bytes and memory_bandwidth (with its bit2 and fast variants)
+   now compile from their `.spt` and pass, with and without the
+   host-delay repeat, both on the mesh's direct ports and through the
+   chip top's pins: all 12 compiled programs, 29 tests each way, plus the
+   contention run. Coverage on test_3x5c: 12 compiled, 1 refused by the hardware
+   (io_saturation: two transmit streams, one reader), 24 refused by the
+   compiler. What it took:
+   - Host-sequenced lowering (compiler L3) of a function's host steps:
+     `set`, `load`, `drive`/`release`, register fields and `send` only
+     before the call's first fire; a tile changed by them is waited idle;
+     route fields (`sample`) and pad drive become a generated mode
+     machine switched by host events; register fields become parameter
+     writes; `send(const)` becomes stored bytes through the reader;
+     `reply X.received & m` a result through the writer with a mask; a
+     transaction on the result shifter without a reply drains one word.
+     Output pins switched by drive/release are bidirectional (readable).
+   - One hardware addition, a behaviour-preserving extension of the
+     shifter's host port: shifter parameter registers 1-6 writable while
+     the mesh runs (the tile idle), and register 7, a one-byte holding
+     register the shifter sends when its transaction starts if the word
+     network does not feed it. JTAG needs it: its TMS and TDI shifters both
+     transmit, and the word network has one reader into one shifter.
+     Cost (local synthesis, flop store): 587.9k -> 598.7k µm², +10.8k
+     (+1.8%), most of it the run-time write path into each shifter's
+     registers rather than the 27 holding flops; an item for the
+     right-sizing table (R1), weighed against the JTAG and SWD it enables.
+   - Next blockers (from the refusal table): USB and the Ethernet
+     transmit need fabric-fired events and flags (`clear_flags`,
+     `set_flags`) and repeated waits on one word in a call, that is
+     function-to-FSM lowering for wire-timed functions; `parallel`
+     (memory_dual_channel) needs a second reader; i2c (controller) and
+     packets need helper inlining and register logic, some likely hardware
+     refusals; stream stages (L5) are not lowered.
+
    **Right-sizing (user, 2026-11-26), after the physical result.** Simplify
    flexibility the workloads do not need (context counts on selected
    switches, unused selector choices, shared word-path stages) and

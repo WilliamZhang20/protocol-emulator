@@ -47,6 +47,9 @@ class ChipBus:
             return int(out), True
         return 1, False
 
+    def chip_driven(self, pad):
+        return self._chip(self.wires.get(pad, pad))[1]
+
     def driven(self, pad):
         pad = self.wires.get(pad, pad)
         return self._chip(pad)[1] or any(p == pad for p, _ in self.drive)

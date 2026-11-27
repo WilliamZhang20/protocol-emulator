@@ -1,0 +1,253 @@
+{
+ "contract": "test_3x5c",
+ "params": {
+  "ROWS": 3,
+  "COLS": 5,
+  "WORD_PORT": 6,
+  "KINDS": "30'd287029521",
+  "CTX4": "15'd11242",
+  "CNT": "15'd4096"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "send8": {
+   "args": {
+    "value": "value"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "fire",
+     "event": "_mode0",
+     "index": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "frame",
+     "value": 32775,
+     "cell": 5,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "load",
+     "value": {
+      "arg": "value"
+     },
+     "cell": 5,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "bits.stop",
+     "flag": 21
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    }
+   ]
+  },
+  "send1": {
+   "args": {
+    "value": "value"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "fire",
+     "event": "_mode0",
+     "index": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "frame",
+     "value": 32768,
+     "cell": 5,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "load",
+     "value": {
+      "arg": "value"
+     },
+     "cell": 5,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "bits.stop",
+     "flag": 21
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    }
+   ]
+  },
+  "receive8": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "fire",
+     "event": "_mode1",
+     "index": 2
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "frame",
+     "value": 32775,
+     "cell": 5,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "load",
+     "value": 255,
+     "cell": 5,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "bits.stop",
+     "flag": 21
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    },
+    {
+     "op": "reply",
+     "mask": 255
+    }
+   ],
+   "returns": "writer"
+  },
+  "receive6": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "fire",
+     "event": "_mode1",
+     "index": 2
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "frame",
+     "value": 32773,
+     "cell": 5,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "load",
+     "value": 255,
+     "cell": 5,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "bits.stop",
+     "flag": 21
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    },
+    {
+     "op": "reply",
+     "mask": 63
+    }
+   ],
+   "returns": "writer"
+  },
+  "receive5": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "fire",
+     "event": "_mode1",
+     "index": 2
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "frame",
+     "value": 32772,
+     "cell": 5,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "bits",
+     "reg": "load",
+     "value": 255,
+     "cell": 5,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "bits.stop",
+     "flag": 21
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    },
+    {
+     "op": "reply",
+     "mask": 31
+    }
+   ],
+   "returns": "writer"
+  }
+ }
+}
