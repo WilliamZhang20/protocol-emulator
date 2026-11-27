@@ -1,0 +1,306 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "scl": 0,
+  "sda": 1,
+  "terminal_rx": 3,
+  "tx": 2
+ },
+ "tests": [
+  {
+   "line": 79,
+   "name": "I2C writes and a UART transmission at the same time",
+   "peers": [
+    {
+     "args": {
+      "half": 5,
+      "hold": 1,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 80,
+     "name": "ctl"
+    },
+    {
+     "args": {
+      "bit": 20,
+      "from_chip": {
+       "pin": 2
+      },
+      "to_chip": {
+       "pin": 3
+      }
+     },
+     "kind": "uart_device",
+     "line": 81,
+     "name": "terminal"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      17,
+      34,
+      51,
+      68,
+      85,
+      102,
+      119
+     ],
+     "line": 82,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      146,
+      153
+     ],
+     "line": 83,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      136,
+      153,
+      170
+     ],
+     "line": 84,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      48
+     ],
+     "line": 85,
+     "op": "write",
+     "target": {
+      "stream": "send"
+     }
+    },
+    {
+     "count": 10,
+     "expect": [
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      48
+     ],
+     "line": 86,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    },
+    {
+     "count": 13,
+     "expect": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+     ],
+     "line": 87,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 10,
+     "expect": [
+      17,
+      34,
+      51,
+      68,
+      85,
+      102,
+      119,
+      136,
+      153,
+      170
+     ],
+     "line": 88,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 91,
+   "name": "a slow I2C bus beside a long UART stream",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 92,
+     "name": "ctl"
+    },
+    {
+     "args": {
+      "bit": 20,
+      "from_chip": {
+       "pin": 2
+      },
+      "to_chip": {
+       "pin": 3
+      }
+     },
+     "kind": "uart_device",
+     "line": 93,
+     "name": "terminal"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      165,
+      90
+     ],
+     "line": 94,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      0,
+      255,
+      85,
+      170,
+      1,
+      128,
+      126,
+      129,
+      16,
+      32,
+      64,
+      8,
+      4,
+      2,
+      195,
+      60
+     ],
+     "line": 95,
+     "op": "write",
+     "target": {
+      "stream": "send"
+     }
+    },
+    {
+     "count": 16,
+     "expect": [
+      0,
+      255,
+      85,
+      170,
+      1,
+      128,
+      126,
+      129,
+      16,
+      32,
+      64,
+      8,
+      4,
+      2,
+      195,
+      60
+     ],
+     "line": 96,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      0,
+      0,
+      0
+     ],
+     "line": 97,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      165,
+      90
+     ],
+     "line": 98,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

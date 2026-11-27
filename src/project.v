@@ -1,10 +1,14 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 `default_nettype none
 // The mesh chip (FABRIC_REORG.md step 6): a contexted mesh of coarse tiles
-// (src/mesh.v) with its SRAM streams on the two SRAM macros (mesh_soc), its
-// configuration storage (mesh_cfg) and the host interface (mesh_host). The
-// mesh is the test configuration (3 rows x 5 columns, compiler contract
-// test_3x5c), not a chosen fabric size.
+// and logic cells (src/mesh.v) with its SRAM streams on the two SRAM macros
+// (mesh_soc), its configuration storage (mesh_cfg) and the host interface
+// (mesh_host). The mesh is the compiler contract mesh_3x5_L3 (FABRIC_REORG.md
+// step 8 result): 3 rows x 5 columns, row-major
+//   timer logic io    logic timer
+//   shifter crc* shifter crc io        (* word port)
+//   timer counter logic counter timer
+// with contexts on the io, shifter and crc cells.
 //
 // Pins:
 //   ui[7:0]   host data (stable while the strobe is high)
@@ -19,9 +23,9 @@ module tt_um_protocol_emulator (
     input wire [7:0] uio_in, output wire [7:0] uio_out,
     output wire [7:0] uio_oe, input wire ena, input wire clk, input wire rst_n
 );
-  localparam ROWS=3, COLS=5, N=ROWS*COLS;
-  localparam [2*N-1:0] KINDS=30'd287029521;
-  localparam [N-1:0] CTX4=15'd11242, CNT=15'd4096;
+  localparam ROWS=3, COLS=5, N=ROWS*COLS, WORD_PORT=6;
+  localparam [2*N-1:0] KINDS=30'd357808453;
+  localparam [N-1:0] CTX4=15'd996, CNT=15'd10240, LOGIC=15'd4106;
   localparam CFG_BITS=N*512+128;
   wire reset_n = rst_n && ena;
 
@@ -45,14 +49,14 @@ module tt_um_protocol_emulator (
 
   // CFG_LATCH: the configuration store's storage (mesh_cfg LATCH).
   localparam CFG_LATCH=1;
-  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LATCH(CFG_LATCH)) store(
+  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .LATCH(CFG_LATCH)) store(
     clk, reset_n, cfg_clear, cfg_we, cfg_addr, cfg_data, cfg_busy, cfg);
 
   // Pads 0-3 on uio 0, 5, 6, 7; unbonded pads read high (idle).
   wire [7:0] pad_oe, pad_out;
   wire [7:0] pins = {4'b1111, uio_in[7], uio_in[6], uio_in[5], uio_in[0]};
   wire [N-1:0] host_valid; wire [8*N-1:0] host_byte;
-  mesh_soc #(.ROWS(ROWS), .COLS(COLS), .WORD_PORT(6), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .USE_MACRO(1)) fabric(
+  mesh_soc #(.ROWS(ROWS), .COLS(COLS), .WORD_PORT(WORD_PORT), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .USE_MACRO(1)) fabric(
     .clk(clk), .rst_n(reset_n), .run_req(run_req), .mesh_hold(mesh_hold), .host_ev(host_ev),
     .seen(seen), .seen_clear(seen_clear),
     .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data),

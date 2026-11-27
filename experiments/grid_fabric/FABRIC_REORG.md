@@ -936,6 +936,93 @@ Not yet covered by criterion 3:
    resource counting are proven; failures from the heuristic flow are
    not. Area comes from the measured tile costs, as estimates until a
    GDS.
+   **Result (2026-11-27): logic cells, and two chips that keep every
+   mapped protocol and add USB and Ethernet.** USB and 10BASE-T Ethernet
+   were refused on every candidate: their per-bit logic (NRZI, stuffing
+   gates, Manchester line states) and their wire-timed host steps have no
+   coarse tile. Following the thesis ("a little programmable logic
+   connects blocks and makes decisions"), the least-used coarse cells
+   become **logic cells** (`mesh.v` `mesh_logic`, `LOGIC` parameter):
+   - eight 4-input LUTs, each with an output register: a source `reg`
+     maps exactly (its clock enable on an enable sink, its start value
+     held while the fabric is stopped); four host flags (parameter-port
+     writes under a mask: `set_flags` / `clear_flags`, pin drive and
+     release); q0-q3 are the cell's four locals. Every output is a
+     register, so REG=1's invariant (no combinational loop for any
+     configuration) holds;
+   - one context: the 344-bit LUT field is the tile field plus the bits a
+     one-context switch never reads (tracks of contexts 1-3, transition
+     rows); no new configuration space per cell.
+
+   The compiler (protocol-emulator-compiler `fabric_logic.py`,
+   `fabric_lower.py`) lowers to them by rule, never by protocol:
+   - registers that are not an FSM shape, combinational connections and
+     context-selected pin drives become LUTs (combinational source logic
+     is one clock late: every LUT output is a register; a pin pair
+     switched together keeps its relative timing);
+   - **pack -> place -> route**, as VPR: LUTs are clustered into tiles
+     before placement (at most 8 LUTs, 6 external inputs, 4 outputs, 4
+     flags per tile; multi-start greedy, fewest tiles then fewest cut
+     signals), then placed and routed as any tile;
+   - a call's **wire-timed segment** (from the first wait while its own
+     transaction is in flight to the last flag change or fire while it
+     is) becomes a one-hot LUT sequencer in the fabric:
+     q_k' = (q_{k-1} && c_{k-1}) || (q_k && !c_k), flags the states they
+     hold in, fires a pulse on their transition; the host waits for its
+     end. Steps at quiescent points stay host steps (`wait next`,
+     unrolled `repeat`, flag writes);
+   - timers past the chip's timer cells, if small (8 clocks), become an
+     exact LUT copy of grid_timer (one-hot remaining count, running,
+     tick/level/rise/fall), the 3 x 4's way to keep Ethernet's 2- and
+     4-clock timers;
+   - registers fall back to LUTs instead of context FSMs when a placement
+     does not route.
+
+   The two chips (compiler contracts `mesh_3x5_L3`, `mesh_3x4_L3`;
+   branches `experiment/mesh-3x5-logic`, `experiment/mesh-3x4-logic`):
+
+   | | 3 x 5 (15 cells) | 3 x 4 (12 cells) |
+   |---|---|---|
+   | layout (row-major) | T L I L T / S C S C I / T K L K T | T L I L / S C S I / T K L K |
+   | mix | 4 timer, 3 logic, 2 io, 2 shifter, 2 crc, 2 counter | 2 timer, 3 logic, 2 io, 2 shifter, 1 crc, 2 counter |
+   | contexted cells | io, shifter, crc (6) | io, shifter, crc (5) |
+
+   Shifters sit on both sides of the word-port crc: with only two io
+   cells, every arrangement without that failed to route the I2C
+   machines (400 placements each, six arrangements), and every one with
+   it routed.
+
+   Programs compiled and run with their own source tests at the mesh pins
+   (test/Makefile.mesh, the real SRAM reader/writer; programs with calls
+   also replayed with a 997-clock host delay), 19 on each chip: the 16
+   that mapped before (I2C target, I2C + UART, SPI, SWD, JTAG, UART,
+   loopback, PS/2, the four protocol_control programs, the memory and
+   stored-byte programs) and USB, Ethernet (coded) and crc_link_trace.
+   USB passes both its tests, with and without host delay, at the mesh
+   pins and through the chip (project.v, host link); its call runs as a
+   7-state LUT sequencer (word, word, CRC bits, SE0, ticks), host steps
+   only before and after. Ethernet's link sessions (three NLP pulses
+   exactly 640,000 clocks apart, then the stored frame) pass with and
+   without host delay at the mesh pins (Verilator: `make -f Makefile.mesh
+   SIM=verilator`); at the chip pins it runs without the delay replay
+   (`LONG_PROGRAMS` in test_chip.py: tens of milliseconds per call).
+   A host step's clocks are part of the wire timing when the wire is
+   timed by the host: a flag clear placed between a wait and a fire
+   shifted one link pulse by two clocks, so a clear is emitted only where
+   a later plain wait needs it.
+
+   Area (local yosys with the CI IHP liberty, before PnR): 3 x 5 403.6k
+   um2 (the old latch 3 x 5: ~407k), 3 x 4 330.7k um2.
+   The old test_3x5c programs still pass on the new RTL (no logic cells:
+   it behaves as before).
+
+   Still refused, and why (both chips): io_saturation (two transmit
+   streams, one reader: hardware), packet_errors (a burst-end level from a
+   signal; the mesh shifter has no end sink: hardware),
+   protocol_control_two_input (a protocol machine on two inputs: compiler,
+   now expressible in LUTs), the byte-stage, packet, multi-context and
+   parallel-call programs (compiler stages not lowered yet).
+
 9. **Coverage (user, 2026-11-26; also a study metric).**
    - Define a protocol space: designs generated from the chip's
      primitives within its limits (timers, shifters, CRC, pin events and

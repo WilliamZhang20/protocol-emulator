@@ -21,7 +21,7 @@ from cocotb_tests.test_mesh_compiled import run_program
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILED = ROOT / 'experiments/grid_fabric/reorg/compiled'
-CONTRACT = 'test_3x5c'          # the chip's mesh (src/project.v)
+CONTRACT = 'mesh_3x5_L3'          # the chip's mesh (src/project.v)
 PAD_PINS = [0, 5, 6, 7]         # uio bit of mesh pads 0-3
 CFG, CTL = 0x1000, 0x2000
 STROBE_HIGH, STROBE_LOW, READ_WAIT = 4, 3, 6
@@ -192,7 +192,11 @@ class ChipPort:
 # path: the host link and configuration (all), SRAM streams both ways
 # (uart), the autonomous wire-timed target (i2c_target) and the
 # host-sequenced function (spi, without the host-delay repeat).
-GL_PROGRAMS = ('i2c_target', 'spi', 'uart')
+GL_PROGRAMS = ('i2c_target', 'spi', 'uart', 'usb')
+# Programs whose source tests run for tens of milliseconds (Ethernet's three
+# 16 ms link sessions per call): no host-delay replay at the chip's pins.
+# The replay runs at the mesh's pins (test/Makefile.mesh, SIM=verilator).
+LONG_PROGRAMS = ('ethernet_tx_coded',)
 
 
 @cocotb.test()
@@ -206,5 +210,6 @@ async def chip_compiled_programs(dut):
     assert stems, f'no compiled programs for {CONTRACT} in {COMPILED}'
     failures = []
     for stem in stems:
-        failures += await run_program(dut, stem, ChipPort, host_delay=not gl)
+        failures += await run_program(dut, stem, ChipPort,
+                                      host_delay=not gl and Path(stem).name.split('.')[0] not in LONG_PROGRAMS)
     assert not failures, failures

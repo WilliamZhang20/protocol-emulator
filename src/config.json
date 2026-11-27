@@ -30,8 +30,8 @@
   "PNR_SDC_FILE": "dir::mesh_chip.sdc",
   "SIGNOFF_SDC_FILE": "dir::mesh_chip.sdc",
 
-  "// MESH_REGIONS": "Step 7: one placement region per mesh cell (odb_mesh_regions.py). false = the unconstrained comparison run.",
-  "MESH_REGIONS": true,
+  "// MESH_REGIONS": "Step 7: one placement region per mesh cell (odb_mesh_regions.py). false = the unconstrained comparison run. Off for the logic-cell chips' first runs: the constrained run 9f0f9c8 (run 46019229385) passed global placement and failed detailed placement (DPL-0017), and odb_mesh_regions.py is sized for a 3 x 5 of the old mix.",
+  "MESH_REGIONS": false,
   "// 92068bf": "Moving bank 1 next to bank 0 (x=235.44) at density 60 did not route: detailed routing still had 806 violations after 43 iterations and hit the 6 h CI limit (run 45526662215). Keep the 10f2416 placement, which signed off; the 5x3 grid raises effective utilization from 0.26 to about 0.33, still under 40.",
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
