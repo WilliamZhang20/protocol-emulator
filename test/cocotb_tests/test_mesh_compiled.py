@@ -309,6 +309,18 @@ async def run_test(dut, port, interface, plan, test, delay=0):
         if any(s['port'] == 'writer' for s in interface['streams'].values()) or \
                 any(f.get('returns') == 'writer' for f in interface.get('functions', {}).values()):
             await port.open_writer(RX_BASE, RX_CAPACITY)
+        # A stream write at the test's start is in place at time 0 in the
+        # source's model: stage it (SRAM and the reader started) while the
+        # mesh is still stopped, so a fabric event soon after `run` cannot
+        # race the host link.
+        staged = None
+        first = test['steps'][0] if test['steps'] else None
+        if first and first['op'] == 'write' and 'stream' in first['target'] and \
+                interface['streams'].get(first['target']['stream'], {}).get('port') == 'reader':
+            for i, b in enumerate(first['bytes']):
+                await port.mem(TX_BASE + i, b)
+            await port.send(TX_BASE, len(first['bytes']))
+            staged = first
         await port.run()
         attached = {}
         for spec in test['peers']:
@@ -336,9 +348,10 @@ async def run_test(dut, port, interface, plan, test, delay=0):
                 name = step['target']['stream']
                 if interface['streams'].get(name, {}).get('port') != 'reader':
                     raise Failure(f'line {line}: stream {name} is not a host -> mesh stream')
-                for i, b in enumerate(step['bytes']):
-                    await port.mem(TX_BASE + i, b)
-                await port.send(TX_BASE, len(step['bytes']))
+                if step is not staged:
+                    for i, b in enumerate(step['bytes']):
+                        await port.mem(TX_BASE + i, b)
+                    await port.send(TX_BASE, len(step['bytes']))
                 if not await until(dut, clock_ns, port.reader_finished, timeout):
                     raise Failure(f'line {line}: stream {name}: the reader never finished')
                 check_rules(line)

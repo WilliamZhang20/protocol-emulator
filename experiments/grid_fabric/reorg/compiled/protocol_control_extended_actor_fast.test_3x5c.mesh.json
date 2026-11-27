@@ -1,0 +1,25 @@
+{
+ "contract": "test_3x5c",
+ "params": {
+  "ROWS": 3,
+  "COLS": 5,
+  "WORD_PORT": 6,
+  "KINDS": "30'd287029521",
+  "CTX4": "15'd11242",
+  "CNT": "15'd4096"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "wait_for_action": {
+   "args": {},
+   "steps": [
+    {
+     "op": "wait",
+     "signal": "_handshake_action1.reached",
+     "flag": 49
+    }
+   ]
+  }
+ }
+}
