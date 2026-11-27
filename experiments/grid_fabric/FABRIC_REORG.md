@@ -861,6 +861,35 @@ Not yet covered by criterion 3:
    - R5 zero-loss cuts first, then area saved per workload lost.
 7. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
+
+   *Brief (user, 2026-11-27).* Does OpenROAD's initial placement create a
+   congestion pattern later optimization cannot recover from? Compare the
+   unconstrained flow against a tile-aware geometric floorplan on the same
+   chip RTL and SRAM placement: keep enough tile identity through
+   synthesis to group each tile's logic, regions that follow the logical
+   mesh with space for inter-tile routing and SRAM access, regions before
+   hardened tile macros. Report per candidate: initial and final placement,
+   congestion by location and layer, global-route overflow, detailed
+   routing convergence, timing, area, DRC; a small density sweep only
+   where useful; a failed placement kept apart from a failed route or
+   timing check. No protocol resource or routing flexibility is cut to hit
+   an assumed area. Keep the unconstrained run as the comparison.
+
+   *Setup.*
+   - Identity without changing synthesis: the flattened netlist keeps
+     public net names (`fabric.fabric.cl[c]....` inside cell c's generate
+     scope, `cfg[i]` for configuration bit i), so `odb_mesh_regions.py`
+     seeds each cell from them and labels the rest by nearest seed through
+     the netlist (nets of at most 24 pins; clock, reset and broadcast nets
+     do not merge cells); host and stream logic stays unconstrained.
+   - Regions: one INCLUSIVE region per cell in the logical arrangement
+     (row 0 top), column widths and row heights by the largest cell of
+     each, 8 µm channels; the step prints each region's utilization over
+     its free area (SRAM and obstructions removed) before placement.
+   - Runs, both at target density 80 with the flop store (the congested
+     candidate): unconstrained (`Project.MeshRegions` absent) and regions.
+     `experiments/grid_fabric/reorg/gds_report.py RUN_DIR` summarizes each
+     run's artifact the same way.
 8. **Grid-size study (user, 2026-11-26), before the fabric size is
    final.** Compare 3 x 4 (12 cells) and 3 x 5 (15 cells) with candidate
    resource mixes on the same complete workloads:

@@ -2,7 +2,8 @@
   "meta": {
     "flow": "Classic",
     "substituting_steps": {
-      "+OpenROAD.GeneratePDN": "Project.ExtendPowerStripes"
+      "+OpenROAD.GeneratePDN": "Project.ExtendPowerStripes",
+      "+Odb.AddRoutingObstructions": "Project.MeshRegions"
     }
   },
 
