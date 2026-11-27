@@ -118,4 +118,12 @@ set_false_path -from [get_clocks {cfg_strobe}] -to [get_clocks {clk}]
 # By construction d_q and a_q load only when !busy, and busy spans staged,
 # strobe and settle: d_q is stable for at least one more clk period after
 # the latch closes, so the hold check belongs one clk edge earlier.
-set_multicycle_path -hold 1 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
+# Setup: d_q is registered at clock 0, strobe rises at clock 1 and the
+# latches close at clock 2. cfg_strobe is aligned with the strobe flop's
+# own clk edge (clock 1), so by default OpenSTA assumes d_q launched at
+# clock 1, one period late: post-route setup repair then worked on ~4,230
+# latch D pins at +0.79 ns real slack (run 46054082523). Setup multicycle 2
+# is the real launch; hold multicycle 2 with it keeps the hold check one
+# edge before the default, as above.
+set_multicycle_path -setup 2 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
+set_multicycle_path -hold 2 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
