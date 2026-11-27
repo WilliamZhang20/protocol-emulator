@@ -35,8 +35,16 @@ STORE = re.compile(r"^store\.by\[(\d+)\]\.")           # configuration byte b's 
 OTHER = re.compile(r"^(host|fabric\.memory|fabric\.rd|fabric\.wr|store\.(?!by))\.?")
 
 
+def physical(inst):
+    """Tap, end-cap and filler cells: placed by the flow, not logic."""
+    t = str(inst.getMaster().getType()).upper()
+    n = inst.getMaster().getName().lower()
+    return any(k in t for k in ("WELLTAP", "ENDCAP", "SPACER", "TIEHIGH_NEVER")) or \
+        any(k in n for k in ("tap", "endcap", "fill", "decap"))
+
+
 def fixed(inst):
-    if inst.getMaster().isBlock():
+    if inst.getMaster().isBlock() or physical(inst):
         return True
     try:
         return str(inst.getPlacementStatus()).upper() in ("FIRM", "LOCKED", "COVER")
@@ -49,7 +57,7 @@ def fixed(inst):
 @click.option("--cols", default=5, type=int)
 @click.option("--cell-bits", default=512, type=int)
 @click.option("--margin", default=4.0, type=float, help="channel half-width, um")
-@click.option("--target", default=0.55, type=float, help="planned region utilization")
+@click.option("--target", default=0.85, type=float, help="outside logic utilization limit (placer accounting)")
 @click.option("--max-fanout", default=24, type=int)
 @click.option("--enabled", default=1, type=int, help="0: leave the design unconstrained")
 @click_odb
@@ -156,7 +164,7 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout, enabled):
     # cells' area inflated for pin density (run 45959386194: x1.16 in the
     # regions, x1.26 outside); size the regions on that accounting.
     taps = sum(i.getMaster().getWidth() * i.getMaster().getHeight() for i in block.getInsts()
-               if fixed(i) and not i.getMaster().isBlock()) / dbu / dbu
+               if physical(i)) / dbu / dbu
     INFLATE_IN, INFLATE_OUT = 1.16, 1.26
     print(f"[INFO] mesh regions: core {core_area:.0f} um2, blocked {blocked:.0f} um2, taps {taps:.0f} um2 ({len(blockages)} blockages), "
           f"cells {sum(area.values()):.0f} um2, outside {free_area:.0f} um2")
@@ -175,7 +183,7 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout, enabled):
         outside = core_area - blocked - taps - sum(boxa.values())
         return boxes, avail, util, outside
 
-    limit = 0.8                                  # a cell region, on the placer's accounting
+    limit = 0.85                                 # a cell region, on the placer's accounting (GPL-0301 at 1.0)
     cw = [float(max(area[r * cols + c] for r in range(rows))) for c in range(cols)]
     rh = [float(max(area[r * cols + c] for c in range(cols))) for r in range(rows)]
     best = None
