@@ -35,6 +35,131 @@ What is ruled out is a private network: an all-to-all or
 many-to-many selector set among a group of resources that bypasses the
 mesh, which is what the lane core's 64-line crossbar was.
 
+## One protocol owns the fabric (user, 2026-11-27; supersedes the concurrency requirements below)
+
+**Requirement change.** One active protocol owns the entire fabric at a
+time. Simultaneous independent protocols are no longer a design
+requirement or a sizing target. A single protocol still runs many
+signals, tiles, events and operations in parallel (I2C + UART bytes in
+`i2c_uart_tx`, USB's sequencer beside its shifter and CRC, Ethernet's
+cadence beside its coder), and that capability is kept. The goal is the
+widest variety and the most complex individual protocols the chip can
+support under its area and timing limits. The current mesh (3 x 5
+`mesh_3x5_L3`, 3 x 4 `mesh_3x4_L3`) stays the baseline until a measured
+candidate is better.
+
+What this retires, wherever it appears below:
+- promotion criterion 2 (two protocols without one disturbing the other)
+  and its fixtures as requirements (the I2C + UART slice and the
+  `+UART` mesh bench stay as tests of one design with parallel parts);
+- the ownership restriction as an isolation rule. Its content survives
+  as a correctness rule of one design: a switch's context follows its
+  FSM, so a selector that carries a signal not muxed by that FSM must be
+  identical in every context of the switch;
+- concurrent pairs and fixtures in the right-sizing workload (R3) and the
+  grid-size study; "two readers and two writers, one pair per bank".
+
+**Not cut for an assumed area target:** protocol primitives (timers,
+coded shifters, CRC, counters, logic cells, word stages, streams) and
+the parallel behaviour a single protocol needs.
+
+**Steps** (each with its evidence before the next; tracked here):
+
+O1. **Remove ownership and isolation machinery.** Inventory (2026-11-27):
+   the mesh chip has little of it. It already has one word network, one
+   reader and one writer, one host link and one configuration. What is
+   multi-protocol only:
+   - RTL: the per-cell host receive path (`mesh` `host_valid`/`host_byte`,
+     15 receive bytes for shifters outside the word network: a second
+     protocol's receive channel). It is unused at the chip pins
+     (`project.v` ties it off) and used by the `+UART` prototype bench;
+   - compiler: composing several designs (`fabric_map.Netlist(designs)`:
+     per-design names, pad and word-network conflicts between designs);
+     with one protocol the parts are one design;
+   - plan and tests: the concurrency criterion and fixtures above.
+   The full copy of every selector in every context is the main cost a
+   single protocol does not need; it is O3.
+O2. **Measurement 1: selectors that change between contexts**
+   (`reorg/context_study.py CONTRACT [--compiled DIR]`, on the committed
+   compiled programs; a selector is dynamic if its value differs between
+   two contexts reachable from context 0). 2026-11-27, all 19 programs:
+
+   | Program | Cells using >1 context | Selectors used | Dynamic (track + sink) |
+   |---|---|---|---|
+   | i2c_target, i2c_uart_tx | 3 | 21-30 | 6 (2 + 4) |
+   | spi | 2 | 26-27 | 2 (0 + 2) |
+   | swd | 2 | 19-21 | 2 (0 + 2) |
+   | the other 15 (USB, Ethernet, JTAG, UART, PS/2, ...) | 0 | 0-36 | 0 |
+
+   Same counts on 3 x 5 and 3 x 4. Per contexted cell, the worst program
+   needs **at most 3 of its 22 selectors dynamic (1 track, 2 sinks)**, at
+   most 4 contexts. The dynamic ones are the FSM's own sinks and one track
+   leaving its cell (`east0` or `west0`): exactly the compiler's mux rule.
+   USB, Ethernet and JTAG keep their state in logic-cell sequencers and
+   use no contexts. Caveat: this is what the compiler emits under that rule
+   and today's workload, not a bound on all protocols; O3 keeps a margin
+   and the workload grows (O7).
+O3. **Static/dynamic split prototype.** Store every selector once (static)
+   and give a contexted cell a few dynamic slots, each {selector index,
+   a value per context}, plus its transition rows. A contexted cell's
+   switch configuration drops from 368 bits (4 x (48 + 30 + 14)) to about
+   78 + 56 + 25 per slot. The contract states the slot count, the compiler
+   assigns slots (a mapping that needs more is refused as a hardware
+   limit), ConfigSim checks it, every program passes at the mesh and chip
+   pins, and area and configuration bits are measured against the
+   baseline.
+   **Result (2026-11-27).** Both splits are in the RTL as parameters
+   (baseline unchanged: `DSLOTS=0`, `CTX_TRACKS=4'b1111`) and in the
+   compiler contract (`make_contract(..., dyn_slots=D)` or
+   `ctx_tracks=MASK`); `mesh_cfg` stores only the bits a split reads, and
+   ConfigSim decodes both independently of the emitter. Area: local yosys
+   with the CI IHP liberty, whole chip, 3 x 5 `mesh_3x5_L3`:
+
+   | Candidate | Chip area (µm²) | Config latches | Programs compiled | Mesh-pin tests |
+   |---|---|---|---|---|
+   | baseline (every selector x 4 contexts) | 404,621 | 4,319 | 19 | 19 |
+   | indexed slots, D = 3 (`DSLOTS=3`) | 395,042 (-2.4%) | 3,488 | 19 | 18 + Ethernet running |
+   | fixed: tracks 0 and 2 per context (`CTX_TRACKS=4'b0101`) | 389,166 (-3.8%) | 3,937 | 19 | pending |
+   | fixed: track 0 per context (`CTX_TRACKS=4'b0001`) | 381,186 (-5.8%) | 3,746 | 19 | 18 (Ethernet pending) |
+
+   - The indexed slots store the fewest bits but their index compare and
+     priority chain (22 selectors x 3 slots) gives back about 13.5k of the
+     23k the latches save; the fixed split's plain 4:1 muxes on fewer
+     selectors cost less.
+   - Proven by counting (compiler, before placement): an FSM with M muxed
+     signals needs M dynamic selectors in its switch. The I2C target's
+     `bus` FSM muxes 3, so D = 3 is the floor for it (D = 1 or 2 refuse
+     both I2C programs as `resources`); SPI and SWD need 1.
+   - Heuristic, not proven: with no contexted track the I2C target does not
+     route in 400 placements; on the old test mesh (`test_3x5c`) the JSON
+     I2C fixture routes only when a track of each turn class is contexted
+     (masks 0101 and 1001 route, 0001, 0010 and 0011 do not: tracks 0-1
+     turn onto vertical outputs only, 2-3 onto horizontal). Tracks 0 and 2
+     keep that margin; track 0 alone maps today's 19 programs.
+   - Not yet: chip-pin runs and a GDS for a split. The baseline stays until
+     those confirm one (routing on the baseline comes first).
+
+O4. **Local connections.** A few optional direct links between frequently
+   paired resources (timer -> shifter shift/sample, shifter -> CRC as
+   `crc_link` today), each a contract edge the compiler may use or ignore,
+   tiles still assignable through the mesh. Report routing demand and
+   mappings with and without each link.
+O5. **Interconnect candidates.** Track counts (2, 3, 4, 6 per direction),
+   turn rules, and a ring or shared signal bus where they can be evaluated
+   on the same workload and the same compiler. Fewer switches or tracks
+   are not assumed to route; each candidate's routability is measured.
+O6. **Exhaustive oracle for the mesh.** For a program and a contract,
+   enumerate kind-compatible placements and route exactly (or prove that
+   none routes), so a failure is classified as proven (counting or oracle)
+   or heuristic. Used where its search is feasible.
+O7. **Report and decide.** Per candidate: which complete protocols map and
+   pass at the pins, resource and configuration-bit use, area (local
+   yosys with the CI liberty), timing, and physical routing for the
+   finalists (GDS); proven limits kept apart from compiler and heuristic
+   failures. The workload grows with protocol variety (for example a
+   repeated I2C START, CAN, 1-Wire), and a decision records the workload
+   it was made on.
+
 ## Active plan (the only current meaning; everything under "History" is superseded where it differs)
 
 **Thesis (user, 2026-11-26).**

@@ -98,6 +98,8 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter [ROWS*COLS-1:0] LOGIC=0,
+  parameter DSLOTS=0,      // ctx_switch static/dynamic split (0: every selector per context)
+  parameter [3:0] CTX_TRACKS=4'b1111, // with DSLOTS=0: tracks held per context (the fixed split)
   parameter REG=1,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
@@ -164,7 +166,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     wire [55:0] trans = contexts(c)>1 ? cc[TRANS_LSB+:56] : 56'b0;
     wire [1:0] ctx;
     wire [3:0] no,so,wo,eo; wire [5:0] sk;
-    ctx_switch #(.NSINK(6)) sw(clk,run,nin,sin,win,ein,local_out[c],
+    ctx_switch #(.NSINK(6), .DSLOTS(contexts(c)>1 ? DSLOTS : 0), .CTX_TRACKS(CTX_TRACKS)) sw(clk,run,nin,sin,win,ein,local_out[c],
       cc[TRACK_LSB+:192], cc[SINK_LSB+:120], trans,
       no,so,wo,eo, sk, ctx);
     // Study points (REG): registered sinks or registered hops.

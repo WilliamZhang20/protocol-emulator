@@ -26,6 +26,10 @@ module tt_um_protocol_emulator (
   localparam ROWS=3, COLS=5, N=ROWS*COLS, WORD_PORT=6;
   localparam [2*N-1:0] KINDS=30'd357808453;
   localparam [N-1:0] CTX4=15'd996, CNT=15'd10240, LOGIC=15'd4106;
+  // DSLOTS: ctx_switch static/dynamic split (FABRIC_REORG.md O3); 0 is the
+  // baseline (every selector per context).
+  localparam DSLOTS=0;
+  localparam [3:0] CTX_TRACKS=4'b1111;   // with DSLOTS=0: tracks per context (4'b1111 the baseline)
   localparam CFG_BITS=N*512+128;
   wire reset_n = rst_n && ena;
 
@@ -49,14 +53,14 @@ module tt_um_protocol_emulator (
 
   // CFG_LATCH: the configuration store's storage (mesh_cfg LATCH).
   localparam CFG_LATCH=1;
-  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .LATCH(CFG_LATCH)) store(
+  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .DSLOTS(DSLOTS), .CTX_TRACKS(CTX_TRACKS), .LATCH(CFG_LATCH)) store(
     clk, reset_n, cfg_clear, cfg_we, cfg_addr, cfg_data, cfg_busy, cfg);
 
   // Pads 0-3 on uio 0, 5, 6, 7; unbonded pads read high (idle).
   wire [7:0] pad_oe, pad_out;
   wire [7:0] pins = {4'b1111, uio_in[7], uio_in[6], uio_in[5], uio_in[0]};
   wire [N-1:0] host_valid; wire [8*N-1:0] host_byte;
-  mesh_soc #(.ROWS(ROWS), .COLS(COLS), .WORD_PORT(WORD_PORT), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .USE_MACRO(1)) fabric(
+  mesh_soc #(.ROWS(ROWS), .COLS(COLS), .WORD_PORT(WORD_PORT), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LOGIC(LOGIC), .DSLOTS(DSLOTS), .CTX_TRACKS(CTX_TRACKS), .USE_MACRO(1)) fabric(
     .clk(clk), .rst_n(reset_n), .run_req(run_req), .mesh_hold(mesh_hold), .host_ev(host_ev),
     .seen(seen), .seen_clear(seen_clear),
     .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data),
