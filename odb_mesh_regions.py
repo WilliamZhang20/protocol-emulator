@@ -147,12 +147,36 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
         h = min(a[3], b[3]) - max(a[1], b[1])
         return max(w, 0) * max(h, 0)
 
+    # The regions are fences: instances outside every region (host, streams,
+    # word-network glue) may only use the channels. Widen the channels until
+    # that logic fits at the target utilization, keeping each cell's region
+    # under 85%.
+    free_area = total - sum(area.values())
+    core_area = (cx1 - cx0) * (cy1 - cy0)
+    blocked = sum(overlap((cx0, cy0, cx1, cy1), b) for b in blockages)
+
+    def layout(m):
+        boxes = {r * cols + c: (xs[c] + m, ys[r + 1] + m, xs[c + 1] - m, ys[r] - m)
+                 for r in range(rows) for c in range(cols)}
+        avail = {k: (b[2] - b[0]) * (b[3] - b[1]) - sum(overlap(b, x) for x in blockages) for k, b in boxes.items()}
+        outside = core_area - blocked - sum(avail.values())
+        return boxes, avail, outside
+    m = margin
+    while True:
+        boxes, avails, outside = layout(m)
+        worst = max(area[k] / avails[k] for k in boxes if avails[k] > 0)
+        if (free_area / outside <= target and worst <= 0.85) or m > 80:
+            break
+        m += 1.0
+    print(f"[INFO] mesh regions: unconstrained logic {free_area:.0f} um2 in {outside:.0f} um2 of channels "
+          f"({free_area / outside:.2f}); channel {2 * m:.0f} um; worst cell region {worst:.2f}")
+    margin = m
     made = 0
     for r in range(rows):
         for c in range(cols):
             cell = r * cols + c
-            box = (xs[c] + margin, ys[r + 1] + margin, xs[c + 1] - margin, ys[r] - margin)
-            avail = (box[2] - box[0]) * (box[3] - box[1]) - sum(overlap(box, b) for b in blockages)
+            box = boxes[cell]
+            avail = avails[cell]
             util = area[cell] / avail if avail > 0 else float("inf")
             print(f"[INFO] cell {cell} (row {r}, col {c}): {len(members[cell])} instances, {area[cell]:.0f} um2, "
                   f"box ({box[0]:.1f}, {box[1]:.1f})-({box[2]:.1f}, {box[3]:.1f}), free {avail:.0f} um2, "
