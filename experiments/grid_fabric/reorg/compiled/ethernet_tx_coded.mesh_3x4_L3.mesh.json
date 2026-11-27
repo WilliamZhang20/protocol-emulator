@@ -17,35 +17,128 @@
    "steps": [
     {
      "op": "param",
-     "tile": "_logic0",
+     "tile": "_logic1",
      "reg": "flags",
      "value": 16,
      "cell": 3,
      "addr": 0
     },
     {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
      "op": "param",
-     "tile": "_logic1",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 17,
+     "cell": 1,
+     "addr": 0
+    },
+    {
+     "op": "param",
+     "tile": "_logic2",
+     "reg": "flags",
+     "value": 17,
+     "cell": 10,
+     "addr": 0
+    },
+    {
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 16,
+     "cell": 1,
+     "addr": 0
+    },
+    {
+     "op": "param",
+     "tile": "_logic2",
      "reg": "flags",
      "value": 16,
      "cell": 10,
      "addr": 0
     },
     {
-     "op": "clear"
-    },
-    {
      "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
+     "signal": "_logic0.q0",
+     "flag": 4
     },
     {
      "op": "clear"
@@ -53,7 +146,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -61,7 +154,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -69,7 +162,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -77,7 +170,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -85,7 +178,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -93,7 +186,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -101,7 +194,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -109,107 +202,60 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
+     "op": "clear"
+    },
+    {
+     "op": "wait",
+     "signal": "cadence.tick",
+     "flag": 32
+    },
+    {
+     "op": "clear"
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 17,
+     "cell": 1,
+     "addr": 0
+    },
+    {
+     "op": "param",
+     "tile": "_logic2",
+     "reg": "flags",
+     "value": 17,
+     "cell": 10,
+     "addr": 0
+    },
+    {
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 16,
+     "cell": 1,
+     "addr": 0
+    },
+    {
+     "op": "param",
+     "tile": "_logic2",
+     "reg": "flags",
+     "value": 16,
+     "cell": 10,
+     "addr": 0
     },
     {
      "op": "wait",
      "signal": "_logic0.q0",
-     "flag": 12
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "clear"
-    },
-    {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
-    },
-    {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
-    },
-    {
-     "op": "wait",
-     "signal": "_logic0.q0",
-     "flag": 12
+     "flag": 4
     },
     {
      "op": "clear"
@@ -217,22 +263,14 @@
     {
      "op": "fire",
      "event": "begin_frame",
-     "index": 1
-    },
-    {
-     "op": "param",
-     "tile": "_logic0",
-     "reg": "flags",
-     "value": 17,
-     "cell": 3,
-     "addr": 0
+     "index": 0
     },
     {
      "op": "param",
      "tile": "_logic1",
      "reg": "flags",
      "value": 17,
-     "cell": 10,
+     "cell": 3,
      "addr": 0
     },
     {
@@ -311,22 +349,14 @@
     {
      "op": "wait",
      "signal": "tail.tick",
-     "flag": 32
-    },
-    {
-     "op": "param",
-     "tile": "_logic0",
-     "reg": "flags",
-     "value": 16,
-     "cell": 3,
-     "addr": 0
+     "flag": 0
     },
     {
      "op": "param",
      "tile": "_logic1",
      "reg": "flags",
      "value": 16,
-     "cell": 10,
+     "cell": 3,
      "addr": 0
     },
     {
@@ -335,7 +365,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -343,7 +373,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -351,7 +381,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -359,7 +389,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -367,7 +397,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -375,7 +405,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -383,7 +413,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -391,7 +421,7 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
@@ -399,25 +429,52 @@
     {
      "op": "wait",
      "signal": "cadence.tick",
-     "flag": 0
+     "flag": 32
     },
     {
      "op": "clear"
     },
     {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 0
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 17,
+     "cell": 1,
+     "addr": 0
     },
     {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
+     "op": "param",
+     "tile": "_logic2",
+     "reg": "flags",
+     "value": 17,
+     "cell": 10,
+     "addr": 0
+    },
+    {
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 16,
+     "cell": 1,
+     "addr": 0
+    },
+    {
+     "op": "param",
+     "tile": "_logic2",
+     "reg": "flags",
+     "value": 16,
+     "cell": 10,
+     "addr": 0
     },
     {
      "op": "wait",
      "signal": "_logic0.q0",
-     "flag": 12
+     "flag": 4
     }
    ]
   }

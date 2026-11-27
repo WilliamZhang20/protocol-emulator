@@ -1004,12 +1004,19 @@ Not yet covered by criterion 3:
    only before and after. Ethernet's link sessions (three NLP pulses
    exactly 640,000 clocks apart, then the stored frame) pass with and
    without host delay at the mesh pins (Verilator: `make -f Makefile.mesh
-   SIM=verilator`); at the chip pins it runs without the delay replay
-   (`LONG_PROGRAMS` in test_chip.py: tens of milliseconds per call).
+   SIM=verilator`), and both its tests pass at the chip pins (without
+   the delay replay: `LONG_PROGRAMS` in test_chip.py, tens of
+   milliseconds per call).
    A host step's clocks are part of the wire timing when the wire is
    timed by the host: a flag clear placed between a wait and a fire
    shifted one link pulse by two clocks, so a clear is emitted only where
-   a later plain wait needs it.
+   a later plain wait needs it. At the chip pins the host polls its flags
+   over the host link, so its reaction jitters: the link pulses landed
+   639,989 to 640,003 clocks apart. The fix is structural (compiler
+   6857b7a): `wait next T; fire E` with T a free-running timer is an armed
+   fire in a logic tile (fire' = arm && T && !done, done' = arm && (done
+   || T)); the host arms it well inside T's period and waits for it, so
+   the pulse is one clock after T whatever the host's latency.
 
    Area (local yosys with the CI IHP liberty, before PnR): 3 x 5 403.6k
    um2 (the old latch 3 x 5: ~407k), 3 x 4 330.7k um2.
