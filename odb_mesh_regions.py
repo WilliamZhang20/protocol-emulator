@@ -51,9 +51,13 @@ def fixed(inst):
 @click.option("--margin", default=4.0, type=float, help="channel half-width, um")
 @click.option("--target", default=0.55, type=float, help="planned region utilization")
 @click.option("--max-fanout", default=24, type=int)
+@click.option("--enabled", default=1, type=int, help="0: leave the design unconstrained")
 @click_odb
-def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
+def regions(reader, rows, cols, cell_bits, margin, target, max_fanout, enabled):
     block = reader.block
+    if not enabled:
+        print("[INFO] mesh regions: disabled (MESH_REGIONS 0); placement unconstrained")
+        return
     dbu = block.getDefUnits()
     n = rows * cols
     label = {}
@@ -147,7 +151,14 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
     free_area = total - sum(area.values())
     core_area = (cx1 - cx0) * (cy1 - cy0)
     blocked = sum(overlap((cx0, cy0, cx1, cy1), b) for b in blockages)
-    print(f"[INFO] mesh regions: core {core_area:.0f} um2, blocked {blocked:.0f} um2 ({len(blockages)} blockages), "
+    # OpenROAD's global placer charges every region the design's whole fixed
+    # standard-cell area (tap and end cells), and its movable area is the
+    # cells' area inflated for pin density (run 45959386194: x1.16 in the
+    # regions, x1.26 outside); size the regions on that accounting.
+    taps = sum(i.getMaster().getWidth() * i.getMaster().getHeight() for i in block.getInsts()
+               if fixed(i) and not i.getMaster().isBlock()) / dbu / dbu
+    INFLATE_IN, INFLATE_OUT = 1.16, 1.26
+    print(f"[INFO] mesh regions: core {core_area:.0f} um2, blocked {blocked:.0f} um2, taps {taps:.0f} um2 ({len(blockages)} blockages), "
           f"cells {sum(area.values()):.0f} um2, outside {free_area:.0f} um2")
 
     def layout(m, cw, rh):
@@ -158,12 +169,13 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
             ys.append(ys[-1] - (cy1 - cy0) * h / sum(rh))
         boxes = {r * cols + c: (xs[c] + m, ys[r + 1] + m, xs[c + 1] - m, ys[r] - m)
                  for r in range(rows) for c in range(cols)}
-        avail = {k: max(1.0, (b[2] - b[0]) * (b[3] - b[1]) - sum(overlap(b, x) for x in blockages))
-                 if b[2] > b[0] and b[3] > b[1] else 1.0 for k, b in boxes.items()}
-        util = {k: area[k] / avail[k] for k in boxes}
-        outside = core_area - blocked - sum(avail.values())
+        boxa = {k: (b[2] - b[0]) * (b[3] - b[1]) if b[2] > b[0] and b[3] > b[1] else 1.0 for k, b in boxes.items()}
+        avail = {k: max(1.0, boxa[k] - taps - sum(overlap(b, x) for x in blockages)) for k, b in boxes.items()}
+        util = {k: INFLATE_IN * area[k] / avail[k] for k in boxes}
+        outside = core_area - blocked - taps - sum(boxa.values())
         return boxes, avail, util, outside
 
+    limit = 0.8                                  # a cell region, on the placer's accounting
     cw = [float(max(area[r * cols + c] for r in range(rows))) for c in range(cols)]
     rh = [float(max(area[r * cols + c] for c in range(cols))) for r in range(rows)]
     best = None
@@ -177,16 +189,20 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
                 rh[r] *= (max(util[r * cols + c] for c in range(cols)) / mean) ** 0.3
         boxes, avails, util, outside = layout(m, cw, rh)
         worst = max(util.values())
-        fu = free_area / outside if outside > 0 else float("inf")
-        score = max(fu / target, worst / 0.85)
+        fu = INFLATE_OUT * free_area / outside if outside > 0 else float("inf")
+        score = max(fu / target, worst / limit)
         print(f"[INFO] mesh regions: channel {2 * m:.0f} um: worst cell region {worst:.2f}, outside logic {fu:.2f}")
         if best is None or score < best[0]:
             best = (score, m, boxes, avails, worst, fu)
-        if fu <= target and worst <= 0.85:
+        if fu <= target and worst <= limit:
             break
         if fu <= target:
             break                                # wider channels only fill the cells more
     _, margin, boxes, avails, worst, fu = best
+    if best[0] > 1.15:
+        print("[ERROR] mesh regions: no channel width fits the cells and the outside logic on the placer's "
+              "accounting; the regions are infeasible at this utilization")
+        raise SystemExit(1)
     print(f"[INFO] mesh regions: chose channel {2 * margin:.0f} um: worst cell region {worst:.2f}, "
           f"outside logic {fu:.2f} of its channels" + ("  OVER LIMITS" if best[0] > 1 else ""))
     made = 0

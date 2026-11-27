@@ -20,6 +20,7 @@ class MeshRegions(OdbpyStep):
     name = "Mesh Cell Placement Regions"
 
     config_vars = [
+        Variable("MESH_REGIONS", bool, "Create the mesh cell regions (else the step changes nothing).", default=True),
         Variable("MESH_REGION_MARGIN", float, "Channel half-width between cell regions (um).", default=4.0),
         Variable("MESH_REGION_MAX_FANOUT", int, "Largest net the cell assignment walks through.", default=24),
     ]
@@ -31,4 +32,5 @@ class MeshRegions(OdbpyStep):
         return super().get_command() + [
             "--margin", str(self.config["MESH_REGION_MARGIN"]),
             "--max-fanout", str(self.config["MESH_REGION_MAX_FANOUT"]),
+            "--enabled", "1" if self.config["MESH_REGIONS"] else "0",
         ]
