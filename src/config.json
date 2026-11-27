@@ -21,7 +21,8 @@
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
   "// PL_TARGET_DENSITY_PCT": "40, not the template 60: at ~28% stdcell utilization 60 packed all logic into the left ~55% of the die around the SRAMs; run 45498815170 (6397ff6) ended global routing with 178 Metal2/3 overflows and detailed routing with 3 unfixable shorts across SRAM1 (126 KLayout M3.b). Lower density spreads cells over the empty right side.",
-  "PL_TARGET_DENSITY_PCT": 40,
+  "// PL_TARGET_DENSITY_PCT 80": "80 (user, 2026-11-27): the mesh chip's effective utilization (0.59 flop store, ~0.41 latch store) is at or above 40, so the old spreading target no longer applies; the flop run at 40 reported 63% placement utilization and global-routing overflow 1,463.",
+  "PL_TARGET_DENSITY_PCT": 80,
   "// 92068bf": "Moving bank 1 next to bank 0 (x=235.44) at density 60 did not route: detailed routing still had 806 violations after 43 iterations and hit the 6 h CI limit (run 45526662215). Keep the 10f2416 placement, which signed off; the 5x3 grid raises effective utilization from 0.26 to about 0.33, still under 40.",
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",

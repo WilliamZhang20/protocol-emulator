@@ -782,6 +782,65 @@ Not yet covered by criterion 3:
      packets need helper inlining and register logic, some likely hardware
      refusals; stream stages (L5) are not lowered.
 
+   *Every blocker, not the first (2026-11-27; compiler
+   `circt_lab/blocker_survey.py`, each register, function, machine,
+   resource, pin and the streams lowered on their own).* The 24 compiler
+   refusals split three ways:
+   - **Logic the mesh does not have** (hardware, 8 programs): USB (8 of its
+     registers: NRZI, stuffing gate, SE0, the D+/D- pair), Ethernet TX and
+     its coded variant (Manchester select, the TP_IDL pair), the I2C
+     controller (SCL drive select, OR of two start events, OR of two step
+     clocks, the stretch gate), packets, packet_errors, contexts_logic,
+     byte_tag_gap. The mesh has set/clear registers and FSM-selected
+     levels, but no AND/OR/mux of independent signals. This is the
+     largest single coverage lever, and a hardware decision: a small
+     logic resource (for example a registered LUT per cell or a logic tile
+     kind) costed in the right-sizing table, not a compiler step.
+   - **A second stream reader** (hardware, 5 programs): io_saturation and
+     the four memory_dual_channel / unequal_parallel programs send two
+     streams at once; the word network has one reader into one shifter.
+     The resource-mix question R-study already names.
+   - **Compiler only** (12 programs, no hardware blocker found): the four
+     byte-stream stage programs (L5 stages on the word network), contexts
+     and contexts_initial_one (flags and context selectors, L2), crc_link_trace
+     (flags, shifter end, the CRC link), the five protocol_control
+     programs (waits on pin levels and protocol signals).
+   The survey is a lower bound per part (a part refused early hides its
+   later statements), so a "compiler only" program can still meet a
+   hardware limit once lowered further.
+
+   *Which compiler path is durable (2026-11-27).* The mesh is compiled
+   only by the Python path (`circt_lab/fabric_lower.py`, `fabric_map.py`,
+   `fabric_build.py`, 2.7k lines): lowering, annealed placement,
+   PathFinder routing with mux nets over the contexted switches, the
+   route-length bound, emission and an independent check of the emitted
+   bits; its programs pass at the chip's pins. The CIRCT path (`map.cpp`,
+   `dialect.cpp`, the `grid_*` scripts) targets the old grid and lane core
+   and knows nothing of contexts, the word network or the mesh's cells.
+   Decision: the Python fabric compiler is the reference and the path the
+   chip ships with; the CIRCT path stays frozen with the old chip. Moving
+   the fabric IR into the Spatial dialect is worth doing only once the
+   fabric is final (after step 8), as a port checked bit-for-bit against
+   the Python output on every compiled program, not a second design.
+
+   *Against the old chip (2026-11-27; experiment/two-sram-placement @
+   75ef0a6, its own compiled programs and runner, at the pins, same plan
+   clock).*
+
+   | | old chip (grid + lane core) | mesh chip |
+   |---|---|---|
+   | logic area, local synthesis | 613.5k µm² | 598.7k flop store; ~407k latch store (396.4k + the holding register) |
+   | GDS on the 8x4 die | fails routing (DPL-0036 after GRT overflow), every run since 7193f31 | in CI (flop store: 0.591 effective utilization, global routing overflow 1,463 after repair, so likely the same failure; latch store pending) |
+   | SPI `transfer`, 3 / 1 / 2 bytes | 916 / 466 / 692 clocks | 773 / 463 / 652 clocks |
+   | from source, at the pins | i2c controller (write_read, plain and paged), spi, uart | i2c target, i2c target + UART TX together, jtag, swd, ps2, spi, uart, loopback, stored bytes, memory bandwidth x3 |
+
+   Both pass every test they compile. The old chip runs the I2C
+   controller from source, which the mesh compiler still refuses (helper
+   inlining, register logic: L3); the old chip's JTAG TAP, I2C/SPI targets,
+   SLIP and Ethernet session tests are hand-written lane programs, not
+   compiled, so they are not a like-for-like row. STA comparison waits for
+   a mesh GDS that completes; the old chip has none.
+
    **Right-sizing (user, 2026-11-26), after the physical result.** Simplify
    flexibility the workloads do not need (context counts on selected
    switches, unused selector choices, shared word-path stages) and
