@@ -66,6 +66,16 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout, enabled):
     if not enabled:
         print("[INFO] mesh regions: disabled (MESH_REGIONS 0); placement unconstrained")
         return
+    # OpenROAD's global placer charges every region the whole design's
+    # placement-blockage area (run 45963905292: 15,850 um2 per region, the
+    # FP_OBSTRUCTIONS beside the SRAMs). They come out for global placement
+    # and Project.RestoreObstructions puts them back before detailed
+    # placement, which legalizes the cells out of them.
+    removed = 0
+    for b in list(block.getBlockages()):
+        odb.dbBlockage_destroy(b)
+        removed += 1
+    print(f"[INFO] mesh regions: {removed} placement blockages removed for global placement")
     dbu = block.getDefUnits()
     n = rows * cols
     label = {}

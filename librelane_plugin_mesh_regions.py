@@ -34,3 +34,24 @@ class MeshRegions(OdbpyStep):
             "--max-fanout", str(self.config["MESH_REGION_MAX_FANOUT"]),
             "--enabled", "1" if self.config["MESH_REGIONS"] else "0",
         ]
+
+
+@Step.factory.register()
+class RestoreObstructions(OdbpyStep):
+    id = "Project.RestoreObstructions"
+    name = "Restore Placement Obstructions"
+
+    config_vars = [
+        Variable("MESH_REGIONS", bool, "Create the mesh cell regions (else the step changes nothing).", default=True),
+    ]
+
+    def get_script_path(self):
+        return os.path.join(HERE, "odb_restore_obstructions.py")
+
+    def get_command(self):
+        import json
+        obs = self.config.get("FP_OBSTRUCTIONS") or []
+        return super().get_command() + [
+            "--obstructions", json.dumps([[float(v) for v in o] for o in obs]),
+            "--enabled", "1" if self.config["MESH_REGIONS"] else "0",
+        ]

@@ -3,7 +3,8 @@
     "flow": "Classic",
     "substituting_steps": {
       "+OpenROAD.GeneratePDN": "Project.ExtendPowerStripes",
-      "+Odb.AddRoutingObstructions": "Project.MeshRegions"
+      "+Odb.AddRoutingObstructions": "Project.MeshRegions",
+      "+OpenROAD.GlobalPlacement": "Project.RestoreObstructions"
     }
   },
 
