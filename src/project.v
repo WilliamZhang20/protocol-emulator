@@ -43,7 +43,9 @@ module tt_um_protocol_emulator (
     .wr_count(wr_count), .host_ev(host_ev), .seen(seen), .seen_clear(seen_clear),
     .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data));
 
-  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT)) store(
+  // CFG_LATCH: the configuration store's storage (mesh_cfg LATCH).
+  localparam CFG_LATCH=0;
+  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .LATCH(CFG_LATCH)) store(
     clk, reset_n, cfg_clear, cfg_we, cfg_addr, cfg_data, cfg_busy, cfg);
 
   // Pads 0-3 on uio 0, 5, 6, 7; unbonded pads read high (idle).

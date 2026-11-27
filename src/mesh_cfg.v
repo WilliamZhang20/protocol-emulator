@@ -9,7 +9,9 @@
 //     crc 128, counter 48 bits);
 //   - the word network's 117 bits.
 //
-// One latch per stored bit (cfg_latch), as an FPGA holds its configuration:
+// LATCH=1: one latch per stored bit (cfg_latch), as an FPGA holds its
+// configuration (LATCH=0: a flop with an enable per bit, the same staged
+// write, for comparison in the physical flow):
 // a flop with a write enable costs 67 um^2 per bit in this library (no flop
 // without reset, no clock gate), a reset latch 27. A write is staged so
 // every latch enable is glitch-free by construction:
@@ -28,7 +30,8 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS,
-  parameter ABITS=10)(
+  parameter ABITS=10,
+  parameter LATCH=1)(       // 1: a reset latch per bit; 0: a flop with an enable per bit
   input wire clk, rst_n, clear,
   input wire we, input wire [ABITS-1:0] addr, input wire [7:0] data,
   output wire busy,
@@ -79,8 +82,12 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
       wire en = strobe && a_q == b;
       for(j=0;j<8;j=j+1) begin: bit_
         if(8*b+j < CFG_BITS) begin: in_range
-          if(used(8*b+j)) begin: l
+          if(used(8*b+j) && LATCH) begin: l
             cfg_latch q(.d(d_q[j]), .en(en), .rn(rn), .q(cfg[8*b+j]));
+          end else if(used(8*b+j)) begin: f
+            reg q;
+            always @(posedge clk) if(!rn) q<=1'b0; else if(en) q<=d_q[j];
+            assign cfg[8*b+j]=q;
           end else begin: z
             assign cfg[8*b+j]=1'b0;
           end
