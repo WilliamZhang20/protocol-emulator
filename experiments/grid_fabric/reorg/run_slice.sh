@@ -5,8 +5,8 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../.." && pwd)
 bin=$root/.tools/oss-cad-suite/bin; out=$1; mkdir -p "$out"
-"$bin/iverilog" -g2012 -o "$out/slice" "$here/slice_i2c_tb.sv" "$here/ctx_switch.v" "$here/io_tile.v" \
-  "$here/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/config_bank.v" 2> >(grep -v 'timescale\|inherit' >&2)
+"$bin/iverilog" -g2012 -o "$out/slice" "$here/slice_i2c_tb.sv" "$root/src/ctx_switch.v" "$root/src/io_tile.v" \
+  "$root/src/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/config_bank.v" 2> >(grep -v 'timescale\|inherit' >&2)
 run() { timeout 60 "$bin/vvp" -N "$out/slice" +HALF=$1 +SETUP=$2 +HOLD=$3 ${EXTRA:-} | grep -q '^PASS'; }
 if [[ ${2:-} == --sweep ]]; then
   p=0; f=0; d=0

@@ -17,7 +17,7 @@ $(error no mesh parameters from $(MESH).mesh.json)
 endif
 # The build directory names the parameters: a build is never reused with others.
 SIM_BUILD = sim_build/mesh-$(notdir $(MESH))-$(shell echo '$(MESH_PARAMS)' | md5sum | cut -c1-8)
-VERILOG_SOURCES = $(REORG)/mesh_soc.v $(REORG)/mesh.v $(REORG)/ctx_switch.v $(REORG)/io_tile.v $(REORG)/wnet.v \
+VERILOG_SOURCES = $(SRC_DIR)/mesh_soc.v $(SRC_DIR)/mesh.v $(SRC_DIR)/ctx_switch.v $(SRC_DIR)/io_tile.v $(SRC_DIR)/wnet.v \
   $(SRC_DIR)/grid_timer.v $(SRC_DIR)/fabric_shifter.v $(SRC_DIR)/fabric_crc.v $(SRC_DIR)/fabric_counter.v $(SRC_DIR)/config_bank.v \
   $(SRC_DIR)/grid_stream_tiles.v $(SRC_DIR)/grid_stream_memory.v $(SRC_DIR)/memory_tiles.v
 COMPILE_ARGS += -g2012 $(MESH_PARAMS)

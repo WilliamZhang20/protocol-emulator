@@ -23,9 +23,12 @@ module ctx_switch #(parameter NSINK=4)(
   output wire [3:0] north_out, south_out, west_out, east_out,
   output wire [NSINK-1:0] sinks,
   output reg [1:0] ctx);
-  wire [47:0] tc=track_cfg[48*ctx+:48];
-  wire [5*NSINK-1:0] sc=sink_cfg[5*NSINK*ctx+:5*NSINK];
-  wire [13:0] xc=trans_cfg[14*ctx+:14];
+  // The current context's rows: a 4-way choice between constant slices (no
+  // run-time part-select base: tools/check_part_selects.py).
+  localparam SW=5*NSINK;
+  wire [47:0] tc = ctx==2'd0 ? track_cfg[0+:48] : ctx==2'd1 ? track_cfg[48+:48] : ctx==2'd2 ? track_cfg[96+:48] : track_cfg[144+:48];
+  wire [SW-1:0] sc = ctx==2'd0 ? sink_cfg[0+:SW] : ctx==2'd1 ? sink_cfg[SW+:SW] : ctx==2'd2 ? sink_cfg[2*SW+:SW] : sink_cfg[3*SW+:SW];
+  wire [13:0] xc = ctx==2'd0 ? trans_cfg[0+:14] : ctx==2'd1 ? trans_cfg[14+:14] : ctx==2'd2 ? trans_cfg[28+:14] : trans_cfg[42+:14];
   function automatic pick;
     input [2:0] s; input [3:0] l; input straight, turn_a, turn_b, allow;
     case(s)

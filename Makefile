@@ -11,27 +11,21 @@ SIM ?= verilator
 
 RTL_SOURCES := \
 	src/project.v \
-	src/fabric_v2_tiles.v \
-	src/fabric_v2.v \
-	src/fabric_v2_unified.v \
-	src/grid_switch.v \
-	src/grid_core.v \
-	src/grid_sequencer.v \
-	src/grid_lane_controller.v \
-	src/grid_lane_core.v \
+	src/mesh_host.v \
+	src/mesh_cfg.v \
+	src/mesh_soc.v \
+	src/mesh.v \
+	src/ctx_switch.v \
+	src/io_tile.v \
+	src/wnet.v \
 	src/grid_timer.v \
-	src/grid_memory.v \
-	src/grid_unified.v \
+	src/fabric_shifter.v \
+	src/fabric_crc.v \
+	src/fabric_counter.v \
+	src/config_bank.v \
 	src/grid_stream_tiles.v \
 	src/grid_stream_memory.v \
-	src/grid_stream_fabric.v \
-	src/fabric_crc.v \
-	src/fabric_shifter.v \
-	src/config_bank.v \
-	src/spi_tiles.v \
 	src/memory_tiles.v \
-	src/memory_shift.v \
-	src/memory_spi_fabric.v \
 	src/program_memory.v
 
 SRAM_MODELS := \
@@ -39,6 +33,7 @@ SRAM_MODELS := \
 	test/models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
+CELL_BLACKBOX := tools/blackbox/sg13cmos5l_dlhrq_1.v
 
 .PHONY: help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test reorg-compiled-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
@@ -98,7 +93,7 @@ interconnect-scaling:
 reorg-proto-test:
 	experiments/grid_fabric/reorg/run_seq2.sh $(BUILD_DIR)/seq2 $(if $(SWEEP),--sweep)
 	mkdir -p $(BUILD_DIR)/reorg
-	$(EDA_BIN)/iverilog -g2012 -o $(BUILD_DIR)/reorg/wnet experiments/grid_fabric/reorg/wnet_tb.sv experiments/grid_fabric/reorg/wnet.v
+	$(EDA_BIN)/iverilog -g2012 -o $(BUILD_DIR)/reorg/wnet experiments/grid_fabric/reorg/wnet_tb.sv src/wnet.v
 	timeout 60 $(EDA_BIN)/vvp -N $(BUILD_DIR)/reorg/wnet | grep -q '^PASS word network'
 	@echo "word network: every configuration and refusal passed"
 	experiments/grid_fabric/reorg/run_slice.sh $(BUILD_DIR)/slice $(if $(SWEEP),--sweep)
@@ -137,7 +132,7 @@ one-hop-check:
 	$(PYTHON) tools/one_hop_check.py $(EDA_BIN)/yosys $(filter-out src/project.v src/program_memory.v src/byte_fifo.v src/host_interface.v,$(RTL_SOURCES))
 
 synth-check:
-	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
+	$(YOSYS) -Q -p 'read_verilog $(RTL_SOURCES) $(SRAM_BLACKBOX) $(CELL_BLACKBOX); hierarchy -check -top tt_um_protocol_emulator; synth -top tt_um_protocol_emulator -flatten; check -assert; select -assert-count 2 t:RM_IHPSG13_1P_1024x8_c2_bm_bist; select -assert-min 4000 t:sg13cmos5l_dlhrq_1; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col0.bank.macro_bank.memory.sram; select -assert-count 1 tt_um_protocol_emulator/fabric.memory.row2_col2.bank.macro_bank.memory.sram'
 
 gds-config-check:
 	$(PYTHON) test/check_gds_config.py

@@ -16,15 +16,18 @@
 //   wr_count says how many bytes it has written.
 // The reader and writer pick their bank from their own address bit 10.
 // host_ev, seen/seen_clear and param_* pass straight to the mesh (its
-// host-sequenced steps).
+// host-sequenced steps). mesh_hold keeps the mesh alone in reset (the chip
+// writes its configuration meanwhile; releasing it loads the tiles).
 module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter REG=1,             // registered-routing study point (mesh.v; 1 is the mesh)
+  parameter USE_MACRO=0,       // 1: the SRAM macros (chip); 0: the behavioural banks
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,
+  input wire mesh_hold,        // the mesh (not the memory or streams) held in reset
   input wire [3:0] host_ev,
   output wire [4*ROWS*COLS-1:0] seen, input wire seen_clear,
   input wire param_we, input wire [3:0] param_cell, input wire [2:0] param_addr, input wire [15:0] param_data,
@@ -41,7 +44,7 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   // Mesh <-> word-network endpoints.
   wire [15:0] m_rd_data, m_wr_data; wire m_rd_valid, m_rd_ready, m_wr_valid, m_wr_ready;
   mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4),.CNT(CNT),.REG(REG)) fabric(
-    clk,rst_n,run_req,host_ev,seen,seen_clear,param_we,param_cell,param_addr,param_data,cfg,pins,pad_oe,pad_out,ready,m_rd_data,m_rd_valid,m_rd_ready,
+    clk,rst_n && !mesh_hold,run_req,host_ev,seen,seen_clear,param_we,param_cell,param_addr,param_data,cfg,pins,pad_oe,pad_out,ready,m_rd_data,m_rd_valid,m_rd_ready,
     m_wr_data,m_wr_valid,m_wr_ready,host_valid,host_byte);
 
   // Host bank route: rewritten while the memory is disarmed for one clock.
@@ -66,7 +69,7 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   assign m_rd_valid=r_valid; assign m_rd_data={8'd0,rdq_data};
   grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,stream_en,wr_start,wr_base,wr_length,
     m_wr_valid,m_wr_ready,m_wr_data[7:0],wq,m_ready[2],waddr,wdata,wr_active,wr_done,w_err,w_queued);
-  grid_stream_memory #(.USE_MACRO(0)) memory(clk,rst_n,mem_en,mem_off,{host_bank,host_bank,host_bank},
+  grid_stream_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,mem_en,mem_off,{host_bank,host_bank,host_bank},
     {waddr[10],raddr[10]},{wq,rq,host_req && mem_en && host_addr[10]==host_bank},{1'b1,1'b0,host_we},
     {waddr[9:0],raddr[9:0],host_addr[9:0]},{wdata,8'b0,host_wdata},m_ready,m_rvalid,m_rdata);
   assign host_ready=m_ready[0]; assign host_rvalid=m_rvalid[0]; assign host_rdata=m_rdata[7:0];

@@ -92,7 +92,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   localparam N=ROWS*COLS, TRACK_LSB=0, SINK_LSB=192, TRANS_LSB=312, TILE_LSB=368;
   localparam WNET_LSB=N*CELL_BITS;
   localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4;
-  function integer kind(input integer c); kind = CNT[c] ? COUNTER : KINDS[2*c+:2]; endfunction
+  function integer kind(input integer c); kind = CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]}; endfunction
   function integer contexts(input integer c); contexts = CTX4[c] ? 4 : 1; endfunction
 
   // Configuration load: shifter registers 1..6 and CRC registers 0..7
@@ -120,8 +120,16 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   genvar c;
   generate for(c=0;c<N;c=c+1) begin: cl
     localparam ROW=c/COLS, COL=c%COLS;
-    wire [CELL_BITS-1:0] cc=cfg[c*CELL_BITS+:CELL_BITS];
+    localparam CELL_LSB=c*CELL_BITS;
+    wire [CELL_BITS-1:0] cc=cfg[CELL_LSB+:CELL_BITS];
     wire [143:0] tile=cc[TILE_LSB+:144];
+    // The tile's registers as words, chosen by the load counter (an array
+    // index, not a run-time part-select base).
+    wire [15:0] tw[0:7];
+    genvar w;
+    for(w=0;w<8;w=w+1) begin: tws
+      assign tw[w]=tile[16*w+:16];
+    end
     assign crc_link[c]=tile[16*6+6+:2];
     localparam NB_N = ROW>0 ? c-COLS : c, NB_S = ROW<ROWS-1 ? c+COLS : c,
                NB_W = COL>0 ? c-1 : c, NB_E = COL<COLS-1 ? c+1 : c;
@@ -176,7 +184,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
                     (COL>0 && kind(NB_W)==CRC && crc_link[NB_W]==2'b11) ? tail[NB_W] : 1'b0;
       wire [2:0] sh_addr=load+3'd1;
       fabric_shifter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded && load<6),.cfg_addr(sh_addr),
-        .cfg_data(tile[16*load+:16]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
+        .cfg_data(tw[load]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
         .tx_request(tx_req[c]),.tx_grant(tx_grant[c]),.tx_data(wn_tx[7:0]),.tx_eop(1'b0),.tx_err(1'b0),
         .rx_request(rx_req[c]),.rx_grant(rx_grant[c]),.crc_in(crc_in),.rx_byte(rx_byte[c]),.rx_eop(nc[1]),
         .rx_err(nc[2]),.out(out),.active(active),.word_pulse(word),.stop_pulse(stop),.rx_data(rxd),
@@ -188,7 +196,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire [63:0] lines={30'b0,sinks[c][1],1'b0,29'b0,sinks[c][2],sinks[c][0],1'b0}; // 1 step 2 clear, 33 data
       wire pw=param_we && param_cell==c;   // a host write wins over nothing: loading is over by then
       fabric_counter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we((!loaded && load<3) || (loaded && pw)),
-        .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tile[16*load+:13]),
+        .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tw[load][12:0]),
         .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
       assign lraw={2'b0,hit,ge};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
@@ -199,7 +207,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire [1:0] la={(COL<COLS-1 && kind(NB_E)==SHIFTER) ? l_absorb[NB_E] : 1'b0, (COL>0 && kind(NB_W)==SHIFTER) ? l_absorb[NB_W] : 1'b0};
       wire [1:0] lb={(COL<COLS-1 && kind(NB_E)==SHIFTER) ? l_bit[NB_E] : 1'b0, (COL>0 && kind(NB_W)==SHIFTER) ? l_bit[NB_W] : 1'b0};
       wire [1:0] le={(COL<COLS-1 && kind(NB_E)==SHIFTER) ? l_emit[NB_E] : 1'b0, (COL>0 && kind(NB_W)==SHIFTER) ? l_emit[NB_W] : 1'b0};
-      fabric_crc t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded),.cfg_addr(load),.cfg_data(tile[16*load+:16]),
+      fabric_crc t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded),.cfg_addr(load),.cfg_data(tw[load]),
         .lines(lines),.link_absorb(la),.link_bit(lb),.link_emit(le),.out(out),.tail_out(tl),.ok(ok),.value(value));
       assign tail[c]=tl;
       assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,rd_valid,ok} : {3'b0,ok};

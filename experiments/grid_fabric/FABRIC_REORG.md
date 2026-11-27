@@ -675,6 +675,72 @@ Not yet covered by criterion 3:
      link only (gate-level safe);
    - 6.5 sources, info.yaml, local synthesis (area, lint), then CI: GDS,
      STA, DRC/LVS, precheck, GL.
+
+   *Candidate 1 (2026-11-26, branch experiment/mesh-chip), frozen for the
+   physical flow.* The mesh RTL moved to `src/` (Tiny Tapeout builds only
+   from there); `src/project.v` is the mesh chip; `test/Makefile` runs
+   `cocotb_tests.test_chip`.
+   - Host interface `src/mesh_host.v` (commands and map in its header);
+     configuration store `src/mesh_cfg.v`; `mesh_soc` gains `mesh_hold`
+     (the mesh alone held in reset while the host writes its
+     configuration) and `USE_MACRO`.
+   - The bench (`test_mesh_compiled.py`) now drives the host through a
+     port object; `test_chip.py` is the same runner over the chip's pins
+     (host link, pads on uio 0/5/6/7). All five compiled programs pass at
+     the pins, 11 tests with the host-delay repeats. Host-link cost,
+     measured: an SPI three-byte call takes 773 clocks at the chip's pins
+     against 429 on the direct ports (+344, every host step a link
+     command); outside every wire-timed loop.
+   - Repository lint rules applied to the moved RTL: no run-time
+     part-select base (`ctx_switch` context rows are a 4-way choice of
+     constant slices; `mesh.v` tile words an array index), pure functions.
+     Behaviour unchanged (all mesh suites pass).
+   - Configuration store: flops with an enable cost 67 µm² per bit here
+     (no flop without reset, no clock gate in the library); the first
+     version was 383k µm² of a 588k chip. Now one IHP reset latch per stored
+     bit (27 µm², `sg13cmos5l_dlhrq_1` instantiated under SYNTHESIS), with
+     a staged write so every latch enable is glitch-free by construction
+     (address and data registered a clock before the enable strobe; the
+     host waits on `busy`). 4,238 latches.
+   - Local synthesis (yosys, IHP liberty, logic only): 396k µm², 0 SCCs
+     (`check -assert` passes), both SRAM macros at the configured instance
+     paths. The 8x4 die is 1724 x 711 µm, core 1,208,173 µm² (floorplan
+     log); with the macros that is about 41% effective utilization, against
+     63% for the old chip that fails routing on the same die. A planning
+     estimate only: placement, routing demand, SRAM obstructions, latch
+     handling and timing repair decide, so the real flow runs before any
+     flexibility is cut.
+   - Gate-level subset (GATES=yes): i2c_target, spi (no host-delay
+     repeat), uart.
+   - To verify in CI: latch mapping and timing in the real flow (STA of
+     latch enables), DRC/LVS, precheck, GL. Latches are less safe than
+     flops (a glitching enable corrupts silently; STA must treat the
+     enables as clocks; weaker test/DFT tooling): the staged write removes
+     the glitch by construction, and the flow's STA and GL must confirm it.
+     If they do not, flops return (at their area) rather than patching.
+   - Coverage (user, 2026-11-26) is to be proven, not sampled: at the level
+     of the communication protocols themselves, the resources each needs,
+     how much the fabric covers, and whether everything that can be mapped
+     onto the I/O has been mapped (step 9).
+
+   **Right-sizing (user, 2026-11-26), after the physical result.** Simplify
+   flexibility the workloads do not need (context counts on selected
+   switches, unused selector choices, shared word-path stages) and
+   right-size the resource mix (for example a second stream writer
+   against a third shifter), each cut verified against complete protocols
+   and concurrent mappings, chosen by the workload study, not by counting
+   cells:
+   - R1 a measured cost table per item of flexibility;
+   - R2 each candidate cut expressible in the contract, so the compiler
+     respects it (contexts and kind mix today; selector subsets, word
+     stages, stream ports to add);
+   - R3 the workload: every compiling program, every concurrent pair that
+     fits the pads, the concurrent fixtures; it grows with coverage
+     (roadmap 2 and 3), and a cut decided on today's five programs is
+     recorded with that workload and rechecked as it grows;
+   - R4 sweep: recompile the whole workload under each cut contract, pin
+     tests for every changed configuration, area from synthesis;
+   - R5 zero-loss cuts first, then area saved per workload lost.
 7. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
 8. **Grid-size study (user, 2026-11-26), before the fabric size is

@@ -16,8 +16,8 @@ S = Path(sys.argv[2]).resolve()
 S.mkdir(parents=True, exist_ok=True)
 YOSYS = RTL / '.tools/oss-cad-suite/bin/yosys'
 SRCS = ' '.join(str(RTL / p) for p in ['src/grid_timer.v', 'src/fabric_shifter.v', 'src/fabric_crc.v', 'src/fabric_counter.v',
-       'src/config_bank.v', 'experiments/grid_fabric/reorg/ctx_switch.v', 'experiments/grid_fabric/reorg/wnet.v',
-       'experiments/grid_fabric/reorg/io_tile.v', 'experiments/grid_fabric/reorg/mesh.v'])
+       'src/config_bank.v', 'src/ctx_switch.v', 'src/wnet.v',
+       'src/io_tile.v', 'src/mesh.v'])
 COMP = RTL / 'experiments/grid_fabric/reorg/compiled'
 P = dict(KINDS=287029521, CTX4=11242, CNT=4096)
 CFG_BITS = 15 * 512 + 128

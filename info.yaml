@@ -3,7 +3,7 @@ project:
   title:        "Programmable Protocol Fabric"      # Project title
   author:       "William Zhang"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Configurable grid fabric with two SRAM banks and coded streaming"      # One line description of what your project does
+  description:  "Contexted mesh of coarse protocol tiles with two SRAM stream banks, programmed from source"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000       # 20 ns target period in src/config.json
 
@@ -18,44 +18,38 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "project.v"
-    - "fabric_v2_tiles.v"
-    - "fabric_v2.v"
-    - "fabric_v2_unified.v"
-    - "grid_switch.v"
-    - "grid_core.v"
-    - "grid_sequencer.v"
-    - "grid_lane_controller.v"
-    - "grid_lane_core.v"
+    - "mesh_host.v"
+    - "mesh_cfg.v"
+    - "mesh_soc.v"
+    - "mesh.v"
+    - "ctx_switch.v"
+    - "io_tile.v"
+    - "wnet.v"
     - "grid_timer.v"
-    - "grid_memory.v"
-    - "grid_unified.v"
+    - "fabric_shifter.v"
+    - "fabric_crc.v"
+    - "fabric_counter.v"
+    - "config_bank.v"
     - "grid_stream_tiles.v"
     - "grid_stream_memory.v"
-    - "grid_stream_fabric.v"
-    - "fabric_crc.v"
-    - "fabric_shifter.v"
-    - "config_bank.v"
-    - "spi_tiles.v"
     - "memory_tiles.v"
-    - "memory_shift.v"
-    - "memory_spi_fabric.v"
     - "program_memory.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Host command data (stable through strobe)
-  ui[0]: "command data[0]"
-  ui[1]: "command data[1]"
-  ui[2]: "command data[2]"
-  ui[3]: "command data[3]"
-  ui[4]: "command data[4]"
-  ui[5]: "command data[5]"
-  ui[6]: "command data[6]"
-  ui[7]: "command data[7]"
+  ui[0]: "host data[0]"
+  ui[1]: "host data[1]"
+  ui[2]: "host data[2]"
+  ui[3]: "host data[3]"
+  ui[4]: "host data[4]"
+  ui[5]: "host data[5]"
+  ui[6]: "host data[6]"
+  ui[7]: "host data[7]"
 
   # Last SRAM read result
-  uo[0]: "read data[0] or third protocol output"
+  uo[0]: "read data[0]"
   uo[1]: "read data[1]"
   uo[2]: "read data[2]"
   uo[3]: "read data[3]"
@@ -65,14 +59,14 @@ pinout:
   uo[7]: "read data[7]"
 
   # Protocol input and synchronous host command interface
-  uio[0]: "serial input"
-  uio[1]: "command strobe"
-  uio[2]: "command opcode[0]"
-  uio[3]: "command opcode[1]"
-  uio[4]: "command opcode[2]"
-  uio[5]: "configurable protocol output 1"
-  uio[6]: "configurable protocol output 0"
-  uio[7]: "transfer done output"
+  uio[0]: "protocol pad 0"
+  uio[1]: "host strobe"
+  uio[2]: "host command[0]"
+  uio[3]: "host command[1]"
+  uio[4]: "host command[2]"
+  uio[5]: "protocol pad 1"
+  uio[6]: "protocol pad 2"
+  uio[7]: "protocol pad 3"
 
 # Do not change!
 yaml_version: 6

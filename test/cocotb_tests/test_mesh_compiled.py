@@ -4,7 +4,7 @@ source tests, at the mesh's pads (FABRIC_REORG.md step 4).
 The compiler (protocol-emulator-compiler circt_lab/fabric_build.py)
 writes three files per program:
 
-  NAME.hex        the configuration vector for experiments/grid_fabric/reorg/mesh.v
+  NAME.hex        the configuration vector for src/mesh.v
   NAME.plan.json  the source's `test` blocks and `always` invariants
   NAME.mesh.json  mesh parameters and the interface: the port of each host
                   stream (reader, writer, or a shifter's host port by cell),
@@ -90,15 +90,40 @@ class MeshBus:
 TX_BASE, RX_BASE, RX_CAPACITY = 0, 1024, 1024     # bank 0 for sends, bank 1 for receives
 
 
-class Host:
-    """The host side: SRAM through the memory's host port, the stream
-    reader and writer, and shifters' direct host ports."""
+class DirectPort:
+    """The host side on mesh_soc's own ports: SRAM through the memory's host
+    port, the stream reader and writer, flags, events, parameters, and
+    shifters' direct host ports. Every host action of a test goes through a
+    port, so the same runner drives the chip through its pins (test_chip)."""
 
-    def __init__(self, dut, interface):
-        self.dut, self.interface = dut, interface
+    def __init__(self, dut, vector, interface):
+        self.dut, self.vector, self.interface = dut, vector, interface
         self.got = {name: [] for name, s in interface['streams'].items() if s['port'] == 'host'}
 
-    async def run(self):
+    def bus(self, wires):
+        return MeshBus(self.dut, wires)
+
+    async def start(self):
+        """Reset, configure, and wait until the mesh has loaded its tiles."""
+        dut = self.dut
+        dut.rst_n.value = 0; dut.run_req.value = 0; dut.mesh_hold.value = 0; dut.cfg.value = self.vector
+        dut.pins.value = 0xff
+        for sig in (dut.host_req, dut.host_we, dut.host_addr, dut.host_wdata, dut.rd_start, dut.rd_base, dut.rd_length,
+                    dut.wr_start, dut.wr_base, dut.wr_length, dut.host_ev, dut.seen_clear, dut.param_we, dut.param_cell,
+                    dut.param_addr, dut.param_data):
+            sig.value = 0
+        await ClockCycles(dut.clk, 4)
+        await FallingEdge(dut.clk); dut.rst_n.value = 1
+        for _ in range(64):
+            await RisingEdge(dut.clk)
+            if int(dut.ready.value):
+                return
+        raise Failure('the mesh did not finish loading its configuration')
+
+    def tasks(self):
+        return [self._collect()]
+
+    async def _collect(self):
         """Collect bytes from direct host ports."""
         dut = self.dut
         streams = self.interface['streams']
@@ -130,7 +155,7 @@ class Host:
                 raise Failure(f'SRAM host read of {addr} returned nothing')
             return int(dut.host_rdata.value)
 
-    async def strobe(self, **values):
+    async def _strobe(self, **values):
         """Drive signals for one clock (from a falling edge), then zero them."""
         dut = self.dut
         await FallingEdge(dut.clk)
@@ -140,74 +165,100 @@ class Host:
         for k in values:
             getattr(dut, k).value = 0
 
-    async def pulse(self, sig, base_sig, base, len_sig, length):
+    async def _pulse(self, sig, base_sig, base, len_sig, length):
         dut = self.dut
         await FallingEdge(dut.clk)
         base_sig.value = base; len_sig.value = length; sig.value = 1
         await FallingEdge(dut.clk); sig.value = 0
 
+    async def open_writer(self, base, capacity):
+        await self._pulse(self.dut.wr_start, self.dut.wr_base, base, self.dut.wr_length, capacity)
 
-async def call(dut, host, interface, step, delay, timeout):
+    async def run(self):
+        await FallingEdge(self.dut.clk); self.dut.run_req.value = 1
+
+    async def send(self, base, length):
+        await self._pulse(self.dut.rd_start, self.dut.rd_base, base, self.dut.rd_length, length)
+
+    async def reader_finished(self):
+        return bool(int(self.dut.rd_done.value) or not int(self.dut.rd_active.value))
+
+    async def written(self):
+        return int(self.dut.wr_count.value)
+
+    async def flag(self, index):
+        return int(self.dut.seen.value) >> index & 1
+
+    async def clear(self):
+        await self._strobe(seen_clear=1)
+
+    async def fire(self, index):
+        await self._strobe(host_ev=1 << index)
+
+    async def param(self, cell, addr, value):
+        await self._strobe(param_we=1, param_cell=cell, param_addr=addr, param_data=value & 0xffff)
+
+
+async def until(dut, clock_ns, check, timeout):
+    """Wait, a clock at a time, until `check()` holds; False after `timeout`
+    clocks (a check that itself takes clocks, as a read over the chip's host
+    link does, counts them)."""
+    t0 = cocotb.utils.get_sim_time('ns')
+    while True:
+        await RisingEdge(dut.clk)
+        if await check():
+            return True
+        if (cocotb.utils.get_sim_time('ns') - t0) / clock_ns > timeout:
+            return False
+
+
+async def call(dut, port, interface, step, delay, timeout, clock_ns):
     """Run one function call's host plan; returns its result bytes."""
     fn = interface['functions'][step['function']]
     args = step['args']
-    start = int(dut.wr_count.value)
+    start = await port.written()
     result = None
     for st in fn['steps']:
         if delay:
             await ClockCycles(dut.clk, delay)
         op = st['op']
         if op == 'clear':
-            await host.strobe(seen_clear=1)
+            await port.clear()
         elif op == 'send':
             data = args[st['arg']]
             for i, b in enumerate(data):
-                await host.mem(TX_BASE + i, b)
-            await host.pulse(dut.rd_start, dut.rd_base, TX_BASE, dut.rd_length, len(data))
+                await port.mem(TX_BASE + i, b)
+            await port.send(TX_BASE, len(data))
         elif op == 'param':
-            await host.strobe(param_we=1, param_cell=st['cell'], param_addr=st['addr'],
-                              param_data=host_value(st['value'], args) & 0xffff)
+            await port.param(st['cell'], st['addr'], host_value(st['value'], args))
         elif op == 'fire':
-            await host.strobe(host_ev=1 << st['index'])
+            await port.fire(st['index'])
         elif op in ('wait', 'wait_bytes'):
             n = host_value(st['count'], args) if op == 'wait_bytes' else None
-            for _ in range(timeout):
-                await RisingEdge(dut.clk)
-                if (int(dut.wr_count.value) - start >= n) if n is not None else (int(dut.seen.value) >> st['flag'] & 1):
-                    break
-            else:
+
+            async def ready():
+                return (await port.written() - start >= n) if n is not None else await port.flag(st['flag'])
+            if not await until(dut, clock_ns, ready, timeout):
                 what = f'{n} result bytes' if n is not None else st['signal']
                 raise Failure(f"line {step['line']}: {step['function']}: no {what}")
         elif op == 'reply':
-            n = int(dut.wr_count.value) - start
-            result = [await host.mem(RX_BASE + start + i) for i in range(n)]
+            n = await port.written() - start
+            result = [await port.mem(RX_BASE + start + i) for i in range(n)]
     return result
 
 
-async def run_test(dut, vector, interface, plan, test, delay=0):
+async def run_test(dut, port, interface, plan, test, delay=0):
     clock_ns = 1e9 / plan['clock_hz']
     clock = cocotb.start_soon(Clock(dut.clk, clock_ns, unit='ns').start())
-    dut.rst_n.value = 0; dut.run_req.value = 0; dut.cfg.value = vector; dut.pins.value = 0xff
-    for sig in (dut.host_req, dut.host_we, dut.host_addr, dut.host_wdata, dut.rd_start, dut.rd_base, dut.rd_length,
-                dut.wr_start, dut.wr_base, dut.wr_length, dut.host_ev, dut.seen_clear, dut.param_we, dut.param_cell,
-                dut.param_addr, dut.param_data):
-        sig.value = 0
-    bus = MeshBus(dut, test['wires'])
-    host = Host(dut, interface)
-    tasks = [cocotb.start_soon(bus.run()), cocotb.start_soon(host.run())]
+    bus = port.bus(test['wires'])
+    tasks = [cocotb.start_soon(bus.run())]
     try:
-        await ClockCycles(dut.clk, 4)
-        await FallingEdge(dut.clk); dut.rst_n.value = 1
-        for _ in range(64):
-            await RisingEdge(dut.clk)
-            if int(dut.ready.value):
-                break
-        else:
-            raise Failure('the mesh did not finish loading its configuration')
+        await port.start()
+        tasks += [cocotb.start_soon(t) for t in port.tasks()]
         if any(s['port'] == 'writer' for s in interface['streams'].values()) or \
                 any(f.get('returns') == 'writer' for f in interface.get('functions', {}).values()):
-            await host.pulse(dut.wr_start, dut.wr_base, RX_BASE, dut.wr_length, RX_CAPACITY)
-        await FallingEdge(dut.clk); dut.run_req.value = 1
+            await port.open_writer(RX_BASE, RX_CAPACITY)
+        await port.run()
         attached = {}
         for spec in test['peers']:
             peer = peers.attach(spec, bus, dut)
@@ -235,40 +286,37 @@ async def run_test(dut, vector, interface, plan, test, delay=0):
                 if interface['streams'].get(name, {}).get('port') != 'reader':
                     raise Failure(f'line {line}: stream {name} is not a host -> mesh stream')
                 for i, b in enumerate(step['bytes']):
-                    await host.mem(TX_BASE + i, b)
-                await host.pulse(dut.rd_start, dut.rd_base, TX_BASE, dut.rd_length, len(step['bytes']))
-                for _ in range(timeout):
-                    await RisingEdge(dut.clk)
-                    if int(dut.rd_done.value) or not int(dut.rd_active.value):
-                        break
-                else:
+                    await port.mem(TX_BASE + i, b)
+                await port.send(TX_BASE, len(step['bytes']))
+                if not await until(dut, clock_ns, port.reader_finished, timeout):
                     raise Failure(f'line {line}: stream {name}: the reader never finished')
                 check_rules(line)
             elif step['op'] == 'read' and 'stream' in step['target']:
                 name = step['target']['stream']
                 start = consumed.get(name, 0)
                 via_sram = interface['streams'][name]['port'] == 'writer'
-                have = (lambda: int(dut.wr_count.value)) if via_sram else (lambda: len(host.got[name]))
-                for _ in range(timeout):
-                    await RisingEdge(dut.clk)
-                    if have() - start >= step['count']:
-                        break
-                else:
-                    raise Failure(f"line {line}: stream {name} received {have() - start} of {step['count']} bytes")
+
+                async def have():
+                    return await port.written() if via_sram else len(port.got[name])
+
+                async def enough():
+                    return await have() - start >= step['count']
+                if not await until(dut, clock_ns, enough, timeout):
+                    raise Failure(f"line {line}: stream {name} received {await have() - start} of {step['count']} bytes")
                 if via_sram:
-                    got = [await host.mem(RX_BASE + start + i) for i in range(step['count'])]
+                    got = [await port.mem(RX_BASE + start + i) for i in range(step['count'])]
                 else:
-                    got = host.got[name][start:start + step['count']]
+                    got = port.got[name][start:start + step['count']]
                 consumed[name] = start + step['count']
                 if got != step['expect']:
                     raise Failure(f"line {line}: {name}.read({step['count']}) returned {fmt(got)}, expected {fmt(step['expect'])}")
                 check_rules(line)
             elif step['op'] == 'read' and 'peer' in step['target']:
                 peer = attached[step['target']['peer']]
-                for _ in range(timeout):
-                    await RisingEdge(dut.clk)
-                    if len(peer.received) >= step['count']:
-                        break
+
+                async def arrived():
+                    return len(peer.received) >= step['count']
+                await until(dut, clock_ns, arrived, timeout)
                 got = peer.received[:step['count']]
                 if got != step['expect']:
                     raise Failure(f"line {line}: {step['target']['peer']} received {fmt(got)}, expected {fmt(step['expect'])}")
@@ -280,7 +328,7 @@ async def run_test(dut, vector, interface, plan, test, delay=0):
                 if 'fails' in step:
                     raise Failure(f"line {line}: an expected failure (`fails`) is not lowered yet")
                 t0 = cocotb.utils.get_sim_time('ns')
-                got = await call(dut, host, interface, step, delay, timeout)
+                got = await call(dut, port, interface, step, delay, timeout, clock_ns)
                 dut._log.info('call %s(%s): %d clocks, host delay %d', step['function'], fmt(sum(
                     (v if isinstance(v, list) else [v] for v in step['args'].values()), [])),
                     round((cocotb.utils.get_sim_time('ns') - t0) / clock_ns), delay)
@@ -300,22 +348,32 @@ async def run_test(dut, vector, interface, plan, test, delay=0):
         clock.cancel()
 
 
-@cocotb.test()
-async def mesh_compiled_program(dut):
-    stem = os.environ['MESH']
+def load(stem):
+    """A compiled program: its configuration vector, interface and plan."""
     words = [int(x, 16) for x in Path(stem + '.hex').read_text().split()]
     vector = sum(w << (32 * i) for i, w in enumerate(words))
-    interface = json.loads(Path(stem + '.mesh.json').read_text())
-    plan = json.loads(Path(stem + '.plan.json').read_text())
+    return vector, json.loads(Path(stem + '.mesh.json').read_text()), json.loads(Path(stem + '.plan.json').read_text())
+
+
+async def run_program(dut, stem, make_port, host_delay=True):
+    """Every test of one program (twice with host delay if it has functions
+    and host_delay); returns the failures."""
+    vector, interface, plan = load(stem)
     failures = []
-    delays = [0, HOST_DELAY] if interface.get('functions') else [0]
+    delays = [0, HOST_DELAY] if interface.get('functions') and host_delay else [0]
     for test in plan['tests']:
         for delay in delays:
             tag = f' (host delay {delay})' if delay else ''
             try:
-                await run_test(dut, vector, interface, plan, test, delay)
+                await run_test(dut, make_port(dut, vector, interface), interface, plan, test, delay)
                 dut._log.info('%s: test "%s" passed%s', Path(stem).name, test['name'], tag)
             except Failure as error:
-                failures.append(f"\"{test['name']}\"{tag}: {error}")
+                failures.append(f"{Path(stem).name} \"{test['name']}\"{tag}: {error}")
                 dut._log.error('%s: test "%s" failed%s: %s', Path(stem).name, test['name'], tag, error)
+    return failures
+
+
+@cocotb.test()
+async def mesh_compiled_program(dut):
+    failures = await run_program(dut, os.environ['MESH'], DirectPort)
     assert not failures, failures

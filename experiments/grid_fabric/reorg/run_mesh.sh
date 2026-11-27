@@ -21,8 +21,8 @@ print(f"-Pmesh_tb.ROWS={c['rows']} -Pmesh_tb.COLS={c['cols']} -Pmesh_tb.WORD_POR
       f"-Pmesh_tb.KINDS={2*n}'d{kinds} -Pmesh_tb.CTX4={n}'d{ctx4} -Pmesh_tb.CNT={n}'d{cnt}")
 PY
 )
-"$bin/iverilog" -g2012 -s mesh_tb $params -o "$out/mesh" "$here/mesh_tb.sv" "$here/mesh.v" "$here/ctx_switch.v" \
-  "$here/io_tile.v" "$here/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/fabric_crc.v" \
+"$bin/iverilog" -g2012 -s mesh_tb $params -o "$out/mesh" "$here/mesh_tb.sv" "$root/src/mesh.v" "$root/src/ctx_switch.v" \
+  "$root/src/io_tile.v" "$root/src/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/fabric_crc.v" \
   "$root/src/config_bank.v" "$root/src/fabric_counter.v" \
   2> >(grep -v 'timescale\|inherit' >&2)
 run() { timeout 60 "$bin/vvp" -N "$out/mesh" +CFG="$hex" +HALF=$1 +SETUP=$2 +HOLD=$3 ${EXTRA:-} | grep -q '^PASS'; }

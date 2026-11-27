@@ -1,93 +1,68 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 `default_nettype none
-// Experimental programmable spatial-grid protocol fabric. The host link uses ui_in as
-// data, uio[4:2] as opcode and uio[1] as strobe; uio[0] is serial input.
+// The mesh chip (FABRIC_REORG.md step 6): a contexted mesh of coarse tiles
+// (src/mesh.v) with its SRAM streams on the two SRAM macros (mesh_soc), its
+// configuration storage (mesh_cfg) and the host interface (mesh_host). The
+// mesh is the test configuration (3 rows x 5 columns, compiler contract
+// test_3x5c), not a chosen fabric size.
+//
+// Pins:
+//   ui[7:0]   host data (stable while the strobe is high)
+//   uio[1]    host strobe (a command on each rise)
+//   uio[4:2]  host command (mesh_host.v)
+//   uo[7:0]   the last read byte
+//   uio[0], uio[5], uio[6], uio[7]  protocol pads 0-3 (mesh pads; each
+//             driven only while the mesh drives it: open drain or push-pull
+//             as configured). The mesh's pads 4-7 are not bonded.
 module tt_um_protocol_emulator (
     input wire [7:0] ui_in, output wire [7:0] uo_out,
     input wire [7:0] uio_in, output wire [7:0] uio_out,
     output wire [7:0] uio_oe, input wire ena, input wire clk, input wire rst_n
 );
-  wire reset_n=rst_n && ena;
-  reg sync1,sync2,strobe_prev;
-  wire command=sync2 && !strobe_prev;
-  reg arm,host_req,host_we,cfg_mode;
-  reg [1:0] pad_feedback;
-  reg [9:0] host_addr;
-  reg [7:0] host_wdata,read_data,cfg_low;
-  reg [9:0] source_addr,dest_addr;
-  reg source_valid,dest_valid;
-  reg [10:0] tx_length,rx_capacity;
-  reg start;
-  wire host_ready,host_rvalid,configured,tx_done,tx_error,rx_overflow,tx_active;
-  wire spi_done,spi_error,spi_active;
-  wire [10:0] rx_received,rx_written;
-  wire [2:0] pins,pin_oe,tx_queued,rx_queued;
-  wire [7:0] host_rdata;
-  wire cfg_write=command && uio_in[4:2]==3'd4 && !arm && !ui_in[2] && (!cfg_mode || ui_in[3]);
-  // Per-call host words (TX length, RX capacity, TX and RX bases) may also be
-  // written while armed and idle, so a program's calls keep its pins driven.
-  // The fabric ignores every configuration write while armed.
-  // Image pages: address bits 9:8 = 0 the grid and fabric words, 1 the lane
-  // cores (disarmed only). The host words are page-0 words.
-  wire page0=host_addr[9:8]==2'd0,page1=host_addr[9:8]==2'd1;
-  wire host_word=page0 && (host_addr[7:0]==66 || host_addr[7:0]==67 || host_addr[7:0]==89 || host_addr[7:0]==90);
-  wire image_write=command && uio_in[4:2]==3'd7 && cfg_mode &&
-    ((page0 && (!arm || (host_word && !tx_active && !spi_active))) || (page1 && !arm));
-  wire [15:0] image_word={ui_in,cfg_low};
-  wire safe_arm=arm && source_valid && dest_valid;
-  grid_stream_fabric #(.USE_MACRO(1)) fabric(
-      .clk(clk),.rst_n(reset_n),.arm_in(safe_arm),.cfg_we(image_write),.cfg_page(page1),.cfg_addr(host_addr[7:0]),.cfg_data(image_word),
-      .bank_cfg_we(cfg_write),.bank_routes(ui_in[1:0]),
-      .host_req(host_req),.host_we(host_we),.host_addr(host_addr),.host_wdata(host_wdata),
-      .host_ready(host_ready),.host_rvalid(host_rvalid),.host_rdata(host_rdata),
-      .tx_start(start),.tx_base(source_addr),.tx_length(tx_length),
-      .rx_base(dest_addr),.rx_capacity(rx_capacity),
-      .pin_in({pad_feedback[0] ? uio_in[6] : uio_in[0],pad_feedback[1] ? uio_in[5] : uio_in[0]}),
-      .pin_out(pins),.pin_oe(pin_oe),.configured(configured),
-      .tx_done(tx_done),.tx_error(tx_error),.rx_overflow(rx_overflow),.tx_active(tx_active),
-      .rx_received(rx_received),.rx_written(rx_written),.tx_queued(tx_queued),.rx_queued(rx_queued),
-      .spi_start(start),.spi_source_addr(source_addr),.spi_dest_addr(dest_addr),
-      .spi_done(spi_done),.spi_error(spi_error),.spi_active(spi_active));
-  wire finish=tx_done || spi_done;
-  wire [7:0] status={rx_overflow,tx_error,tx_active,spi_error,spi_active,3'b000};
-  // Idle opcode views: 4 status, 5 received-byte count (low 8 bits, for
-  // autonomous RX streams), 7 the third output pin.
-  assign uo_out=(uio_in[4:2]==3'd7 && !sync2) ? {7'b0,pins[2]} :
-                (uio_in[4:2]==3'd4 && !sync2) ? status :
-                (uio_in[4:2]==3'd5 && !sync2) ? rx_written[7:0] : read_data;
-  assign uio_out={finish,pins[0],pins[1],5'b0};
-  assign uio_oe={safe_arm && configured,pin_oe[0],pin_oe[1],5'b0};
-  always @(posedge clk) begin
-    if(!reset_n) begin
-      sync1<=0;sync2<=0;strobe_prev<=0;arm<=0;cfg_mode<=0;pad_feedback<=0;
-      host_req<=0;host_we<=0;host_addr<=0;host_wdata<=0;read_data<=0;
-      source_addr<=0;dest_addr<=0;source_valid<=1;dest_valid<=1;cfg_low<=0;tx_length<=0;rx_capacity<=0;start<=0;
-    end else begin
-      sync1<=uio_in[1];sync2<=sync1;strobe_prev<=sync2;start<=0;
-      if(host_req && host_ready) host_req<=0;
-      if(host_rvalid) read_data<=host_rdata;
-      if(image_write && page0) begin
-        if(host_addr[7:0]==66) tx_length<=image_word[10:0];
-        if(host_addr[7:0]==67) rx_capacity<=image_word[10:0];
-        if(host_addr[7:0]==68) pad_feedback<=image_word[1:0];
-        if(host_addr[7:0]==89) begin source_addr<=image_word[9:0];source_valid<=image_word[15:10]==0;end
-        if(host_addr[7:0]==90) begin dest_addr<=image_word[9:0];dest_valid<=image_word[15:10]==0;end
-      end
-      if(command && !host_req) begin
-        case(uio_in[4:2])
-          0:host_addr[7:0]<=ui_in;
-          1:host_addr[9:8]<=ui_in[1:0];
-          2:begin host_wdata<=ui_in;host_we<=1;host_req<=1;end
-          3:begin host_we<=0;host_req<=1;end
-          4:begin arm<=ui_in[2];if(!arm) cfg_mode<=ui_in[3];end
-          5:if(arm && !tx_active && !spi_active) start<=1;
-          6:if(cfg_mode) cfg_low<=ui_in;else if(!arm) begin source_addr<={2'b00,ui_in};source_valid<=1;end
-          7:if(!cfg_mode && !arm) begin dest_addr<={2'b00,ui_in};dest_valid<=1;end
-          default:begin end
-        endcase
-      end
-    end
-  end
-  wire unused=&{1'b0,rx_received,rx_written[10:8],tx_queued,rx_queued,uio_in[7]};
+  localparam ROWS=3, COLS=5, N=ROWS*COLS;
+  localparam [2*N-1:0] KINDS=30'd287029521;
+  localparam [N-1:0] CTX4=15'd11242, CNT=15'd4096;
+  localparam CFG_BITS=N*512+128;
+  wire reset_n = rst_n && ena;
+
+  wire mem_req, mem_we, mem_ready, mem_rvalid; wire [10:0] mem_addr; wire [7:0] mem_wdata, mem_rdata;
+  wire cfg_we, cfg_clear, cfg_busy; wire [9:0] cfg_addr; wire [7:0] cfg_data; wire [CFG_BITS-1:0] cfg;
+  wire mesh_hold, run_req, ready;
+  wire rd_start, rd_active, rd_done, wr_start, wr_active, wr_done; wire [10:0] rd_base, rd_length, wr_base, wr_length, wr_count;
+  wire [3:0] host_ev; wire [4*N-1:0] seen; wire seen_clear;
+  wire param_we; wire [3:0] param_cell; wire [2:0] param_addr; wire [15:0] param_data;
+
+  mesh_host #(.CFG_ABITS(10), .SEEN_BITS(4*N)) host(
+    .clk(clk), .rst_n(reset_n), .data(ui_in), .op(uio_in[4:2]), .strobe(uio_in[1]), .read_data(uo_out),
+    .mem_req(mem_req), .mem_we(mem_we), .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+    .mem_ready(mem_ready), .mem_rvalid(mem_rvalid), .mem_rdata(mem_rdata),
+    .cfg_we(cfg_we), .cfg_addr(cfg_addr), .cfg_data(cfg_data), .cfg_clear(cfg_clear), .cfg_busy(cfg_busy),
+    .mesh_hold(mesh_hold), .run_req(run_req), .ready(ready),
+    .rd_start(rd_start), .rd_base(rd_base), .rd_length(rd_length), .rd_active(rd_active), .rd_done(rd_done),
+    .wr_start(wr_start), .wr_base(wr_base), .wr_length(wr_length), .wr_active(wr_active), .wr_done(wr_done),
+    .wr_count(wr_count), .host_ev(host_ev), .seen(seen), .seen_clear(seen_clear),
+    .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data));
+
+  mesh_cfg #(.ROWS(ROWS), .COLS(COLS), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT)) store(
+    clk, reset_n, cfg_clear, cfg_we, cfg_addr, cfg_data, cfg_busy, cfg);
+
+  // Pads 0-3 on uio 0, 5, 6, 7; unbonded pads read high (idle).
+  wire [7:0] pad_oe, pad_out;
+  wire [7:0] pins = {4'b1111, uio_in[7], uio_in[6], uio_in[5], uio_in[0]};
+  wire [N-1:0] host_valid; wire [8*N-1:0] host_byte;
+  mesh_soc #(.ROWS(ROWS), .COLS(COLS), .WORD_PORT(6), .KINDS(KINDS), .CTX4(CTX4), .CNT(CNT), .USE_MACRO(1)) fabric(
+    .clk(clk), .rst_n(reset_n), .run_req(run_req), .mesh_hold(mesh_hold), .host_ev(host_ev),
+    .seen(seen), .seen_clear(seen_clear),
+    .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data),
+    .cfg(cfg), .pins(pins), .pad_oe(pad_oe), .pad_out(pad_out), .ready(ready),
+    .host_req(mem_req), .host_we(mem_we), .host_addr(mem_addr), .host_wdata(mem_wdata),
+    .host_ready(mem_ready), .host_rvalid(mem_rvalid), .host_rdata(mem_rdata),
+    .rd_start(rd_start), .rd_base(rd_base), .rd_length(rd_length), .rd_active(rd_active), .rd_done(rd_done),
+    .wr_start(wr_start), .wr_base(wr_base), .wr_length(wr_length), .wr_active(wr_active), .wr_done(wr_done),
+    .wr_count(wr_count), .host_valid(host_valid), .host_byte(host_byte));
+
+  assign uio_out = {pad_out[3], pad_out[2], pad_out[1], 4'b0, pad_out[0]};
+  assign uio_oe  = {pad_oe[3],  pad_oe[2],  pad_oe[1],  4'b0, pad_oe[0]};
+  wire unused = &{1'b0, host_valid, host_byte, pad_oe[7:4], pad_out[7:4]};
 endmodule
 `default_nettype wire
