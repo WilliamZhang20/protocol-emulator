@@ -7,7 +7,8 @@ writes three files per program:
   NAME.hex        the configuration vector for experiments/grid_fabric/reorg/mesh.v
   NAME.plan.json  the source's `test` blocks and `always` invariants
   NAME.mesh.json  mesh parameters and the interface: the port of each host
-                  stream (reader, writer, or a shifter's host port by cell)
+                  stream (reader, writer, or a shifter's host port by cell),
+                  and each exported function's host plan
 
 The DUT is mesh_soc.v: the mesh with the real stream reader, writer and
 two-bank SRAM. The runner knows no protocol. It loads the vector,
@@ -17,8 +18,15 @@ sends them with the reader; a receive stream's writer fills a region of
 bank 1, read back through the host port. It checks results, the peers'
 rules and every invariant each cycle. Pads are the plan's logical pins; a pad is the AND
 of the mesh's drive (push-pull or open drain) and the peers' (wired-AND,
-pulled up). Function calls need the lowering of functions (step 4 L3)
-and are refused for now.
+pulled up).
+
+A function call runs its host plan (FABRIC_REORG.md step 4 L3): clear the
+sticky flags, send `via` arguments through SRAM and the reader, write
+parameters into idle tiles, fire host events, wait on flags or result
+bytes, and read the result back from SRAM. The fabric does the rest. A
+program with functions runs every test twice: with no host delay and with
+HOST_DELAY clocks (default 997) before every host step, which measures that
+the host steps tolerate host latency.
 
 MESH=path/NAME (without suffix) selects the program; the mesh parameters
 are compiled in by test/Makefile.mesh from NAME.mesh.json.
@@ -28,6 +36,7 @@ import os
 from pathlib import Path
 
 import cocotb
+import cocotb.utils
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
 
@@ -35,6 +44,18 @@ import peers
 from cocotb_tests.test_compiled import Failure, Invariants, fmt
 
 STEP_TIMEOUT_CYCLES = 400_000
+HOST_DELAY = int(os.environ.get('HOST_DELAY', 997))
+
+
+def host_value(x, args):
+    if isinstance(x, int):
+        return x
+    if 'arg' in x:
+        return args[x['arg']]
+    if 'len' in x:
+        return len(args[x['len']])
+    a, b = host_value(x['a'], args), host_value(x['b'], args)
+    return {'+': a + b, '-': a - b, '*': a * b, '<<': a << b, '>>': a >> b, '|': a | b, '&': a & b}[x['op']]
 
 
 class MeshBus:
@@ -109,6 +130,16 @@ class Host:
                 raise Failure(f'SRAM host read of {addr} returned nothing')
             return int(dut.host_rdata.value)
 
+    async def strobe(self, **values):
+        """Drive signals for one clock (from a falling edge), then zero them."""
+        dut = self.dut
+        await FallingEdge(dut.clk)
+        for k, v in values.items():
+            getattr(dut, k).value = v
+        await FallingEdge(dut.clk)
+        for k in values:
+            getattr(dut, k).value = 0
+
     async def pulse(self, sig, base_sig, base, len_sig, length):
         dut = self.dut
         await FallingEdge(dut.clk)
@@ -116,12 +147,50 @@ class Host:
         await FallingEdge(dut.clk); sig.value = 0
 
 
-async def run_test(dut, vector, interface, plan, test):
+async def call(dut, host, interface, step, delay, timeout):
+    """Run one function call's host plan; returns its result bytes."""
+    fn = interface['functions'][step['function']]
+    args = step['args']
+    start = int(dut.wr_count.value)
+    result = None
+    for st in fn['steps']:
+        if delay:
+            await ClockCycles(dut.clk, delay)
+        op = st['op']
+        if op == 'clear':
+            await host.strobe(seen_clear=1)
+        elif op == 'send':
+            data = args[st['arg']]
+            for i, b in enumerate(data):
+                await host.mem(TX_BASE + i, b)
+            await host.pulse(dut.rd_start, dut.rd_base, TX_BASE, dut.rd_length, len(data))
+        elif op == 'param':
+            await host.strobe(param_we=1, param_cell=st['cell'], param_addr=st['addr'],
+                              param_data=host_value(st['value'], args) & 0xffff)
+        elif op == 'fire':
+            await host.strobe(host_ev=1 << st['index'])
+        elif op in ('wait', 'wait_bytes'):
+            n = host_value(st['count'], args) if op == 'wait_bytes' else None
+            for _ in range(timeout):
+                await RisingEdge(dut.clk)
+                if (int(dut.wr_count.value) - start >= n) if n is not None else (int(dut.seen.value) >> st['flag'] & 1):
+                    break
+            else:
+                what = f'{n} result bytes' if n is not None else st['signal']
+                raise Failure(f"line {step['line']}: {step['function']}: no {what}")
+        elif op == 'reply':
+            n = int(dut.wr_count.value) - start
+            result = [await host.mem(RX_BASE + start + i) for i in range(n)]
+    return result
+
+
+async def run_test(dut, vector, interface, plan, test, delay=0):
     clock_ns = 1e9 / plan['clock_hz']
     clock = cocotb.start_soon(Clock(dut.clk, clock_ns, unit='ns').start())
     dut.rst_n.value = 0; dut.run_req.value = 0; dut.cfg.value = vector; dut.pins.value = 0xff
     for sig in (dut.host_req, dut.host_we, dut.host_addr, dut.host_wdata, dut.rd_start, dut.rd_base, dut.rd_length,
-                dut.wr_start, dut.wr_base, dut.wr_length):
+                dut.wr_start, dut.wr_base, dut.wr_length, dut.host_ev, dut.seen_clear, dut.param_we, dut.param_cell,
+                dut.param_addr, dut.param_data):
         sig.value = 0
     bus = MeshBus(dut, test['wires'])
     host = Host(dut, interface)
@@ -135,7 +204,8 @@ async def run_test(dut, vector, interface, plan, test):
                 break
         else:
             raise Failure('the mesh did not finish loading its configuration')
-        if any(s['port'] == 'writer' for s in interface['streams'].values()):
+        if any(s['port'] == 'writer' for s in interface['streams'].values()) or \
+                any(f.get('returns') == 'writer' for f in interface.get('functions', {}).values()):
             await host.pulse(dut.wr_start, dut.wr_base, RX_BASE, dut.wr_length, RX_CAPACITY)
         await FallingEdge(dut.clk); dut.run_req.value = 1
         attached = {}
@@ -206,8 +276,19 @@ async def run_test(dut, vector, interface, plan, test):
                 check_rules(line)
             elif step['op'] == 'write' and 'peer' in step['target']:
                 attached[step['target']['peer']].write(step['bytes'])
+            elif step['op'] == 'call' and step['function'] in interface.get('functions', {}):
+                if 'fails' in step:
+                    raise Failure(f"line {line}: an expected failure (`fails`) is not lowered yet")
+                t0 = cocotb.utils.get_sim_time('ns')
+                got = await call(dut, host, interface, step, delay, timeout)
+                dut._log.info('call %s(%s): %d clocks, host delay %d', step['function'], fmt(sum(
+                    (v if isinstance(v, list) else [v] for v in step['args'].values()), [])),
+                    round((cocotb.utils.get_sim_time('ns') - t0) / clock_ns), delay)
+                if 'expect' in step and got != step['expect']:
+                    raise Failure(f"line {line}: {step['function']} returned {fmt(got)}, expected {fmt(step['expect'])}")
+                check_rules(line)
             else:
-                raise Failure(f"line {line}: step `{step['op']}` needs the lowering of functions (step 4 L3)")
+                raise Failure(f"line {line}: step `{step['op']}` is not lowered yet (step 4 L3)")
         await ClockCycles(dut.clk, 20)
         check_rules(test['line'])
         for peer in attached.values():
@@ -227,11 +308,14 @@ async def mesh_compiled_program(dut):
     interface = json.loads(Path(stem + '.mesh.json').read_text())
     plan = json.loads(Path(stem + '.plan.json').read_text())
     failures = []
+    delays = [0, HOST_DELAY] if interface.get('functions') else [0]
     for test in plan['tests']:
-        try:
-            await run_test(dut, vector, interface, plan, test)
-            dut._log.info('%s: test "%s" passed', Path(stem).name, test['name'])
-        except Failure as error:
-            failures.append(f"\"{test['name']}\": {error}")
-            dut._log.error('%s: test "%s" failed: %s', Path(stem).name, test['name'], error)
+        for delay in delays:
+            tag = f' (host delay {delay})' if delay else ''
+            try:
+                await run_test(dut, vector, interface, plan, test, delay)
+                dut._log.info('%s: test "%s" passed%s', Path(stem).name, test['name'], tag)
+            except Failure as error:
+                failures.append(f"\"{test['name']}\"{tag}: {error}")
+                dut._log.error('%s: test "%s" failed%s: %s', Path(stem).name, test['name'], tag, error)
     assert not failures, failures

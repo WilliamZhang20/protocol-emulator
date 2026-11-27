@@ -17,8 +17,9 @@
 // (An earlier arrangement with the io cells in the corners could not
 // route the I2C target's muxes: see FABRIC_REORG.md, grid-size study.)
 // Contexts on the io and crc cells.
-// KINDS: 2 bits per cell (0 io, 1 timer, 2 shifter, 3 crc). CTX4: 1 bit
-// per cell, 4 contexts if set, else 1 (transition rows tied off).
+// KINDS: 2 bits per cell (0 io, 1 timer, 2 shifter, 3 crc). CNT: 1 bit per
+// cell, a counter cell (its KINDS bits are ignored). CTX4: 1 bit per cell,
+// 4 contexts if set, else 1 (transition rows tied off).
 // Cell kinds, local outputs (k) and sinks (k):
 //   io      locals: the io_tile's 4 outputs
 //           sinks: 0 pad A value 1 pad A enable 2 pad B value 3 pad B enable
@@ -32,6 +33,18 @@
 //           lines: 1 init, 2 absorb, 3 emit; levels 33 data, 34 level.
 //           Its direct link (fabric_crc's shifter link) reaches the shifter
 //           to its west (link 0) and to its east (link 1).
+//   counter (fabric_counter) locals: 0 at_least (ge) 1 reached (hit)
+//           sinks: 0 step 1 data level 2 clear
+//           lines: 1 step, 2 clear; level 33 data.
+// Host side (FABRIC_REORG.md step 4 L3: a host-sequenced step only before,
+// between or at quiescent points of a transaction, never in a wire-timed
+// loop):
+//   host_ev    one-clock events, read by io outputs in mode 3;
+//   seen       a sticky flag per cell local output (4 per cell), cleared
+//              by seen_clear, for the host's waits;
+//   param_*    a tile-local register write while the fabric runs: counter
+//              registers 0..2 (the limit is register 0). The compiler only
+//              emits one while the tile is idle.
 // Configuration (CELL_BITS per cell, then the word network):
 //   [0,192) track_cfg, [192,312) sink_cfg (6 sinks), [312,368) trans_cfg,
 //   [368,512) tile:
@@ -39,7 +52,9 @@
 //       {invert[5], push-pull[4], pad[3:1], used[0]};
 //     timer {phase[63:48], mode[47:32], period[31:16], first[15:0]};
 //     shifter registers 1..6 at [16(r-1) +: 16];
-//     crc registers 0..7 at [16r +: 16].
+//     crc registers 0..7 at [16r +: 16];
+//     counter registers 0..2 at [16r +: 16] (0 limit [7:0]; 1 step
+//       {mode[12:11], data level[10:6], step line[5:0]}; 2 clear line[4:0]).
 //   Word network at WNET_LSB: sel[31:0], escape m0,m1,byte,r0,r1 [71:32],
 //   compare value [87:72], mask [103:88], split msb [104], tap [108:105],
 //   rx cell [112:109], tx cell [116:113] (the shifters whose receive FIFO
@@ -49,9 +64,13 @@
 module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
+  parameter [ROWS*COLS-1:0] CNT=0,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,
+  input wire [3:0] host_ev,
+  output wire [4*ROWS*COLS-1:0] seen, input wire seen_clear,
+  input wire param_we, input wire [3:0] param_cell, input wire [2:0] param_addr, input wire [15:0] param_data,
   input wire [CFG_BITS-1:0] cfg,
   input wire [7:0] pins,                 // pad levels, from the bench
   output reg [7:0] pad_oe, output reg [7:0] pad_out,
@@ -62,8 +81,8 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   output wire [8*ROWS*COLS-1:0] host_byte);
   localparam N=ROWS*COLS, TRACK_LSB=0, SINK_LSB=192, TRANS_LSB=312, TILE_LSB=368;
   localparam WNET_LSB=N*CELL_BITS;
-  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3;
-  function integer kind(input integer c); kind = KINDS[2*c+:2]; endfunction
+  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4;
+  function integer kind(input integer c); kind = CNT[c] ? COUNTER : KINDS[2*c+:2]; endfunction
   function integer contexts(input integer c); contexts = CTX4[c] ? 4 : 1; endfunction
 
   // Configuration load: shifter registers 1..6 and CRC registers 0..7
@@ -81,6 +100,9 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   // Shifter FIFO ports, CRC links and the word network's bit pins.
   wire [7:0] rx_byte[0:N-1]; wire [N-1:0] rx_req, rx_grant, tx_req, tx_grant;
   wire [N-1:0] l_absorb, l_bit, l_emit, tail;
+  // Each CRC cell's link {select, linked} (its shape register, crc register 6
+  // bits [7:6]): linked 1, select 0 west / 1 east.
+  wire [1:0] crc_link[0:N-1];
   wire [WNET_BITS-1:0] wc=cfg[WNET_LSB+:WNET_BITS];
   wire [3:0] rx_cell=wc[112:109], tx_cell=wc[116:113];
   wire tap_match, tap_mismatch, wn_rx_ready, wn_txv; wire [15:0] wn_tx;
@@ -90,6 +112,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     localparam ROW=c/COLS, COL=c%COLS;
     wire [CELL_BITS-1:0] cc=cfg[c*CELL_BITS+:CELL_BITS];
     wire [143:0] tile=cc[TILE_LSB+:144];
+    assign crc_link[c]=tile[16*6+6+:2];
     localparam NB_N = ROW>0 ? c-COLS : c, NB_S = ROW<ROWS-1 ? c+COLS : c,
                NB_W = COL>0 ? c-1 : c, NB_E = COL<COLS-1 ? c+1 : c;
     wire [3:0] nin = ROW>0 ? s_out[NB_N] : 4'b0;
@@ -103,7 +126,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       n_out[c],s_out[c],w_out[c],e_out[c], sinks[c], ctx);
     if(kind(c)==IO) begin: io
       wire [3:0] o;
-      io_tile t(clk,run,pins,tile[39:0],o);
+      io_tile t(clk,run,pins,tile[39:0],o,host_ev);
       assign local_out[c]=o;
       // Pad A from sinks 0/1, pad B from sinks 2/3.
       wire [5:0] fa=tile[45:40], fb=tile[51:46];
@@ -124,8 +147,11 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     end else if(kind(c)==SHIFTER) begin: sh
       wire word, stop, out, active; wire [4:0] nc; wire [15:0] rxd, st;
       wire [63:0] lines={30'b0,sinks[c][4],1'b0,27'b0,sinks[c][2],sinks[c][3],sinks[c][1],sinks[c][0],1'b0}; // 1 start 2 shift 3 abort 4 sample, 33 in
-      // The CRC beside it: east (this shifter is its link 0) or west (link 1).
-      wire crc_in = (COL<COLS-1 && kind(NB_E)==CRC) ? tail[NB_E] : (COL>0 && kind(NB_W)==CRC) ? tail[NB_W] : 1'b0;
+      // The CRC linked to it: the one east of it with link 0 (west), or the
+      // one west of it with link 1 (east); a shifter between two CRCs
+      // takes the tail only from the one whose link register names it.
+      wire crc_in = (COL<COLS-1 && kind(NB_E)==CRC && crc_link[NB_E]==2'b01) ? tail[NB_E] :
+                    (COL>0 && kind(NB_W)==CRC && crc_link[NB_W]==2'b11) ? tail[NB_W] : 1'b0;
       wire [2:0] sh_addr=load+3'd1;
       fabric_shifter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded && load<6),.cfg_addr(sh_addr),
         .cfg_data(tile[16*load+:16]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
@@ -135,6 +161,16 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .status(st),.crc_absorb(l_absorb[c]),.crc_bit(l_bit[c]),.crc_emit(l_emit[c]));
       assign local_out[c]={active,out,stop,word};
       assign oe[c]=0; assign ov[c]=0; assign tail[c]=0;
+    end else if(kind(c)==COUNTER) begin: ct
+      wire ge, hit; wire [7:0] count;
+      wire [63:0] lines={30'b0,sinks[c][1],1'b0,29'b0,sinks[c][2],sinks[c][0],1'b0}; // 1 step 2 clear, 33 data
+      wire pw=param_we && param_cell==c;   // a host write wins over nothing: loading is over by then
+      fabric_counter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we((!loaded && load<3) || (loaded && pw)),
+        .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tile[16*load+:13]),
+        .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
+      assign local_out[c]={2'b0,hit,ge};
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
+      assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else begin: cr
       wire ok, out, tl; wire [31:0] value;
       wire [63:0] lines={29'b0,sinks[c][4],sinks[c][3],1'b0,28'b0,sinks[c][2],sinks[c][1],sinks[c][0],1'b0}; // 1 init 2 absorb 3 emit, 33 data 34 level
@@ -153,6 +189,10 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     assign rx_grant[c]= rx_cell==c ? rx_req[c] && wn_rx_ready : rx_req[c];
     assign tx_grant[c]= tx_cell==c && tx_req[c] && wn_txv;
     assign host_valid[c]= rx_cell!=c && rx_req[c];
+    // Sticky flags for the host's waits.
+    reg [3:0] seen_r;
+    always @(posedge clk) if(!run || seen_clear) seen_r<=0; else seen_r<=seen_r|local_out[c];
+    assign seen[4*c+:4]=seen_r;
     assign host_byte[8*c+:8]=rx_byte[c];
   end endgenerate
 

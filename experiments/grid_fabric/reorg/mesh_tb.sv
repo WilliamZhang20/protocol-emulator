@@ -16,7 +16,8 @@
 // here.
 module mesh_tb #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
-  parameter [ROWS*COLS-1:0] CTX4=15'd10570);
+  parameter [ROWS*COLS-1:0] CTX4=15'd10570,
+  parameter [ROWS*COLS-1:0] CNT=0);
   localparam N=ROWS*COLS, CFG_BITS=N*512+128, WORDS=(CFG_BITS+31)/32;
   reg clk=0; always #1 clk=!clk;
   reg rst_n=0, run=0;
@@ -32,8 +33,9 @@ module mesh_tb #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   always @(posedge clk) if(rd_valid && rd_ready) rdi<=rdi+1;
   wire ready, wr_valid; wire [15:0] wr_data;
   wire [N-1:0] host_valid; wire [8*N-1:0] host_byte;
-  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4)) dut(
-    clk,rst_n,run,cfg,pins,pad_oe,pad_out,ready,{8'd0,rdq[rdi]},rd_valid,rd_ready,wr_data,wr_valid,1'b1,host_valid,host_byte);
+  wire [4*N-1:0] seen;
+  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4),.CNT(CNT)) dut(
+    clk,rst_n,run,4'b0,seen,1'b0,1'b0,4'b0,3'b0,16'b0,cfg,pins,pad_oe,pad_out,ready,{8'd0,rdq[rdi]},rd_valid,rd_ready,wr_data,wr_valid,1'b1,host_valid,host_byte);
   reg [7:0] pushed[0:31]; integer npushed=0;
   always @(posedge clk) if(wr_valid) begin pushed[npushed]<=wr_data[7:0];npushed<=npushed+1;end
   reg [7:0] u_got[0:255]; integer u_n=0, k;

@@ -7,20 +7,23 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../../.." && pwd)
 bin=$root/.tools/oss-cad-suite/bin; out=$1; mkdir -p "$out"
-contract=$here/compiled/test_3x5b.json; hex=$here/compiled/i2c_target+uart_rx.test_3x5b.hex
-tx_hex=$here/compiled/uart_tx.test_3x5b.hex; crc_hex=$here/compiled/crc_tx.test_3x5b.hex
+t=test_3x5c
+contract=$here/compiled/$t.json; hex=$here/compiled/i2c_target+uart_rx.$t.hex
+tx_hex=$here/compiled/uart_tx.$t.hex; crc_hex=$here/compiled/crc_tx.$t.hex
 params=$(python3 - "$contract" <<'PY'
 import json, sys
 c = json.load(open(sys.argv[1])); n = c['rows'] * c['cols']
-kinds = sum(c['kinds'][x['kind']]['code'] << (2 * i) for i, x in enumerate(c['cells']))
+code = lambda x: 1 if x['kind'] == 'counter' else c['kinds'][x['kind']]['code']   # counters: CNT
+kinds = sum(code(x) << (2 * i) for i, x in enumerate(c['cells']))
 ctx4 = sum((x['contexts'] == 4) << i for i, x in enumerate(c['cells']))
+cnt = sum((x['kind'] == 'counter') << i for i, x in enumerate(c['cells']))
 print(f"-Pmesh_tb.ROWS={c['rows']} -Pmesh_tb.COLS={c['cols']} -Pmesh_tb.WORD_PORT={c['word_port']['cell']} "
-      f"-Pmesh_tb.KINDS={2*n}'d{kinds} -Pmesh_tb.CTX4={n}'d{ctx4}")
+      f"-Pmesh_tb.KINDS={2*n}'d{kinds} -Pmesh_tb.CTX4={n}'d{ctx4} -Pmesh_tb.CNT={n}'d{cnt}")
 PY
 )
 "$bin/iverilog" -g2012 -s mesh_tb $params -o "$out/mesh" "$here/mesh_tb.sv" "$here/mesh.v" "$here/ctx_switch.v" \
   "$here/io_tile.v" "$here/wnet.v" "$root/src/grid_timer.v" "$root/src/fabric_shifter.v" "$root/src/fabric_crc.v" \
-  "$root/src/config_bank.v" \
+  "$root/src/config_bank.v" "$root/src/fabric_counter.v" \
   2> >(grep -v 'timescale\|inherit' >&2)
 run() { timeout 60 "$bin/vvp" -N "$out/mesh" +CFG="$hex" +HALF=$1 +SETUP=$2 +HOLD=$3 ${EXTRA:-} | grep -q '^PASS'; }
 if [[ ${2:-} == --sweep ]]; then

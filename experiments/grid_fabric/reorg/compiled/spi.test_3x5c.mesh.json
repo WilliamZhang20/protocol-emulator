@@ -1,0 +1,73 @@
+{
+ "contract": "test_3x5c",
+ "params": {
+  "ROWS": 3,
+  "COLS": 5,
+  "WORD_PORT": 6,
+  "KINDS": "30'd287029521",
+  "CTX4": "15'd11242",
+  "CNT": "15'd4096"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "transfer": {
+   "args": {
+    "data": "reader"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "send",
+     "arg": "data"
+    },
+    {
+     "op": "param",
+     "tile": "sent",
+     "reg": "limit",
+     "value": {
+      "op": "-",
+      "a": {
+       "len": "data"
+      },
+      "b": 1
+     },
+     "cell": 12,
+     "addr": 0
+    },
+    {
+     "op": "fire",
+     "event": "begin",
+     "index": 0
+    },
+    {
+     "op": "wait_bytes",
+     "count": {
+      "len": "data"
+     }
+    },
+    {
+     "op": "fire",
+     "event": "finish",
+     "index": 1
+    },
+    {
+     "op": "wait",
+     "signal": "cs_off.tick",
+     "flag": 56
+    },
+    {
+     "op": "wait",
+     "signal": "gap.tick",
+     "flag": 16
+    },
+    {
+     "op": "reply"
+    }
+   ],
+   "returns": "writer"
+  }
+ }
+}

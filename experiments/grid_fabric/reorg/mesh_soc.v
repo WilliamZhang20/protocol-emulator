@@ -15,12 +15,18 @@
 //   receive region for the writer (wr_active, wr_done when full), and
 //   wr_count says how many bytes it has written.
 // The reader and writer pick their bank from their own address bit 10.
+// host_ev, seen/seen_clear and param_* pass straight to the mesh (its
+// host-sequenced steps).
 module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
+  parameter [ROWS*COLS-1:0] CNT=0,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,
+  input wire [3:0] host_ev,
+  output wire [4*ROWS*COLS-1:0] seen, input wire seen_clear,
+  input wire param_we, input wire [3:0] param_cell, input wire [2:0] param_addr, input wire [15:0] param_data,
   input wire [CFG_BITS-1:0] cfg,
   input wire [7:0] pins,
   output wire [7:0] pad_oe, pad_out,
@@ -33,8 +39,8 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   output wire [ROWS*COLS-1:0] host_valid, output wire [8*ROWS*COLS-1:0] host_byte);
   // Mesh <-> word-network endpoints.
   wire [15:0] m_rd_data, m_wr_data; wire m_rd_valid, m_rd_ready, m_wr_valid, m_wr_ready;
-  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4)) fabric(
-    clk,rst_n,run_req,cfg,pins,pad_oe,pad_out,ready,m_rd_data,m_rd_valid,m_rd_ready,
+  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4),.CNT(CNT)) fabric(
+    clk,rst_n,run_req,host_ev,seen,seen_clear,param_we,param_cell,param_addr,param_data,cfg,pins,pad_oe,pad_out,ready,m_rd_data,m_rd_valid,m_rd_ready,
     m_wr_data,m_wr_valid,m_wr_ready,host_valid,host_byte);
 
   // Host bank route: rewritten while the memory is disarmed for one clock.

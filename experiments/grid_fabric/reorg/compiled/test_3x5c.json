@@ -1,6 +1,6 @@
 {
  "schema": "reorg.mesh.v1",
- "name": "test_3x5b",
+ "name": "test_3x5c",
  "rows": 3,
  "cols": 5,
  "cells": [
@@ -26,7 +26,7 @@
   },
   {
    "kind": "shifter",
-   "contexts": 1
+   "contexts": 4
   },
   {
    "kind": "crc",
@@ -34,7 +34,7 @@
   },
   {
    "kind": "shifter",
-   "contexts": 1
+   "contexts": 4
   },
   {
    "kind": "crc",
@@ -42,7 +42,7 @@
   },
   {
    "kind": "shifter",
-   "contexts": 1
+   "contexts": 4
   },
   {
    "kind": "timer",
@@ -53,7 +53,7 @@
    "contexts": 4
   },
   {
-   "kind": "timer",
+   "kind": "counter",
    "contexts": 1
   },
   {
@@ -159,6 +159,27 @@
     "west",
     "east"
    ]
+  },
+  "counter": {
+   "code": 4,
+   "locals": [
+    "at_least",
+    "reached",
+    "unused2",
+    "unused3"
+   ],
+   "sinks": [
+    "step",
+    "data",
+    "clear"
+   ],
+   "lines": {
+    "step": 1,
+    "clear": 2
+   },
+   "levels": {
+    "data": 33
+   }
   }
  },
  "encoding": {
@@ -371,6 +392,49 @@
      "link_data_only": [
       13,
       13
+     ]
+    }
+   }
+  },
+  "counter": {
+   "limit": {
+    "reg": 0,
+    "fields": {
+     "limit": [
+      7,
+      0
+     ]
+    }
+   },
+   "step": {
+    "reg": 1,
+    "fields": {
+     "step_line": [
+      5,
+      0
+     ],
+     "data_level": [
+      10,
+      6
+     ],
+     "mode": [
+      12,
+      11
+     ]
+    },
+    "mode": {
+     "count": 0,
+     "ones": 1,
+     "zeros": 2,
+     "equal": 3
+    }
+   },
+   "clear": {
+    "reg": 2,
+    "fields": {
+     "clear_line": [
+      4,
+      0
      ]
     }
    }

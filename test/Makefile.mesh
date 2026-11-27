@@ -10,7 +10,7 @@ export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 MESH_PARAMS := $(shell python3 -c "import json,sys; p=json.load(open('$(MESH).mesh.json'))['params']; print(' '.join(f'-Pmesh_soc.{k}={str(v).split(\"d\")[-1]}' for k,v in p.items()))")
 SIM_BUILD = sim_build/mesh-$(notdir $(MESH))
 VERILOG_SOURCES = $(REORG)/mesh_soc.v $(REORG)/mesh.v $(REORG)/ctx_switch.v $(REORG)/io_tile.v $(REORG)/wnet.v \
-  $(SRC_DIR)/grid_timer.v $(SRC_DIR)/fabric_shifter.v $(SRC_DIR)/fabric_crc.v $(SRC_DIR)/config_bank.v \
+  $(SRC_DIR)/grid_timer.v $(SRC_DIR)/fabric_shifter.v $(SRC_DIR)/fabric_crc.v $(SRC_DIR)/fabric_counter.v $(SRC_DIR)/config_bank.v \
   $(SRC_DIR)/grid_stream_tiles.v $(SRC_DIR)/grid_stream_memory.v $(SRC_DIR)/memory_tiles.v
 COMPILE_ARGS += -g2012 $(MESH_PARAMS)
 TOPLEVEL = mesh_soc

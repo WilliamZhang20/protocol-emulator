@@ -1,11 +1,12 @@
 {
- "contract": "test_3x5b",
+ "contract": "test_3x5c",
  "params": {
   "ROWS": 3,
   "COLS": 5,
   "WORD_PORT": 6,
   "KINDS": "30'd287029521",
-  "CTX4": "15'd10570"
+  "CTX4": "15'd11242",
+  "CNT": "15'd4096"
  },
  "streams": {
   "send": {

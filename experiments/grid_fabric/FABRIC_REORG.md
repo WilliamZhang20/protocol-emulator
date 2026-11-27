@@ -423,13 +423,76 @@ Not yet covered by criterion 3:
        receive region, because the stream tiles' enable is a reset.
 
      Coverage of the 35 examples on test_3x5b (`test_fabric_lower.py`;
-     every program compiles or is refused with a class):
+     every program compiles or is refused with a class; after L3/L4 SPI
+     on test_3x5c: 4 compiled with spi, 1 hardware refusal, 30 compiler):
      - compiled: loopback, ps2, uart;
      - refused, hardware: `spi` (a counter resource has no tile),
        `io_saturation` (two transmit streams, one reader);
      - refused, compiler (30): functions, register/event/flag signals
        (L3/L4), `timer.run`/`resync` inputs, stream stages (L5), and
        context-dependent inputs (L2 contexts).
+   - **L3/L4, first function: SPI `transfer` (2026-11-26).**
+
+     *Execution model (user, 2026-11-26).* The host may act before or
+     between transactions (write configuration and parameters, provide
+     arguments, start work, read results), and at points where the source
+     allows a pause and the measured latency is acceptable. Where wire
+     timing requires a reaction (an I2C target's address match and ACK
+     against an external clock), the configured tiles react locally. The
+     compiler decides per step; nothing assumes one method for every
+     function.
+
+     *Hardware, cell-side only* (`ctx_switch`, tracks and `wnet`
+     unchanged):
+     - a **counter** cell kind (`src/fabric_counter.v`, already formally
+       checked: count, streak modes, clear, `at_least` true at limit 0,
+       `reached`), marked by mesh.v's `CNT` parameter. The count-mode
+       timer could not serve: a limit of 0 (`transfer([0x10])`) needs
+       `at_least` true at once, and the timer refuses `first` = 0.
+     - **host events**: io output mode 3 reads `host_ev[k]`, a one-clock
+       pulse the host fires;
+     - **sticky flags** (`seen`, 4 per cell, `seen_clear`) on every local
+       output, for the host's waits;
+     - a **parameter port** (`param_*`): a register write into a counter
+       while the fabric runs; the compiler emits it only while the tile is
+       idle (before the transaction's first fire).
+     - fix found by the move to test_3x5c: a shifter between two CRC
+       cells took its CRC tail from the east one whatever the link
+       registers said; it now takes it from the CRC whose link names it.
+
+     *Compiler rules* (`fabric_lower.py`): set/clear registers become
+     FSMs; `!s` of an FSM register is a mux; `open = begin || (open &&
+     !(sent.at_least && bits.busy))` is OFF -> ON -> ARMED -> OFF, exact
+     because `at_least` only rises between two `begin`s (its clear). The
+     function becomes a host plan: clear flags; send `data` through SRAM
+     and the reader; write `sent.limit = data.len - 1`; fire `begin`; wait
+     for `data.len` result bytes (each word pushes one); fire `finish`;
+     wait `cs_off.tick` and `gap.tick` flags; read the result from SRAM.
+
+     *Evidence* (`make reorg-compiled-test`): both `spi.spt` source tests
+     pass at the pins with the device peer and the invariant "SCK only
+     moves while CS is low" checked every cycle, and pass again with 997
+     host clocks before every host step (the steps tolerate host latency,
+     measured, not assumed).
+
+     *Measurements* on test_3x5c:
+     - cells: 7 of 15 (shifter 5, counter 12, timers 4, 10 and 14, io 11
+       and 13); 23 track segments; 2 host events of 4;
+     - contexts: `selected` 2 states (io cell 13, its mux drives CS),
+       `open` 3 states (shifter cell 5, its mux is the shifter's start);
+     - timing: a call takes the wire time plus 25-33 clocks of host steps
+       at no host delay (1 byte 165 clocks for 140 on the wire; 3 bytes
+       429 for 396);
+     - area (yosys + IHP liberty, logic only; the configuration bits are
+       an input bus here, their storage not counted): the host hooks add
+       5.6k um2 to the mesh (246.2k -> 251.8k, +2.3%); test_3x5c's mix
+       (a counter for a timer, contexts on three shifter switches) adds
+       5.2k more (257.0k). The counter is 7.9k against the timer's 16.3k;
+       a 4-context switch costs about 4.5k over a 1-context one.
+
+     Next: an externally driven I2C target from source, where the address
+     match and ACK must be autonomous (no exported function in its time
+     loop); then the I2C gaps (repeated START, event collisions).
    - **L3, exported functions -> control FSMs.** `wait X` is a state
      left on X; `fire E` is the triggering event muxed by state;
      `repeat N { wait next X }` is a count-mode timer; `set_flags`
