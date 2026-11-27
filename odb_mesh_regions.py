@@ -62,7 +62,7 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
              and not fixed(i)]
 
     def seed(net):
-        name = net.getName()
+        name = net.getName().replace("\\", "")     # OpenROAD escapes [ ] in names
         m = CELL.search(name)
         if m:
             return int(m.group(1))
@@ -121,6 +121,12 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
     print(f"[INFO] mesh regions: {len(insts)} movable instances, {seeded} seeded, "
           f"{len(insts) - free} in mesh cells ({sum(area.values()):.0f} um2 of {total:.0f}), {free} unconstrained")
 
+    if not area:
+        sample = [net.getName() for net in block.getNets()][:: max(1, block.getNets().__len__() // 40)][:40]
+        print("[ERROR] mesh regions: no instance was assigned to a mesh cell; sample net names:")
+        for name in sample:
+            print("    " + name)
+        raise SystemExit(1)
     core = block.getCoreArea()
     cx0, cy0, cx1, cy1 = (core.xMin() / dbu, core.yMin() / dbu, core.xMax() / dbu, core.yMax() / dbu)
     colw = [max(area[r * cols + c] for r in range(rows)) for c in range(cols)]
