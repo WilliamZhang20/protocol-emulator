@@ -1,0 +1,18 @@
+{
+ "contract": "mesh_3x4_L3",
+ "params": {
+  "ROWS": 3,
+  "COLS": 4,
+  "WORD_PORT": 5,
+  "KINDS": "24'd5582405",
+  "CTX4": "12'd244",
+  "CNT": "12'd2560",
+  "LOGIC": "12'd1034"
+ },
+ "streams": {
+  "send": {
+   "port": "reader"
+  }
+ },
+ "clock_hz": 50000000
+}

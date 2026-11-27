@@ -1,0 +1,157 @@
+{
+ "contract": "mesh_3x4_L3",
+ "params": {
+  "ROWS": 3,
+  "COLS": 4,
+  "WORD_PORT": 5,
+  "KINDS": "24'd5582405",
+  "CTX4": "12'd244",
+  "CNT": "12'd2560",
+  "LOGIC": "12'd1034"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "step": {
+   "args": {
+    "tms": "value",
+    "tdi": "value"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "param",
+     "tile": "data",
+     "reg": "frame",
+     "value": 0,
+     "cell": 4,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "mode",
+     "reg": "frame",
+     "value": 0,
+     "cell": 6,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "mode",
+     "reg": "load",
+     "value": {
+      "arg": "tms"
+     },
+     "cell": 6,
+     "addr": 7
+    },
+    {
+     "op": "param",
+     "tile": "data",
+     "reg": "load",
+     "value": {
+      "arg": "tdi"
+     },
+     "cell": 4,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "data.stop",
+     "flag": 17
+    },
+    {
+     "op": "wait",
+     "signal": "mode.stop",
+     "flag": 25
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    },
+    {
+     "op": "reply",
+     "mask": 1
+    }
+   ],
+   "returns": "writer"
+  },
+  "scan8": {
+   "args": {
+    "tms": "value",
+    "tdi": "value"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "param",
+     "tile": "data",
+     "reg": "frame",
+     "value": 7,
+     "cell": 4,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "mode",
+     "reg": "frame",
+     "value": 7,
+     "cell": 6,
+     "addr": 1
+    },
+    {
+     "op": "param",
+     "tile": "mode",
+     "reg": "load",
+     "value": {
+      "arg": "tms"
+     },
+     "cell": 6,
+     "addr": 7
+    },
+    {
+     "op": "param",
+     "tile": "data",
+     "reg": "load",
+     "value": {
+      "arg": "tdi"
+     },
+     "cell": 4,
+     "addr": 7
+    },
+    {
+     "op": "fire",
+     "event": "go",
+     "index": 0
+    },
+    {
+     "op": "wait",
+     "signal": "data.stop",
+     "flag": 17
+    },
+    {
+     "op": "wait",
+     "signal": "mode.stop",
+     "flag": 25
+    },
+    {
+     "op": "wait_bytes",
+     "count": 1
+    },
+    {
+     "op": "reply"
+    }
+   ],
+   "returns": "writer"
+  }
+ }
+}

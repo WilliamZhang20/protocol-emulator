@@ -1,0 +1,36 @@
+{
+ "contract": "mesh_3x4_L3",
+ "params": {
+  "ROWS": 3,
+  "COLS": 4,
+  "WORD_PORT": 5,
+  "KINDS": "24'd5582405",
+  "CTX4": "12'd244",
+  "CNT": "12'd2560",
+  "LOGIC": "12'd1034"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "wait_for_high": {
+   "args": {},
+   "steps": [
+    {
+     "op": "wait",
+     "signal": "sample.rise",
+     "flag": 34
+    }
+   ]
+  },
+  "wait_for_low": {
+   "args": {},
+   "steps": [
+    {
+     "op": "wait",
+     "signal": "sample.fall",
+     "flag": 35
+    }
+   ]
+  }
+ }
+}

@@ -3,12 +3,14 @@
 // The mesh chip (FABRIC_REORG.md step 6): a contexted mesh of coarse tiles
 // and logic cells (src/mesh.v) with its SRAM streams on the two SRAM macros
 // (mesh_soc), its configuration storage (mesh_cfg) and the host interface
-// (mesh_host). The mesh is the compiler contract mesh_3x5_L3 (FABRIC_REORG.md
-// step 8 result): 3 rows x 5 columns, row-major
-//   timer logic io    logic timer
-//   shifter crc* shifter crc io        (* word port)
-//   timer counter logic counter timer
-// with contexts on the io, shifter and crc cells.
+// (mesh_host). The mesh is the compiler contract mesh_3x4_L3 (FABRIC_REORG.md
+// step 8 result): 3 rows x 4 columns, row-major
+//   timer   logic   io      logic
+//   shifter crc*    shifter io          (* word port)
+//   timer   counter logic   counter
+// with contexts on the io, shifter and crc cells. Small timers past the
+// two timer cells are LUTs (the compiler's exact grid_timer copy), and
+// the word-port crc's serial out is a local when a program reads it.
 //
 // Pins:
 //   ui[7:0]   host data (stable while the strobe is high)
@@ -23,9 +25,9 @@ module tt_um_protocol_emulator (
     input wire [7:0] uio_in, output wire [7:0] uio_out,
     output wire [7:0] uio_oe, input wire ena, input wire clk, input wire rst_n
 );
-  localparam ROWS=3, COLS=5, N=ROWS*COLS, WORD_PORT=6;
-  localparam [2*N-1:0] KINDS=30'd357808453;
-  localparam [N-1:0] CTX4=15'd996, CNT=15'd10240, LOGIC=15'd4106;
+  localparam ROWS=3, COLS=4, N=ROWS*COLS, WORD_PORT=5;
+  localparam [2*N-1:0] KINDS=24'd5582405;
+  localparam [N-1:0] CTX4=12'd244, CNT=12'd2560, LOGIC=12'd1034;
   localparam CFG_BITS=N*512+128;
   wire reset_n = rst_n && ena;
 

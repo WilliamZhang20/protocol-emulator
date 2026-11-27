@@ -1,0 +1,74 @@
+{
+ "contract": "mesh_3x4_L3",
+ "params": {
+  "ROWS": 3,
+  "COLS": 4,
+  "WORD_PORT": 5,
+  "KINDS": "24'd5582405",
+  "CTX4": "12'd244",
+  "CNT": "12'd2560",
+  "LOGIC": "12'd1034"
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "transfer": {
+   "args": {
+    "data": "reader"
+   },
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "send",
+     "arg": "data"
+    },
+    {
+     "op": "param",
+     "tile": "sent",
+     "reg": "limit",
+     "value": {
+      "op": "-",
+      "a": {
+       "len": "data"
+      },
+      "b": 1
+     },
+     "cell": 11,
+     "addr": 0
+    },
+    {
+     "op": "fire",
+     "event": "begin",
+     "index": 0
+    },
+    {
+     "op": "wait_bytes",
+     "count": {
+      "len": "data"
+     }
+    },
+    {
+     "op": "fire",
+     "event": "finish",
+     "index": 1
+    },
+    {
+     "op": "wait",
+     "signal": "cs_off.tick",
+     "flag": 0
+    },
+    {
+     "op": "wait",
+     "signal": "_logic0.q0",
+     "flag": 4
+    },
+    {
+     "op": "reply"
+    }
+   ],
+   "returns": "writer"
+  }
+ }
+}
