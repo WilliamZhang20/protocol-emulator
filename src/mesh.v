@@ -33,9 +33,23 @@
 //           lines: 1 init, 2 absorb, 3 emit; levels 33 data, 34 level.
 //           Its direct link (fabric_crc's shifter link) reaches the shifter
 //           to its west (link 0) and to its east (link 1).
+//           Outside the word port it outputs its serial bit `out`
+//           at local 1 (the inverted top register bit: a register); at the
+//           word port when bit 10 of its shape word (register 6) is set.
 //   counter (fabric_counter) locals: 0 at_least (ge) 1 reached (hit)
 //           sinks: 0 step 1 data level 2 clear
 //           lines: 1 step, 2 clear; level 33 data.
+//   logic   (mesh_logic, LOGIC: 1 bit per cell, its KINDS/CNT/CTX4 bits
+//           ignored: one context, so the switch reads context 0 only)
+//           locals: 0-3 the LUT registers q0-q3 (q4-q7 stay in the tile)
+//           sinks: 0-5 inputs s0-s5 of the eight LUTs
+//           Eight 4-input LUTs, each with an output register (the source's
+//           `reg`: q loads f when its enable is high, holds its start value
+//           while the fabric is stopped), and four host flags h0-h3 (a
+//           parameter write while running sets the flags in data[7:4] to
+//           data[3:0], the others keep their value; cleared while stopped).
+//           An input selects 0-5 sink, 6-13 q0-q7, 14-17 h0-h3, 18
+//           constant 0, 19 constant 1 (20-31: 0).
 // Host side (FABRIC_REORG.md step 4 L3: a host-sequenced step only before,
 // between or at quiescent points of a transaction, never in a wire-timed
 // loop):
@@ -57,7 +71,13 @@
 //     shifter registers 1..6 at [16(r-1) +: 16];
 //     crc registers 0..7 at [16r +: 16];
 //     counter registers 0..2 at [16r +: 16] (0 limit [7:0]; 1 step
-//       {mode[12:11], data level[10:6], step line[5:0]}; 2 clear line[4:0]).
+//       {mode[12:11], data level[10:6], step line[5:0]}; 2 clear line[4:0]);
+//     logic: the tile field and the bits a one-context cell does not
+//       read are one 344-bit field L = {transitions [312,368), tracks of
+//       contexts 1-3 [48,192), tile [368,512)} (L[143:0] the tile field);
+//       LUT k at L[40k +: 40]: truth[15:0] (index {in3,in2,in1,in0}), in i
+//       select [16+5i +: 5], enable [38:36] (0 every clock, 1-6 sink 0-5,
+//       7 never), start value [39].
 //   Word network at WNET_LSB: sel[31:0], escape m0,m1,byte,r0,r1 [71:32],
 //   compare value [87:72], mask [103:88], split msb [104], tap [108:105],
 //   rx cell [112:109], tx cell [116:113] (the shifters whose receive FIFO
@@ -77,6 +97,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
+  parameter [ROWS*COLS-1:0] LOGIC=0,
   parameter REG=1,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
@@ -94,9 +115,9 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   output wire [8*ROWS*COLS-1:0] host_byte);
   localparam N=ROWS*COLS, TRACK_LSB=0, SINK_LSB=192, TRANS_LSB=312, TILE_LSB=368;
   localparam WNET_LSB=N*CELL_BITS;
-  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4;
-  function integer kind(input integer c); kind = CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]}; endfunction
-  function integer contexts(input integer c); contexts = CTX4[c] ? 4 : 1; endfunction
+  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4, LOGIC_K=5;
+  function integer kind(input integer c); kind = LOGIC[c] ? LOGIC_K : CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]}; endfunction
+  function integer contexts(input integer c); contexts = CTX4[c] && !LOGIC[c] ? 4 : 1; endfunction
 
   // Configuration load: shifter registers 1..6 and CRC registers 0..7
   // written over eight clocks.
@@ -216,6 +237,13 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       assign lraw={2'b0,hit,ge};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
+    end else if(kind(c)==LOGIC_K) begin: lg
+      wire [7:0] q;
+      mesh_logic t(.clk(clk),.rst_n(rst_n),.run(run),.cfg({cc[TRANS_LSB+:56],cc[TRACK_LSB+48+:144],tile}),.in(sinks[c]),
+        .hw(param_we && param_cell==c),.hdata(param_data[3:0]),.hmask(param_data[7:4]),.q(q));
+      assign lraw=q[3:0];
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else begin: cr
       wire ok, out, tl; wire [31:0] value;
       wire [63:0] lines={29'b0,sinks[c][4],sinks[c][3],1'b0,28'b0,sinks[c][2],sinks[c][1],sinks[c][0],1'b0}; // 1 init 2 absorb 3 emit, 33 data 34 level
@@ -225,7 +253,10 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       fabric_crc t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded),.cfg_addr(load),.cfg_data(tw[load]),
         .lines(lines),.link_absorb(la),.link_bit(lb),.link_emit(le),.out(out),.tail_out(tl),.ok(ok),.value(value));
       assign tail[c]=tl;
-      assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,rd_valid,ok} : {3'b0,ok};
+      // At the word port local 1 is the reader's data-available, or the
+      // serial out when bit 10 of the shape word (crc register 6; fabric_crc
+      // keeps bits 9:0) selects it.
+      assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,tile[16*6+10] ? out : rd_valid,ok} : {2'b0,out,ok};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0;
     end
@@ -255,5 +286,27 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     sinks[WORD_PORT][5],wn_match,wc[104],wc[108:105],tap_match,tap_mismatch,
     rd_data,rd_valid,rd_ready, {8'd0,wrx},wrx_v,wn_rx_ready, 16'd0,1'b0,wn_st, 16'd0,1'b0,wn_cap,
     wr_data,wr_valid,wr_ready, wn_tx,wn_txv,wtx_r, wn_ok);
+endmodule
+
+// The logic tile: eight LUT4s with output registers and four host flags.
+// Every output is a register, so the tile closes no combinational path
+// (REG=1's invariant holds with any configuration).
+module mesh_logic(input wire clk, rst_n, run, input wire [343:0] cfg, input wire [5:0] in,
+  input wire hw, input wire [3:0] hdata, hmask, output reg [7:0] q);
+  reg [3:0] h;
+  always @(posedge clk)
+    if(!rst_n || !run) h<=0;
+    else if(hw) h<=(h & ~hmask) | (hdata & hmask);
+  wire [31:0] pool={12'b0,1'b1,1'b0,h,q,in};
+  genvar k;
+  generate for(k=0;k<8;k=k+1) begin: lut
+    wire [39:0] f=cfg[40*k+:40];
+    wire [3:0] idx={pool[f[35:31]],pool[f[30:26]],pool[f[25:21]],pool[f[20:16]]};
+    wire [7:0] ens={1'b0,in,1'b1};
+    wire [15:0] truth=f[15:0];
+    always @(posedge clk)
+      if(!rst_n || !run) q[k]<=f[39];
+      else if(ens[f[38:36]]) q[k]<=truth[idx];
+  end endgenerate
 endmodule
 `default_nettype wire

@@ -7,10 +7,13 @@ SRC_DIR = $(CURDIR)/../src
 REORG = $(CURDIR)/../experiments/grid_fabric/reorg
 COCOTB_CONFIG := $(if $(wildcard $(CURDIR)/../.venv/bin/cocotb-config),$(CURDIR)/../.venv/bin/cocotb-config,cocotb-config)
 export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
-MESH_PARAMS := $(shell python3 -c "import json,sys; p=json.load(open('$(MESH).mesh.json'))['params']; print(' '.join(f'-Pmesh_soc.{k}={str(v).split(\"d\")[-1]}' for k,v in p.items()))")
+# Icarus takes -Pmesh_soc.NAME=V, Verilator -GNAME=V (Verilator runs the long
+# programs, e.g. Ethernet's 16 ms link sessions, in minutes instead of hours).
+MESH_PFLAG := $(if $(filter verilator,$(SIM)),-G,-Pmesh_soc.)
+MESH_PARAMS := $(shell python3 -c "import json,sys; p=json.load(open('$(MESH).mesh.json'))['params']; print(' '.join(f'$(MESH_PFLAG){k}={str(v).split(\"d\")[-1]}' for k,v in p.items()))")
 # MESH_REG: a registered-routing study point (mesh.v REG; FABRIC_REORG.md step 5).
 ifneq ($(MESH_REG),)
-MESH_PARAMS += -Pmesh_soc.REG=$(MESH_REG)
+MESH_PARAMS += $(MESH_PFLAG)REG=$(MESH_REG)
 endif
 ifeq ($(strip $(MESH_PARAMS)),)
 $(error no mesh parameters from $(MESH).mesh.json)
@@ -20,7 +23,11 @@ SIM_BUILD = sim_build/mesh-$(notdir $(MESH))-$(shell echo '$(MESH_PARAMS)' | md5
 VERILOG_SOURCES = $(SRC_DIR)/mesh_soc.v $(SRC_DIR)/mesh.v $(SRC_DIR)/ctx_switch.v $(SRC_DIR)/io_tile.v $(SRC_DIR)/wnet.v \
   $(SRC_DIR)/grid_timer.v $(SRC_DIR)/fabric_shifter.v $(SRC_DIR)/fabric_crc.v $(SRC_DIR)/fabric_counter.v $(SRC_DIR)/config_bank.v \
   $(SRC_DIR)/grid_stream_tiles.v $(SRC_DIR)/grid_stream_memory.v $(SRC_DIR)/memory_tiles.v
+ifeq ($(SIM),verilator)
+COMPILE_ARGS += --timing -Wno-fatal $(MESH_PARAMS)
+else
 COMPILE_ARGS += -g2012 $(MESH_PARAMS)
+endif
 TOPLEVEL = mesh_soc
 COCOTB_TEST_MODULES = cocotb_tests.test_mesh_compiled
 export MESH

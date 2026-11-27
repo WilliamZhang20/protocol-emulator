@@ -6,7 +6,8 @@
 //   - track and sink selectors of context 0, and of contexts 1-3 only in a
 //     cell with 4 contexts (CTX4); transition rows only with 4 contexts;
 //   - the tile field up to its kind's width (io 52, timer 64, shifter 96,
-//     crc 128, counter 48 bits);
+//     crc 128, counter 48, logic 144 bits; a logic cell also
+//     stores the tracks of contexts 1-3 and its transition rows: its LUTs);
 //   - the word network's 117 bits.
 //
 // LATCH=1: one latch per stored bit (cfg_latch), as an FPGA holds its
@@ -28,6 +29,7 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
+  parameter [ROWS*COLS-1:0] LOGIC=0,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS,
   parameter ABITS=10,
@@ -46,9 +48,11 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
       if(i >= N*CELL_BITS) used = i - N*CELL_BITS < 117;
       else begin
         c = i / CELL_BITS; o = i % CELL_BITS;
-        k = CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]};
-        width = k==IO ? 52 : k==TIMER ? 64 : k==SHIFTER ? 96 : k==CRC ? 128 : 48;
-        if(o < 192)      used = CTX4[c] || o < 48;                 // tracks: 48 bits per context
+        k = LOGIC[c] ? 5 : CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]};
+        width = k==IO ? 52 : k==TIMER ? 64 : k==SHIFTER ? 96 : k==CRC ? 128 : k==COUNTER ? 48 : 144;
+        if(LOGIC[c])     used = o < 192 || o - 192 < 30 || o >= 312; // a logic cell's LUTs use the
+                                                                    // tracks of contexts 1-3 and transitions
+        else if(o < 192) used = CTX4[c] || o < 48;                 // tracks: 48 bits per context
         else if(o < 312) used = CTX4[c] || o - 192 < 30;           // sinks: 30 bits per context
         else if(o < 368) used = CTX4[c];                           // transitions
         else             used = o - 368 < width;                   // tile
