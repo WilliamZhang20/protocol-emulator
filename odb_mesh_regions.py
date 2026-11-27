@@ -129,14 +129,6 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
         raise SystemExit(1)
     core = block.getCoreArea()
     cx0, cy0, cx1, cy1 = (core.xMin() / dbu, core.yMin() / dbu, core.xMax() / dbu, core.yMax() / dbu)
-    colw = [max(area[r * cols + c] for r in range(rows)) for c in range(cols)]
-    rowh = [max(area[r * cols + c] for c in range(cols)) for r in range(rows)]
-    # Square-ish regions: width share by column demand, height by row demand.
-    xs, ys = [cx0], [cy1]
-    for w in colw:
-        xs.append(xs[-1] + (cx1 - cx0) * w / sum(colw))
-    for h in rowh:
-        ys.append(ys[-1] - (cy1 - cy0) * h / sum(rowh))
     blockages = [(i.getBBox().xMin() / dbu, i.getBBox().yMin() / dbu, i.getBBox().xMax() / dbu,
                   i.getBBox().yMax() / dbu) for i in block.getInsts() if i.getMaster().isBlock()]
     blockages += [(b.getBBox().xMin() / dbu, b.getBBox().yMin() / dbu, b.getBBox().xMax() / dbu,
@@ -148,29 +140,55 @@ def regions(reader, rows, cols, cell_bits, margin, target, max_fanout):
         return max(w, 0) * max(h, 0)
 
     # The regions are fences: instances outside every region (host, streams,
-    # word-network glue) may only use the channels. Widen the channels until
-    # that logic fits at the target utilization, keeping each cell's region
-    # under 85%.
+    # word-network glue) may only use the channels. Column widths and row
+    # heights are balanced on the free area each region really has (SRAM and
+    # obstructions removed), then the channel widens until the outside logic
+    # fits at the target utilization.
     free_area = total - sum(area.values())
     core_area = (cx1 - cx0) * (cy1 - cy0)
     blocked = sum(overlap((cx0, cy0, cx1, cy1), b) for b in blockages)
+    print(f"[INFO] mesh regions: core {core_area:.0f} um2, blocked {blocked:.0f} um2 ({len(blockages)} blockages), "
+          f"cells {sum(area.values()):.0f} um2, outside {free_area:.0f} um2")
 
-    def layout(m):
+    def layout(m, cw, rh):
+        xs, ys = [cx0], [cy1]
+        for w in cw:
+            xs.append(xs[-1] + (cx1 - cx0) * w / sum(cw))
+        for h in rh:
+            ys.append(ys[-1] - (cy1 - cy0) * h / sum(rh))
         boxes = {r * cols + c: (xs[c] + m, ys[r + 1] + m, xs[c + 1] - m, ys[r] - m)
                  for r in range(rows) for c in range(cols)}
-        avail = {k: (b[2] - b[0]) * (b[3] - b[1]) - sum(overlap(b, x) for x in blockages) for k, b in boxes.items()}
+        avail = {k: max(1.0, (b[2] - b[0]) * (b[3] - b[1]) - sum(overlap(b, x) for x in blockages))
+                 if b[2] > b[0] and b[3] > b[1] else 1.0 for k, b in boxes.items()}
+        util = {k: area[k] / avail[k] for k in boxes}
         outside = core_area - blocked - sum(avail.values())
-        return boxes, avail, outside
-    m = margin
-    while True:
-        boxes, avails, outside = layout(m)
-        worst = max(area[k] / avails[k] for k in boxes if avails[k] > 0)
-        if (free_area / outside <= target and worst <= 0.85) or m > 80:
+        return boxes, avail, util, outside
+
+    cw = [float(max(area[r * cols + c] for r in range(rows))) for c in range(cols)]
+    rh = [float(max(area[r * cols + c] for c in range(cols))) for r in range(rows)]
+    best = None
+    for m in [margin + k for k in range(0, 40)]:
+        for _ in range(60):                      # balance on the free area at this channel width
+            boxes, avails, util, outside = layout(m, cw, rh)
+            mean = sum(util.values()) / len(util)
+            for c in range(cols):
+                cw[c] *= (max(util[r * cols + c] for r in range(rows)) / mean) ** 0.3
+            for r in range(rows):
+                rh[r] *= (max(util[r * cols + c] for c in range(cols)) / mean) ** 0.3
+        boxes, avails, util, outside = layout(m, cw, rh)
+        worst = max(util.values())
+        fu = free_area / outside if outside > 0 else float("inf")
+        score = max(fu / target, worst / 0.85)
+        print(f"[INFO] mesh regions: channel {2 * m:.0f} um: worst cell region {worst:.2f}, outside logic {fu:.2f}")
+        if best is None or score < best[0]:
+            best = (score, m, boxes, avails, worst, fu)
+        if fu <= target and worst <= 0.85:
             break
-        m += 1.0
-    print(f"[INFO] mesh regions: unconstrained logic {free_area:.0f} um2 in {outside:.0f} um2 of channels "
-          f"({free_area / outside:.2f}); channel {2 * m:.0f} um; worst cell region {worst:.2f}")
-    margin = m
+        if fu <= target:
+            break                                # wider channels only fill the cells more
+    _, margin, boxes, avails, worst, fu = best
+    print(f"[INFO] mesh regions: chose channel {2 * margin:.0f} um: worst cell region {worst:.2f}, "
+          f"outside logic {fu:.2f} of its channels" + ("  OVER LIMITS" if best[0] > 1 else ""))
     made = 0
     for r in range(rows):
         for c in range(cols):
