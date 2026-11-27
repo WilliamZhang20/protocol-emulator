@@ -99,14 +99,25 @@
      "op": "clear"
     },
     {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 56
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 34,
+     "cell": 1,
+     "addr": 0
     },
     {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 32,
+     "cell": 1,
+     "addr": 0
     },
     {
      "op": "wait",
@@ -189,14 +200,25 @@
      "op": "clear"
     },
     {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 56
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 34,
+     "cell": 1,
+     "addr": 0
     },
     {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 32,
+     "cell": 1,
+     "addr": 0
     },
     {
      "op": "wait",
@@ -209,7 +231,7 @@
     {
      "op": "fire",
      "event": "begin_frame",
-     "index": 1
+     "index": 0
     },
     {
      "op": "param",
@@ -381,14 +403,25 @@
      "op": "clear"
     },
     {
-     "op": "wait",
-     "signal": "cadence.tick",
-     "flag": 56
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 34,
+     "cell": 1,
+     "addr": 0
     },
     {
-     "op": "fire",
-     "event": "link_pulse",
-     "index": 0
+     "op": "wait",
+     "signal": "_logic0.q2",
+     "flag": 6
+    },
+    {
+     "op": "param",
+     "tile": "_logic0",
+     "reg": "flags",
+     "value": 32,
+     "cell": 1,
+     "addr": 0
     },
     {
      "op": "wait",
