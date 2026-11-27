@@ -103,7 +103,10 @@ set_timing_derate -early 0.9500
 set_timing_derate -late 1.0500
 # Design Rules
 set_max_fanout 10.0000 [current_design]
-create_generated_clock -name cfg_strobe -source [get_ports {clk}] -divide_by 1 \
+# `strobe` is high for exactly one clk period per write (edges 1 3 5: rise
+# on a clk edge, fall on the next), not a 50% clock: run 45962489266 timed
+# it as one and reported a -10.9 ns gating hold at its assumed fall.
+create_generated_clock -name cfg_strobe -source [get_ports {clk}] -edges {1 3 5} \
     [get_pins -of_objects [get_nets {store.strobe}] -filter "direction == output"]
 set_propagated_clock [get_clocks {cfg_strobe}]
 set_false_path -from [get_clocks {cfg_strobe}] -to [get_clocks {clk}]

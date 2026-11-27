@@ -23,8 +23,8 @@
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
   "// PL_TARGET_DENSITY_PCT": "40, not the template 60: at ~28% stdcell utilization 60 packed all logic into the left ~55% of the die around the SRAMs; run 45498815170 (6397ff6) ended global routing with 178 Metal2/3 overflows and detailed routing with 3 unfixable shorts across SRAM1 (126 KLayout M3.b). Lower density spreads cells over the empty right side.",
-  "// PL_TARGET_DENSITY_PCT 80": "80 (user, 2026-11-27): the mesh chip's effective utilization (0.59 flop store, ~0.41 latch store) is at or above 40, so the old spreading target no longer applies; the flop run at 40 reported 63% placement utilization and global-routing overflow 1,463.",
-  "PL_TARGET_DENSITY_PCT": 80,
+  "// PL_TARGET_DENSITY_PCT 80": "Back to 40 after the density-80 runs: latch store at 80 failed global routing outright (GRT-0228, run 45962489266) where at 40 it routed with 907 overflows; flop store at 80 hit the 6 h CI limit where at 40 it finished. Tried 80 (user, 2026-11-27): the mesh chip's effective utilization (0.59 flop store, ~0.41 latch store) is at or above 40, so the old spreading target no longer applies; the flop run at 40 reported 63% placement utilization and global-routing overflow 1,463.",
+  "PL_TARGET_DENSITY_PCT": 40,
 
   "// PNR_SDC_FILE": "The base constraints plus the configuration store's latch enables as a generated clock (mesh_chip.sdc).",
   "PNR_SDC_FILE": "dir::mesh_chip.sdc",
