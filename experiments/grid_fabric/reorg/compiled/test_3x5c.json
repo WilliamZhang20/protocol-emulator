@@ -129,22 +129,7 @@
     "sample": 4
    },
    "in_level": 33,
-   "comb": {
-    "word": [
-     "start",
-     "shift",
-     "sample",
-     "abort",
-     "in"
-    ],
-    "stop": [
-     "start",
-     "shift",
-     "sample",
-     "abort",
-     "in"
-    ]
-   }
+   "comb": {}
   },
   "crc": {
    "code": 3,
@@ -196,13 +181,7 @@
    "levels": {
     "data": 33
    },
-   "comb": {
-    "reached": [
-     "step",
-     "data",
-     "clear"
-    ]
-   }
+   "comb": {}
   }
  },
  "encoding": {
@@ -497,6 +476,11 @@
  "latency": {
   "edge_to_sample": 1,
   "start_to_shift": 2
+ },
+ "timing": {
+  "clock_ps": 20000,
+  "hop_ps_synth": 137,
+  "max_route_hops": 12
  },
  "pins": 8
 }

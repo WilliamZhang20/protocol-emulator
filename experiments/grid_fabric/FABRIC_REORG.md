@@ -592,27 +592,89 @@ Not yet covered by criterion 3:
      configuration that routes such an output back to its own tile's
      inputs, directly or through others, is a loop.
 
-     Until the study decides: the compiler refuses any configuration with
-     a combinational loop through tiles (the contract lists each kind's
-     combinational sink -> local paths; `test_fabric_map.py` checks the
-     refusal). So every compiled program is loop-free, while the hardware
-     still admits loops. The study's first candidate register point is
-     those three outputs at the cell boundary: loop-free by construction,
-     at one clock on `word`/`stop`. That clock is what limits the I2C
-     target envelope above, so it is measured, not assumed.
-   - **Compare** the combinational mesh with selected registered routing
-     points (per hop, at cell boundaries every k hops, at sinks only),
-     using the same mappings (every compiled program). For each, measure
-     worst-case path delay (STA), area, and protocol latency: the I2C
-     target envelope, SPI and UART at the pins.
-   - Then decide. Until then: a contract bound `max_route_hops`, and every
-     compiled program's longest route in hops, recorded.
+     Until the study decided, the compiler refused any configuration with
+     a combinational loop through tiles (the contract listed each kind's
+     combinational sink -> local paths). The study's first candidate was
+     those three outputs registered at the cell boundary; the clock it
+     adds on `word`/`stop` was measured, not assumed (below: no compiled
+     program's pins move, and the I2C fast bus still passes).
+   - **Compare** (done 2026-11-26). Study parameter `REG` in `mesh.v`
+     (`MESH_REG=n` for `test/Makefile.mesh`), the same compiled programs
+     (every `compiled/*.plan.json`, bit-identical configurations) at each
+     point:
+     - 0 combinational tile outputs (the mesh before the study);
+     - 1 boundary: shifter `word`/`stop` and counter `reached` registered
+       where they leave the tile;
+     - 2 sinks: every sink registered where it enters its tile;
+     - 3 per hop: every switch output to a neighbour registered.
+
+     Measured with yosys and the IHP liberty (logic only; configuration
+     storage not counted; `reorg/reg_study.py`). Loops: `scc` on the netlist with the
+     configuration as free inputs, so a count of 0 holds for every
+     configuration of every context, legal or not. Worst path: ABC `stime`
+     after delay mapping, configuration free (every configuration) and
+     with each program's configuration as constants (that mapping).
+     Protocol latency: the pin-level tests through real SRAM.
+
+     | point | loops | area (µm²) | worst path, any configuration | per program | I2C at 10 clocks per SCL period | SPI call clocks |
+     |---|---|---|---|---|---|---|
+     | 0 combinational | 1 SCC | 255,981 | none (loops: no static bound) | 1.58-2.25 ns | pass | 429 / 165 / 299 |
+     | **1 boundary** | **0** | **256,770 (+0.3%)** | **8.14 ns** | 1.66-2.21 ns | **pass** | **429 / 165 / 299** |
+     | 2 sinks | 0 | 258,906 (+1.1%) | 8.92 ns | 1.69-2.25 ns | **fail** (ACK late) | 434 / 170 / **fail** |
+     | 3 per hop | 4 SCCs | 261,394 (+2.1%) | 8.86 ns | 1.70-2.18 ns | **fail** (ACK late) | 436 / 172 / 306 |
+
+     (Areas from the default area mapping; delays from a delay mapping.
+     UART, loopback and PS/2 pass at every point. At 2 the SPI
+     back-to-back transfer loses its second call's result bytes: the
+     mapping's same-clock relations between routed events no longer hold
+     when every sink lags by a clock.) Per hop: a chain of
+     ctx_switch track paths measures 1.60 ns for one switch, 3.53 ns for
+     15, so about 137 ps per hop before layout; most of the first 1.6 ns is
+     the context register driving the selector muxes. The 8 ns worst case
+     is tile logic with the configuration free, not routes. Every compiled
+     program's longest route is 2 or 3 hops (the I2C target's `scl_fall`).
+
+     Per hop (3) is not loop-free: a tile output reaches its own sinks
+     through its own switch without crossing a hop register. Sinks (2) is
+     loop-free but puts a clock on every route, which costs the I2C target
+     its fast-bus acknowledge. Boundary (1) is loop-free, adds no clock to
+     any compiled program's pins, and costs 0.3%.
+
+   - **Decision (2026-11-26): boundary registers (REG=1) are the mesh.**
+     Every tile local output is a register, so the hardware is loop-free
+     by construction (the netlist proof above), and the worst path over
+     every configuration is defined: 8.14 ns before layout. Routes stay
+     combinational; their length is bounded by the compiler instead: the
+     contract's `timing.max_route_hops` (12, from 137 ps per hop with a
+     0.5 ns allowance per hop after layout: 8.9 + 12 x 0.5 < 20 ns), and
+     the mapper refuses a placement whose longest route is longer (class
+     `timing`; it tries other placements first). The contract's `comb`
+     lists are now empty; the mapper's loop check stays for any kind that
+     declares a combinational path, and is tested that way. Step 6's
+     post-layout STA recalibrates the per-hop allowance.
 6. **Replacement chip top (user, 2026-11-26), the next physical
    milestone.** Integrate the contexted mesh, the host interface (streams,
    host events, flags, parameters) and the real SRAM macros into a
    candidate chip top, without the duplicated old fabric. Run GDS,
    timing, DRC/LVS, precheck and gate-level tests (top-level pins only).
-   This depends on step 5 for where registers go.
+   Step 5 decided where registers go (boundary). On branch
+   `experiment/mesh-chip`, so the existing chip stays as the comparison:
+   - 6.1 host interface (`mesh_host.v`): today's 12-pin link (8 data, strobe,
+     3 opcode bits) as an address register with auto-incrementing write
+     and read over one map: SRAM, mesh configuration words, control
+     registers (run, stream descriptors and starts, host events, sticky
+     flags and their clear, parameters, status);
+   - 6.2 configuration storage: word-written, only the words each cell's
+     kind and context count use, written while the mesh is stopped; it
+     replaces the bench's flat vector;
+   - 6.3 chip top: `tt_um_protocol_emulator` = host interface + storage +
+     `mesh_soc` on the SRAM macros; 4 protocol pads (uio 0, 5, 6, 7, the
+     pins the link leaves); no old fabric;
+   - 6.4 a chip contract (the test configuration with 4 pads) and
+     pin-level cocotb tests that load compiled programs through the host
+     link only (gate-level safe);
+   - 6.5 sources, info.yaml, local synthesis (area, lint), then CI: GDS,
+     STA, DRC/LVS, precheck, GL.
 7. **Placement regions.** Experiment with rectangular placement regions
    (physical), then a GDS.
 8. **Grid-size study (user, 2026-11-26), before the fabric size is

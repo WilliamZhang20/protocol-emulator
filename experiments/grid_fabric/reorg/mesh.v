@@ -59,12 +59,22 @@
 //   compare value [87:72], mask [103:88], split msb [104], tap [108:105],
 //   rx cell [112:109], tx cell [116:113] (the shifters whose receive FIFO
 //   feeds the network and whose transmit FIFO it feeds; 15: none).
+// REG (registered-routing study, FABRIC_REORG.md step 5; 1 is the mesh):
+//   0 combinational tile outputs (admits combinational loops through tiles);
+//   1 boundary (the decision): the combinational tile outputs (shifter word
+//     and stop, counter reached) are registered where they leave the tile,
+//     so every local output is a register and no configuration of any
+//     context closes a combinational loop (proved on the netlist with the
+//     configuration free: no strongly connected component);
+//   2 sinks: every sink is registered where it enters its tile;
+//   3 per hop: every switch output to a neighbour is registered.
 // Pads: open drain (enable and value 0 pull low) or push-pull (enable
 // drives value); invert applies to the value.
 module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [2*ROWS*COLS-1:0] KINDS=30'd287029521,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
+  parameter REG=1,
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,
@@ -121,13 +131,25 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     wire [3:0] ein = COL<COLS-1 ? w_out[NB_E] : 4'b0;
     wire [55:0] trans = contexts(c)>1 ? cc[TRANS_LSB+:56] : 56'b0;
     wire [1:0] ctx;
+    wire [3:0] no,so,wo,eo; wire [5:0] sk;
     ctx_switch #(.NSINK(6)) sw(clk,run,nin,sin,win,ein,local_out[c],
       cc[TRACK_LSB+:192], cc[SINK_LSB+:120], trans,
-      n_out[c],s_out[c],w_out[c],e_out[c], sinks[c], ctx);
+      no,so,wo,eo, sk, ctx);
+    // Study points (REG): registered sinks or registered hops.
+    reg [5:0] sk_r; reg [15:0] hop_r;
+    always @(posedge clk) if(!rst_n) begin sk_r<=0; hop_r<=0; end else begin sk_r<=sk; hop_r<={no,so,wo,eo}; end
+    assign sinks[c] = REG==2 ? sk_r : sk;
+    assign {n_out[c],s_out[c],w_out[c],e_out[c]} = REG==3 ? hop_r : {no,so,wo,eo};
+    wire [3:0] lraw;
+    // REG 1: the combinational locals leave the tile through a register.
+    localparam [3:0] LMASK = REG!=1 ? 4'b0 : kind(c)==SHIFTER ? 4'b0011 : kind(c)==COUNTER ? 4'b0010 : 4'b0;
+    reg [3:0] l_r;
+    always @(posedge clk) if(!rst_n) l_r<=0; else l_r<=lraw;
+    assign local_out[c] = (lraw & ~LMASK) | (l_r & LMASK);
     if(kind(c)==IO) begin: io
       wire [3:0] o;
       io_tile t(clk,run,pins,tile[39:0],o,host_ev);
-      assign local_out[c]=o;
+      assign lraw=o;
       // Pad A from sinks 0/1, pad B from sinks 2/3.
       wire [5:0] fa=tile[45:40], fb=tile[51:46];
       wire va=sinks[c][0]^fa[5], vb=sinks[c][2]^fb[5];
@@ -141,7 +163,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire tick, running, configured, level, rise, fall; wire [15:0] cap;
       grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],1'b0,16'd0,16'd0,tile[47:32],tile[63:48],
         sinks[c][0],sinks[c][1],sinks[c][2],tick,running,configured,level,rise,fall,cap);
-      assign local_out[c]={fall,rise,level,tick};
+      assign lraw={fall,rise,level,tick};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else if(kind(c)==SHIFTER) begin: sh
@@ -159,7 +181,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .rx_request(rx_req[c]),.rx_grant(rx_grant[c]),.crc_in(crc_in),.rx_byte(rx_byte[c]),.rx_eop(nc[1]),
         .rx_err(nc[2]),.out(out),.active(active),.word_pulse(word),.stop_pulse(stop),.rx_data(rxd),
         .status(st),.crc_absorb(l_absorb[c]),.crc_bit(l_bit[c]),.crc_emit(l_emit[c]));
-      assign local_out[c]={active,out,stop,word};
+      assign lraw={active,out,stop,word};
       assign oe[c]=0; assign ov[c]=0; assign tail[c]=0;
     end else if(kind(c)==COUNTER) begin: ct
       wire ge, hit; wire [7:0] count;
@@ -168,7 +190,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       fabric_counter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we((!loaded && load<3) || (loaded && pw)),
         .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tile[16*load+:13]),
         .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
-      assign local_out[c]={2'b0,hit,ge};
+      assign lraw={2'b0,hit,ge};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else begin: cr
@@ -180,7 +202,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       fabric_crc t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we(!loaded),.cfg_addr(load),.cfg_data(tile[16*load+:16]),
         .lines(lines),.link_absorb(la),.link_bit(lb),.link_emit(le),.out(out),.tail_out(tl),.ok(ok),.value(value));
       assign tail[c]=tl;
-      assign local_out[c]= c==WORD_PORT ? {tap_mismatch,tap_match,rd_valid,ok} : {3'b0,ok};
+      assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,rd_valid,ok} : {3'b0,ok};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0;
     end

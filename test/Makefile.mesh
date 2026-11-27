@@ -8,6 +8,10 @@ REORG = $(CURDIR)/../experiments/grid_fabric/reorg
 COCOTB_CONFIG := $(if $(wildcard $(CURDIR)/../.venv/bin/cocotb-config),$(CURDIR)/../.venv/bin/cocotb-config,cocotb-config)
 export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
 MESH_PARAMS := $(shell python3 -c "import json,sys; p=json.load(open('$(MESH).mesh.json'))['params']; print(' '.join(f'-Pmesh_soc.{k}={str(v).split(\"d\")[-1]}' for k,v in p.items()))")
+# MESH_REG: a registered-routing study point (mesh.v REG; FABRIC_REORG.md step 5).
+ifneq ($(MESH_REG),)
+MESH_PARAMS += -Pmesh_soc.REG=$(MESH_REG)
+endif
 ifeq ($(strip $(MESH_PARAMS)),)
 $(error no mesh parameters from $(MESH).mesh.json)
 endif
