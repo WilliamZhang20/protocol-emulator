@@ -128,7 +128,23 @@
     "abort": 3,
     "sample": 4
    },
-   "in_level": 33
+   "in_level": 33,
+   "comb": {
+    "word": [
+     "start",
+     "shift",
+     "sample",
+     "abort",
+     "in"
+    ],
+    "stop": [
+     "start",
+     "shift",
+     "sample",
+     "abort",
+     "in"
+    ]
+   }
   },
   "crc": {
    "code": 3,
@@ -179,6 +195,13 @@
    },
    "levels": {
     "data": 33
+   },
+   "comb": {
+    "reached": [
+     "step",
+     "data",
+     "clear"
+    ]
    }
   }
  },

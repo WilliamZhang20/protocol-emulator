@@ -580,6 +580,26 @@ Not yet covered by criterion 3:
      structural check: no combinational cycle in the netlist means none in
      any configuration of any context). The turn classes and the
      registered context state are the argument; the proof replaces it.
+
+     *First result (2026-11-26): the hardware is not loop-free by
+     construction.* Yosys `check` on the synthesized test_3x5c mesh
+     (configuration as free inputs) reports 88 combinational loops. They
+     do not go through tracks alone (the turn classes hold) but through
+     tiles whose local outputs are combinational in their inputs: the
+     shifter's `word` and `stop` (`fabric_shifter` word_pulse and
+     stop_pulse) and the counter's `reached`. All other locals are
+     registers (timer, io, CRC `ok`, compare tap, context state). A
+     configuration that routes such an output back to its own tile's
+     inputs, directly or through others, is a loop.
+
+     Until the study decides: the compiler refuses any configuration with
+     a combinational loop through tiles (the contract lists each kind's
+     combinational sink -> local paths; `test_fabric_map.py` checks the
+     refusal). So every compiled program is loop-free, while the hardware
+     still admits loops. The study's first candidate register point is
+     those three outputs at the cell boundary: loop-free by construction,
+     at one clock on `word`/`stop`. That clock is what limits the I2C
+     target envelope above, so it is measured, not assumed.
    - **Compare** the combinational mesh with selected registered routing
      points (per hop, at cell boundaries every k hops, at sinks only),
      using the same mappings (every compiled program). For each, measure
