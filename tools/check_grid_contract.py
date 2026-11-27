@@ -372,10 +372,15 @@ def check_lane(contract, modules, top):
     assert lane['core_page'] == 1 and lane['core_words_base'] == 0 and lane['core_words_per_lane'] == 64
     assert "wire core_cfg_we=lane_leaf[25] && !lane_leaf[24] && lane_leaf[23:22]==2'd0;" in fabric
     assert 'core_cfg_we,lane_leaf[21:16],lane_leaf[15:0],core_configured,' in fabric
+    # The old chip's host map, only while the grid is the chip top (on the
+    # mesh chip, src/project.v is the mesh and has its own host map).
     project = (ROOT / 'src/project.v').read_text()
-    assert "wire page0=host_addr[9:8]==2'd0,page1=host_addr[9:8]==2'd1;" in project
-    for name, word in lane['stream']['words'].items():
-        assert f'host_addr[7:0]=={word}' in project, name
+    if 'grid_stream_fabric' in project:
+        assert "wire page0=host_addr[9:8]==2'd0,page1=host_addr[9:8]==2'd1;" in project
+        for name, word in lane['stream']['words'].items():
+            assert f'host_addr[7:0]=={word}' in project, name
+    else:
+        print('src/project.v is not the grid chip: its host-map checks skipped')
     # Live writes: the controller owns the core words; the core accepts timer first/period.
     first, final = lane['live_write_words']
     assert f"grid_lane_controller #(.OWN_FIRST(8'd{first}),.OWN_LAST(8'd{final})) ctl(" in rtl_core
