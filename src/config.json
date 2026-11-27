@@ -51,10 +51,8 @@
 
   "// DRT_OPT_ITERS": "Fail fast when detailed routing cannot converge. Good runs (d628e18 and earlier) finish detailed routing with 0 violations by iteration 2-3; every run since 7193f31 sat at ~540 violations through iteration 55 and hit the 6 h CI limit with no artifacts. 20 iterations ends a non-converging run in about 2 h with its logs and reports.",
   "DRT_OPT_ITERS": 20,
-  "//": "The 72ffb64 route had +3.278 ns slow-corner setup slack, so the 1 ns",
-  "//": "post-GRT target left its long pin-to-shifter path untouched. Try 5 ns",
-  "//": "to make setup repair address that path before detailed routing.",
-  "GRT_RESIZER_SETUP_SLACK_MARGIN": 5.0,
+  "// GRT_RESIZER_SETUP_SLACK_MARGIN": "1.5 ns, as after placement. 5 ns (be33e80) targeted the pre-mesh chip's pin-to-shifter path. On the mesh chip run 46028259749 (2b49253) met setup with +0.79 ns real slack after CTS, yet post-GRT repair chased the 5 ns margin on 4,258 endpoints for over 1.3 h, upsizing ~2,500 cells on an already congested die right before detailed routing.",
+  "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.5,
 
   "//": "Slew and capacitance. The only design repair ran after placement, on",
   "//": "estimated wires, so nets that routed longer (1x gates on the CRC residue",
@@ -84,7 +82,7 @@
           "orientation": "R0"
         },
         "fabric.memory.row2_col2.bank.macro_bank.memory.sram": {
-          "location": [480, 81],
+          "location": [1535.28, 81],
           "orientation": "R0"
         }
       },
@@ -123,20 +121,21 @@
   "// ROUTING_OBSTRUCTIONS": "SRAM wide Metal3 needs M3.f=0.6um external spacing; LEF OBS covers the body only. The body rectangles block Metal2-4 over both SRAMs (prism SRAM guide), from y=82 so the bottom-edge pin connections (y<=81.13) stay free: run 45498815170 (6397ff6) routed net6416 on Metal3 across SRAM1 at y=165.48 and failed with 126 M3.b violations.",
   "ROUTING_OBSTRUCTIONS": [
     ["Metal3", 174.0, 80.4, 189.4, 81.0],
-    ["Metal3", 612.0, 80.4, 627.4, 81.0],
+    ["Metal3", 1667.28, 80.4, 1682.68, 81.0],
     ["Metal2", 42.0, 82.0, 188.88, 417.46],
     ["Metal3", 42.0, 82.0, 188.88, 417.46],
     ["Metal4", 42.0, 82.0, 188.88, 417.46],
-    ["Metal2", 480.0, 82.0, 626.88, 417.46],
-    ["Metal3", 480.0, 82.0, 626.88, 417.46],
-    ["Metal4", 480.0, 82.0, 626.88, 417.46]
+    ["Metal2", 1535.28, 82.0, 1682.16, 417.46],
+    ["Metal3", 1535.28, 82.0, 1682.16, 417.46],
+    ["Metal4", 1535.28, 82.0, 1682.16, 417.46]
   ],
 
-  "// FP_OBSTRUCTIONS": "Keep cells clear of the first SRAM's left-side routing trap and both edges of the second SRAM. The initial two-bank CI run had 284 M1.b spacing violations at x=480 and x=626.88, where cells abutted the second macro.",
+  "// SRAM1 placement": "Bank 1 mirrors bank 0 at the die's right edge (x=1535.28; was 480). The routed wire map of the last flop-store run (8e13e4b, final DEF) had Metal3, the only horizontal layer, at 57-74% of its tracks above and beside bank 1 at x=480-627 (its Metal2-4 routing keep-out is a hole in the busiest part of the die) and 35-60% on the right half; at the edges the two keep-outs sit where traffic is lowest.",
+  "// FP_OBSTRUCTIONS": "Keep cells clear of the routing traps between each SRAM and its die edge and of the second SRAM's inner edge. The initial two-bank CI run had 284 M1.b spacing violations at x=480 and x=626.88, where cells abutted the second macro.",
   "FP_OBSTRUCTIONS": [
     [0.0, 78.5, 42.0, 417.5],
-    [477.0, 78.5, 480.0, 417.5],
-    [626.88, 78.5, 630.0, 417.5]
+    [1532.28, 78.5, 1535.28, 417.5],
+    [1682.16, 78.5, 1724.16, 417.5]
   ],
 
   "// PDN_CFG": "Metal4-only stdcell grid (no per-macro grid); SRAM powered by Project.ExtendPowerStripes",

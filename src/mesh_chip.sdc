@@ -110,3 +110,12 @@ create_generated_clock -name cfg_strobe -source [get_ports {clk}] -edges {1 3 5}
     [get_pins -of_objects [get_nets {store.strobe}] -filter "direction == output"]
 set_propagated_clock [get_clocks {cfg_strobe}]
 set_false_path -from [get_clocks {cfg_strobe}] -to [get_clocks {clk}]
+# The latches close on cfg_strobe's fall, the clk edge after it rose, so
+# OpenSTA checks their data (d_q) for hold at that same clk edge, against a
+# closing edge late by the strobe flop, the byte decode and the enable tree:
+# -4.6 ns on ~9,600 latch pins (runs 46027348989, 46028259749), which hold
+# repair cannot buffer away (it spent over an hour and 1,445 buffers trying).
+# By construction d_q and a_q load only when !busy, and busy spans staged,
+# strobe and settle: d_q is stable for at least one more clk period after
+# the latch closes, so the hold check belongs one clk edge earlier.
+set_multicycle_path -hold 1 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
