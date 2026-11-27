@@ -30,7 +30,7 @@
   "SIGNOFF_SDC_FILE": "dir::mesh_chip.sdc",
 
   "// MESH_REGIONS": "Step 7: one placement region per mesh cell (odb_mesh_regions.py). false = the unconstrained comparison run.",
-  "MESH_REGIONS": false,
+  "MESH_REGIONS": true,
   "// 92068bf": "Moving bank 1 next to bank 0 (x=235.44) at density 60 did not route: detailed routing still had 806 violations after 43 iterations and hit the 6 h CI limit (run 45526662215). Keep the 10f2416 placement, which signed off; the 5x3 grid raises effective utilization from 0.26 to about 0.33, still under 40.",
 
   "//": "CLOCK_PERIOD - Increase this in case you are getting setup time violations.",
