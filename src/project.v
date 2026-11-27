@@ -3,12 +3,13 @@
 // The mesh chip (FABRIC_REORG.md step 6): a contexted mesh of coarse tiles
 // and logic cells (src/mesh.v) with its SRAM streams on the two SRAM macros
 // (mesh_soc), its configuration storage (mesh_cfg) and the host interface
-// (mesh_host). The mesh is the compiler contract mesh_3x5_L3 (FABRIC_REORG.md
-// step 8 result): 3 rows x 5 columns, row-major
+// (mesh_host). The mesh is the compiler contract mesh_3x5_L3S (FABRIC_REORG.md
+// step 8 result, area-reduced by O3): 3 rows x 5 columns, row-major
 //   timer logic io    logic timer
 //   shifter crc* shifter crc io        (* word port)
 //   timer counter logic counter timer
-// with contexts on the io, shifter and crc cells.
+// with contexts on the four cells programs switch (io (0,2), crc* (1,1),
+// shifter (1,2), io (1,4)) and only tracks 0 and 2 held per context.
 //
 // Pins:
 //   ui[7:0]   host data (stable while the strobe is high)
@@ -25,11 +26,12 @@ module tt_um_protocol_emulator (
 );
   localparam ROWS=3, COLS=5, N=ROWS*COLS, WORD_PORT=6;
   localparam [2*N-1:0] KINDS=30'd357808453;
-  localparam [N-1:0] CTX4=15'd996, CNT=15'd10240, LOGIC=15'd4106;
-  // DSLOTS: ctx_switch static/dynamic split (FABRIC_REORG.md O3); 0 is the
-  // baseline (every selector per context).
+  localparam [N-1:0] CTX4=15'd708, CNT=15'd10240, LOGIC=15'd4106;
+  // Static/dynamic split (FABRIC_REORG.md O3): no indexed slots; tracks 0
+  // and 2 (one per turn class) and the sinks held per context, the other
+  // tracks once (4'b1111 would hold every track per context).
   localparam DSLOTS=0;
-  localparam [3:0] CTX_TRACKS=4'b1111;   // with DSLOTS=0: tracks per context (4'b1111 the baseline)
+  localparam [3:0] CTX_TRACKS=4'b0101;
   localparam CFG_BITS=N*512+128;
   wire reset_n = rst_n && ena;
 

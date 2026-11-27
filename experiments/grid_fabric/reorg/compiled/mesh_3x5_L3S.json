@@ -1,0 +1,567 @@
+{
+ "schema": "reorg.mesh.v1",
+ "name": "mesh_3x5_L3S",
+ "rows": 3,
+ "cols": 5,
+ "cells": [
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "logic",
+   "contexts": 1
+  },
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "logic",
+   "contexts": 1
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "shifter",
+   "contexts": 1
+  },
+  {
+   "kind": "crc",
+   "contexts": 4
+  },
+  {
+   "kind": "shifter",
+   "contexts": 4
+  },
+  {
+   "kind": "crc",
+   "contexts": 1
+  },
+  {
+   "kind": "io",
+   "contexts": 4
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  },
+  {
+   "kind": "counter",
+   "contexts": 1
+  },
+  {
+   "kind": "logic",
+   "contexts": 1
+  },
+  {
+   "kind": "counter",
+   "contexts": 1
+  },
+  {
+   "kind": "timer",
+   "contexts": 1
+  }
+ ],
+ "word_port": {
+  "cell": 6,
+  "locals": {
+   "avail": 1,
+   "match": 2,
+   "mismatch": 3
+  },
+  "sinks": {
+   "gate": 5
+  }
+ },
+ "kinds": {
+  "io": {
+   "code": 0,
+   "locals": [
+    "o0",
+    "o1",
+    "o2",
+    "o3"
+   ],
+   "sinks": [
+    "a_value",
+    "a_enable",
+    "b_value",
+    "b_enable"
+   ],
+   "pads": 2
+  },
+  "timer": {
+   "code": 1,
+   "locals": [
+    "tick",
+    "level",
+    "rise",
+    "fall"
+   ],
+   "sinks": [
+    "start",
+    "stop",
+    "aux"
+   ]
+  },
+  "shifter": {
+   "code": 2,
+   "locals": [
+    "word",
+    "stop",
+    "out",
+    "active"
+   ],
+   "sinks": [
+    "start",
+    "shift",
+    "sample",
+    "abort",
+    "in"
+   ],
+   "lines": {
+    "start": 1,
+    "shift": 2,
+    "abort": 3,
+    "sample": 4
+   },
+   "in_level": 33,
+   "comb": {}
+  },
+  "crc": {
+   "code": 3,
+   "locals": [
+    "ok",
+    "out",
+    "match",
+    "mismatch"
+   ],
+   "sinks": [
+    "init",
+    "absorb",
+    "emit",
+    "data",
+    "level",
+    "gate"
+   ],
+   "lines": {
+    "init": 1,
+    "absorb": 2,
+    "emit": 3
+   },
+   "levels": {
+    "data": 33,
+    "level": 34
+   },
+   "links": [
+    "west",
+    "east"
+   ]
+  },
+  "counter": {
+   "code": 4,
+   "locals": [
+    "at_least",
+    "reached",
+    "unused2",
+    "unused3"
+   ],
+   "sinks": [
+    "step",
+    "data",
+    "clear"
+   ],
+   "lines": {
+    "step": 1,
+    "clear": 2
+   },
+   "levels": {
+    "data": 33
+   },
+   "comb": {}
+  },
+  "logic": {
+   "code": 5,
+   "locals": [
+    "q0",
+    "q1",
+    "q2",
+    "q3"
+   ],
+   "sinks": [
+    "s0",
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5"
+   ],
+   "luts": 8,
+   "outputs": 4,
+   "flags": 4,
+   "lut_bits": 40,
+   "select_bits": 5,
+   "field": [
+    [
+     "tile",
+     0,
+     144
+    ],
+    [
+     "track",
+     48,
+     144
+    ],
+    [
+     "trans",
+     0,
+     56
+    ]
+   ],
+   "select": {
+    "sink_first": 0,
+    "q_first": 6,
+    "h_first": 14,
+    "zero": 18,
+    "one": 19
+   },
+   "enable": {
+    "always": 0,
+    "sink_first": 1,
+    "never": 7
+   },
+   "comb": {}
+  }
+ },
+ "encoding": {
+  "track": {
+   "zero": 0,
+   "local_first": 1,
+   "straight": 5,
+   "turn_a": 6,
+   "turn_b": 7,
+   "bits": 3
+  },
+  "turn_inputs": {
+   "vertical": [
+    "west",
+    "east"
+   ],
+   "horizontal": [
+    "north",
+    "south"
+   ]
+  },
+  "turn_split": 2,
+  "sink": {
+   "zero": 0,
+   "one": 1,
+   "local_first": 2,
+   "north_first": 6,
+   "south_first": 10,
+   "west_first": 14,
+   "east_first": 18,
+   "bits": 5
+  }
+ },
+ "layout": {
+  "cell_bits": 512,
+  "track_lsb": 0,
+  "sink_lsb": 192,
+  "sink_slots": 6,
+  "trans_lsb": 312,
+  "tile_lsb": 368,
+  "tile_bits": 144,
+  "wnet_bits": 128,
+  "contexts": 4,
+  "tracks": 4,
+  "transition_rows": 2,
+  "ctx_tracks": 5
+ },
+ "registers": {
+  "shifter": {
+   "frame": {
+    "reg": 1,
+    "fields": {
+     "length_minus_1": [
+      3,
+      0
+     ],
+     "pre": [
+      5,
+      4
+     ],
+     "pre_value": [
+      6,
+      6
+     ],
+     "post": [
+      8,
+      7
+     ],
+     "post_value": [
+      9,
+      9
+     ],
+     "parity": [
+      11,
+      10
+     ],
+     "msb_first": [
+      12,
+      12
+     ],
+     "lead": [
+      13,
+      13
+     ],
+     "end_on_sample": [
+      14,
+      14
+     ],
+     "idle": [
+      15,
+      15
+     ]
+    },
+    "parity": {
+     "none": 0,
+     "even": 1,
+     "odd": 2
+    }
+   },
+   "step": {
+    "reg": 2,
+    "fields": {
+     "shift_line": [
+      5,
+      0
+     ],
+     "sample_line": [
+      11,
+      6
+     ]
+    }
+   },
+   "io": {
+    "reg": 3,
+    "fields": {
+     "start_line": [
+      5,
+      0
+     ],
+     "in_level": [
+      10,
+      6
+     ],
+     "auto_pull": [
+      11,
+      11
+     ],
+     "auto_push": [
+      12,
+      12
+     ]
+    }
+   },
+   "burst": {
+    "reg": 4,
+    "fields": {
+     "end_level": [
+      4,
+      0
+     ],
+     "burst": [
+      5,
+      5
+     ],
+     "eop_ends_burst": [
+      6,
+      6
+     ],
+     "abort_line": [
+      12,
+      7
+     ]
+    }
+   },
+   "coder": {
+    "reg": 5,
+    "fields": {
+     "stuff_run": [
+      2,
+      0
+     ],
+     "runs_of_ones": [
+      3,
+      3
+     ],
+     "nrzi": [
+      4,
+      4
+     ],
+     "receive": [
+      5,
+      5
+     ],
+     "arm_at_first_zero": [
+      6,
+      6
+     ],
+     "tail_invert": [
+      7,
+      7
+     ],
+     "bit_strobe": [
+      8,
+      8
+     ],
+     "tail_length": [
+      14,
+      9
+     ],
+     "manchester": [
+      15,
+      15
+     ]
+    }
+   },
+   "coder2": {
+    "reg": 6,
+    "fields": {
+     "stuff_gate_level": [
+      4,
+      0
+     ],
+     "stuff_gated": [
+      5,
+      5
+     ],
+     "crc_skip": [
+      12,
+      6
+     ],
+     "link_data_only": [
+      13,
+      13
+     ]
+    }
+   },
+   "load": {
+    "reg": 7,
+    "fields": {
+     "value": [
+      7,
+      0
+     ]
+    }
+   }
+  },
+  "counter": {
+   "limit": {
+    "reg": 0,
+    "fields": {
+     "limit": [
+      7,
+      0
+     ]
+    }
+   },
+   "step": {
+    "reg": 1,
+    "fields": {
+     "step_line": [
+      5,
+      0
+     ],
+     "data_level": [
+      10,
+      6
+     ],
+     "mode": [
+      12,
+      11
+     ]
+    },
+    "mode": {
+     "count": 0,
+     "ones": 1,
+     "zeros": 2,
+     "equal": 3
+    }
+   },
+   "clear": {
+    "reg": 2,
+    "fields": {
+     "clear_line": [
+      4,
+      0
+     ]
+    }
+   }
+  },
+  "logic": {
+   "flags": {
+    "reg": 0,
+    "fields": {
+     "h": [
+      3,
+      0
+     ],
+     "mask": [
+      7,
+      4
+     ]
+    }
+   }
+  },
+  "crc": {
+   "shape": {
+    "reg": 6,
+    "fields": {
+     "width_minus_1": [
+      4,
+      0
+     ],
+     "init_ones": [
+      5,
+      5
+     ],
+     "linked": [
+      6,
+      6
+     ],
+     "link_select": [
+      7,
+      7
+     ],
+     "additive": [
+      8,
+      8
+     ],
+     "twos_complement": [
+      9,
+      9
+     ],
+     "out_local": [
+      10,
+      10
+     ]
+    }
+   }
+  }
+ },
+ "latency": {
+  "edge_to_sample": 1,
+  "start_to_shift": 2
+ },
+ "timing": {
+  "clock_ps": 20000,
+  "hop_ps_synth": 137,
+  "max_route_hops": 12
+ },
+ "pins": 8
+}

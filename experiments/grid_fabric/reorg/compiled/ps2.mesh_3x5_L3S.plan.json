@@ -1,0 +1,136 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "psclk": 0,
+  "psdata": 1
+ },
+ "tests": [
+  {
+   "line": 14,
+   "name": "keyboard make and break codes",
+   "peers": [
+    {
+     "args": {
+      "clk": {
+       "pin": 0
+      },
+      "data": {
+       "pin": 1
+      },
+      "half": 2000
+     },
+     "kind": "ps2_keyboard",
+     "line": 15,
+     "name": "keyboard"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      28,
+      240,
+      28
+     ],
+     "line": 16,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      28,
+      240,
+      28
+     ],
+     "line": 17,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 20,
+   "name": "all-zero all-one and alternating data at another clock rate",
+   "peers": [
+    {
+     "args": {
+      "clk": {
+       "pin": 0
+      },
+      "data": {
+       "pin": 1
+      },
+      "half": 1500
+     },
+     "kind": "ps2_keyboard",
+     "line": 21,
+     "name": "keyboard"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      0,
+      255,
+      85,
+      170
+     ],
+     "line": 22,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 4,
+     "expect": [
+      0,
+      255,
+      85,
+      170
+     ],
+     "line": 23,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    },
+    {
+     "bytes": [
+      165
+     ],
+     "line": 24,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      165
+     ],
+     "line": 25,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

@@ -1,0 +1,358 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "scl": 0,
+  "sda": 1
+ },
+ "tests": [
+  {
+   "line": 60,
+   "name": "acknowledges its address and passes the data bytes",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 61,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      17,
+      34
+     ],
+     "line": 62,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      0,
+      0,
+      0
+     ],
+     "line": 63,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      17,
+      34
+     ],
+     "line": 64,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 67,
+   "name": "another address is not acknowledged and nothing is stored",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 68,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      146,
+      51
+     ],
+     "line": 69,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      1
+     ],
+     "line": 70,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      145,
+      52
+     ],
+     "line": 71,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      1
+     ],
+     "line": 72,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      68
+     ],
+     "line": 73,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      0,
+      0
+     ],
+     "line": 74,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      68
+     ],
+     "line": 75,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 78,
+   "name": "a repeated START readdresses within one transaction",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 79,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      1
+     ],
+     "line": 80,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      2,
+      3
+     ],
+     "line": 81,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      146,
+      4
+     ],
+     "line": 82,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      5
+     ],
+     "line": 83,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 8,
+     "expect": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+     ],
+     "line": 84,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 4,
+     "expect": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "line": 85,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 92,
+   "name": "a fast bus: 10 clocks per SCL period",
+   "peers": [
+    {
+     "args": {
+      "half": 5,
+      "hold": 1,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 93,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      165,
+      90
+     ],
+     "line": 94,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      255
+     ],
+     "line": 95,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 5,
+     "expect": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "line": 96,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      165,
+      90,
+      255
+     ],
+     "line": 97,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

@@ -21,7 +21,7 @@ from cocotb_tests.test_mesh_compiled import run_program
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPILED = ROOT / 'experiments/grid_fabric/reorg/compiled'
-CONTRACT = 'mesh_3x5_L3'          # the chip's mesh (src/project.v)
+CONTRACT = 'mesh_3x5_L3S'          # the chip's mesh (src/project.v)
 PAD_PINS = [0, 5, 6, 7]         # uio bit of mesh pads 0-3
 CFG, CTL = 0x1000, 0x2000
 STROBE_HIGH, STROBE_LOW, READ_WAIT = 4, 3, 6

@@ -139,6 +139,34 @@ O3. **Static/dynamic split prototype.** Store every selector once (static)
    - Not yet: chip-pin runs and a GDS for a split. The baseline stays until
      those confirm one (routing on the baseline comes first).
 
+   **Promoted on 3 x 5 (user, 2026-11-27: "follow through on area
+   reduction so that we get CI passing on GDS").** Contract `mesh_3x5_L3S`:
+   the two-track split plus contexts only on the four cells programs
+   switch (io (0,2), word-port crc (1,1), shifter (1,2), io (1,4); the
+   west shifter and east crc never use a second context in any program).
+   All 19 programs compile; chip synthesis **371,785 µm² (-32,836, -8.1%)**,
+   3,551 configuration latches (baseline 404,621 and 4,319). The gate below
+   still applies to keeping it: the wider workload may need the two cells'
+   contexts back.
+
+   **Promotion gate (user, 2026-11-27).** The candidate is the two-track
+   split (`CTX_TRACKS=4'b0101`: one contexted track per turn class, not
+   the track-0 variant tuned to today's programs). It replaces the
+   baseline on the chip only after:
+   1. complete tests: every program at the mesh pins (Ethernet on
+      Verilator) and at the chip pins (`project.v` with the split);
+   2. physical results: a GDS of the candidate beside the baseline's
+      (area, global-route overflow, detailed routing, timing);
+   3. broader coverage against overfitting the 19 programs. Only source
+      `machine`s become switch-context FSMs, and today only the I2C target,
+      SPI and SWD have them, so the guard is more machine-heavy protocols
+      (for example an I2C target with repeated START, SPI modes with
+      chip-select-gated muxes, 1-Wire, a UART with break detection) plus
+      the refused programs that lower (`contexts*`, `packets`, the two-input
+      actor, the I2C controller). Each is compiled on the baseline and on
+      the candidate; a program that maps on the baseline and not on the
+      candidate is a cost of the split, classified proven or heuristic.
+
 O4. **Local connections.** A few optional direct links between frequently
    paired resources (timer -> shifter shift/sample, shifter -> CRC as
    `crc_link` today), each a contract edge the compiler may use or ignore,
