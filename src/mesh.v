@@ -101,6 +101,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter DSLOTS=0,      // ctx_switch static/dynamic split (0: every selector per context)
   parameter [3:0] CTX_TRACKS=4'b1111, // with DSLOTS=0: tracks held per context (the fixed split)
   parameter REG=1,
+  parameter ACTOR=0,       // 1: logic cells also offer the control-actor mode (ACTOR_FABRIC.md A2)
   parameter CELL_BITS=512, WNET_BITS=128,
   parameter CFG_BITS=ROWS*COLS*CELL_BITS+WNET_BITS)(
   input wire clk, rst_n, run_req,
@@ -165,10 +166,21 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     wire [3:0] ein = COL<COLS-1 ? w_out[NB_E] : 4'b0;
     wire [55:0] trans = contexts(c)>1 ? cc[TRANS_LSB+:56] : 56'b0;
     wire [1:0] ctx;
-    wire [3:0] no,so,wo,eo; wire [5:0] sk;
-    ctx_switch #(.NSINK(6), .DSLOTS(contexts(c)>1 ? DSLOTS : 0), .CTX_TRACKS(CTX_TRACKS)) sw(clk,run,nin,sin,win,ein,local_out[c],
-      cc[TRACK_LSB+:192], cc[SINK_LSB+:120], trans,
-      no,so,wo,eo, sk, ctx);
+    wire [3:0] no,so,wo,eo; wire [5:0] sk; wire [1:0] xk;
+    if(ACTOR && kind(c)==LOGIC_K) begin: sw8
+      // An actor-capable logic cell has eight sinks; sinks 6-7 sit where
+      // context 1's sinks 0-1 would be (one context: those bits are free).
+      wire [7:0] s8;
+      ctx_switch #(.NSINK(8), .DSLOTS(0), .CTX_TRACKS(CTX_TRACKS)) sw(clk,run,nin,sin,win,ein,local_out[c],
+        cc[TRACK_LSB+:192], {40'b0,cc[SINK_LSB+:120]}, trans,
+        no,so,wo,eo, s8, ctx);
+      assign sk=s8[5:0]; assign xk=s8[7:6];
+    end else begin: sw6
+      ctx_switch #(.NSINK(6), .DSLOTS(contexts(c)>1 ? DSLOTS : 0), .CTX_TRACKS(CTX_TRACKS)) sw(clk,run,nin,sin,win,ein,local_out[c],
+        cc[TRACK_LSB+:192], cc[SINK_LSB+:120], trans,
+        no,so,wo,eo, sk, ctx);
+      assign xk=2'b0;
+    end
     // Study points (REG): registered sinks or registered hops.
     reg [5:0] sk_r; reg [15:0] hop_r;
     always @(posedge clk) if(!rst_n) begin sk_r<=0; hop_r<=0; end else begin sk_r<=sk; hop_r<={no,so,wo,eo}; end
@@ -240,10 +252,10 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else if(kind(c)==LOGIC_K) begin: lg
-      wire [7:0] q;
-      mesh_logic t(.clk(clk),.rst_n(rst_n),.run(run),.cfg({cc[TRANS_LSB+:56],cc[TRACK_LSB+48+:144],tile}),.in(sinks[c]),
-        .hw(param_we && param_cell==c),.hdata(param_data[3:0]),.hmask(param_data[7:4]),.q(q));
-      assign lraw=q[3:0];
+      wire [3:0] lo;
+      mesh_logic #(.ACTOR(ACTOR)) t(.clk(clk),.rst_n(rst_n),.run(run),.cfg({cc[TRANS_LSB+:56],cc[TRACK_LSB+48+:144],tile}),
+        .in({xk,sinks[c]}),.hw(param_we && param_cell==c),.hdata(param_data[3:0]),.hmask(param_data[7:4]),.loc(lo));
+      assign lraw=lo;
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else begin: cr
@@ -293,22 +305,53 @@ endmodule
 // The logic tile: eight LUT4s with output registers and four host flags.
 // Every output is a register, so the tile closes no combinational path
 // (REG=1's invariant holds with any configuration).
-module mesh_logic(input wire clk, rst_n, run, input wire [343:0] cfg, input wire [5:0] in,
-  input wire hw, input wire [3:0] hdata, hmask, output reg [7:0] q);
+// ACTOR=1 (ACTOR_FABRIC.md A2): the tile also has a control-actor mode,
+// cfg[343] set: a state machine of four states over eight inputs in[7:0]
+// (sinks 0-7). Per state s two rows at cfg[12s +: 12], row r at
+// [12s+6r +: 6] = {next[5:4], event[3:0]} (event 0 none, 1-8 input 0-7):
+// if row 0's event is high go to its next, else if row 1's, else stay;
+// state 0 while stopped. Per state s and output k a select at
+// cfg[48+16s+4k +: 4] (0 zero, 1 one, 2-9 input 0-7): the four locals are
+// the current state's selections, combinational (as a contexted switch's
+// sinks): the compiler refuses a configuration that closes a loop.
+module mesh_logic #(parameter ACTOR=0)(input wire clk, rst_n, run, input wire [343:0] cfg, input wire [7:0] in,
+  input wire hw, input wire [3:0] hdata, hmask, output wire [3:0] loc);
+  reg [7:0] q;
   reg [3:0] h;
   always @(posedge clk)
     if(!rst_n || !run) h<=0;
     else if(hw) h<=(h & ~hmask) | (hdata & hmask);
-  wire [31:0] pool={12'b0,1'b1,1'b0,h,q,in};
+  wire [31:0] pool={12'b0,1'b1,1'b0,h,q,in[5:0]};
   genvar k;
   generate for(k=0;k<8;k=k+1) begin: lut
     wire [39:0] f=cfg[40*k+:40];
     wire [3:0] idx={pool[f[35:31]],pool[f[30:26]],pool[f[25:21]],pool[f[20:16]]};
-    wire [7:0] ens={1'b0,in,1'b1};
+    wire [7:0] ens={1'b0,in[5:0],1'b1};
     wire [15:0] truth=f[15:0];
     always @(posedge clk)
       if(!rst_n || !run) q[k]<=f[39];
       else if(ens[f[38:36]]) q[k]<=truth[idx];
   end endgenerate
+  if(ACTOR) begin: actor
+    reg [1:0] st;
+    wire [11:0] rows = st==2'd0 ? cfg[0+:12] : st==2'd1 ? cfg[12+:12] : st==2'd2 ? cfg[24+:12] : cfg[36+:12];
+    wire [15:0] outs = st==2'd0 ? cfg[48+:16] : st==2'd1 ? cfg[64+:16] : st==2'd2 ? cfg[80+:16] : cfg[96+:16];
+    wire [9:0] pick={in,1'b1,1'b0};          // 0 zero, 1 one, 2-9 input 0-7
+    wire [8:0] ev={in,1'b0};                 // 0 none, 1-8 input 0-7
+    wire ea = rows[3:0] < 4'd9 && ev[rows[3:0]], eb = rows[9:6] < 4'd9 && ev[rows[9:6]];
+    always @(posedge clk)
+      if(!rst_n || !run || !cfg[343]) st<=0;
+      else if(ea) st<=rows[5:4];
+      else if(eb) st<=rows[11:10];
+    wire [3:0] o;
+    genvar j;
+    for(j=0;j<4;j=j+1) begin: out
+      wire [3:0] s=outs[4*j+:4];
+      assign o[j] = s < 4'd10 && pick[s];
+    end
+    assign loc = cfg[343] ? o : q[3:0];
+  end else begin: plain
+    assign loc = q[3:0];
+  end
 endmodule
 `default_nettype wire

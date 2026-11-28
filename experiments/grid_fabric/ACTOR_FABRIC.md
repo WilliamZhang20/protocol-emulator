@@ -181,7 +181,10 @@ one clock and selects outputs combinationally. A registered-LUT machine:
 - I2C bus and ack, SPI open: **3 / 3 / 2 clocks**. Proven lower bound for
   the I2C bus: IDLE's next value depends on 7 signals, a 4-input registered
   LUT cannot compute it in one level, so ≥ 2 clocks on any LUT encoding.
-  The third clock is the compiler's packing (heuristic, improvable);
+  The third clock is the compiler's packing (heuristic, improvable).
+  This bound holds for registered 4-input LUTs as tested (every LUT output
+  a register, no combinational LUT path); it says nothing about a
+  purpose-built control actor, which A2 measures;
 - every selected output: +1 clock (a register), up to +2 for a nested
   selection (`rx.start`).
 The fast-bus failure is this latency: from SCL fall to SDA driven for ACK
@@ -248,9 +251,61 @@ the 17 programs that map on every candidate; sums over programs):
 | `I T L T I / C S K S C / L T K T L` | 17 | 223 | 236 | 102 | 5 |
 | layouts without a shifter beside a CRC | 15 | | | | |
 
-Rearranging is worth 8 % of tracks and up to 14 % of critical hops and does
-not change what maps: second order. The first-order limits A1 found are
+For these layouts and these 19 programs, on the compiler's routing model
+(not physical routing), rearranging is worth 8 % of tracks and up to 14 %
+of critical hops and does not change what maps. That does not show that
+placement is second order in general: other layouts, a different PE mix,
+new workloads or the physical router (congestion, wire length at the pins
+and SRAMs) can change it. The first-order limits A1 found are
 capacity and flexibility of the PEs: a machine needs one control PE, not
 six logic cells, and the timer pool runs short as soon as cells are taken
-from it (the merged timer/counter, A3). Arrangement is revisited in A5 with
+from it. A1 shows the mix is tight; it does not show that a merged
+timer/counter saves area or keeps every timer mode (A3 is a separate
+experiment). Arrangement is revisited in A5 with
 the new PE mix; the chip keeps its layout until then.
+
+## 9. A2: the control actor, head to head with the contexted switch (2026-11-28)
+
+**Hardware** (`mesh.v` `ACTOR=1`; default 0 keeps the chip unchanged): a
+logic cell's second mode. A configurable state machine, independently
+placed and connected: four states, two transition rows per state (one
+clock, as `ctx_switch`), eight inputs (sinks; 6-7 stored where a
+one-context cell's context-1 sinks would be), four locals selected per
+state among the inputs and constants **combinationally** (as a contexted
+switch's sinks). No program counter, no private timer/shifter/CRC. The
+logic cells keep their LUT mode: a cell is either, per program (machine
+programs and LUT programs never need the cells at once: I2C/SPI/SWD use
+no LUTs, USB/Ethernet no machines).
+
+**Compiler** (`Lowering.machines_to_actors`): one actor per machine; a
+selection by another machine is that machine's output, routed as an input;
+the mapper's loop check takes each output's combinational inputs (only the
+inputs it selects; rows change the registered state) and refuses a
+configuration that closes a loop.
+
+**Head to head** (same 15 tiles, 3 x 5; contexted = the chip
+`mesh_3x5_L3S`; A2 = every switch static, `ACTOR=1`):
+
+| | Contexted (L3S) | A1 (LUT machines) | **A2 (actors)** |
+|---|---|---|---|
+| programs mapped (of 19) | 19 | 17 (I2C needs 6 logic cells) | **19** |
+| mesh-pin tests | all pass | I2C fast bus fails | **all pass** (Ethernet's 2nd test pending) |
+| I2C fastest SCL (clocks per period) | 10 | 16 | **10** |
+| transition / selected output | 1 clock / 0 | 3 / +1-2 | **1 / 0** |
+| I2C target tracks (wirelength) | 17 (28) | 67 (69) | **25 (25)** |
+| I2C + UART tracks (wirelength) | 25 (35) | 76 (80) | **31 (31)** |
+| SPI / SWD tracks | 29 / 18 | 31 / 19 | 31 / 19 |
+| whole chip area (µm², local yosys, CI IHP liberty) | 371,785 | — | **345,305 (-7.1 %)** |
+| configuration latches | 3,551 | — | **2,825** |
+
+All-static without actors is 336,081 µm²: the actor mode in the three
+logic cells costs ~9.2k (~3k per cell). Machines use at most 2 actors per
+program (the context replica is gone).
+
+**Caveats.** The actor's combinational outputs make a structural loop
+possible through the routing (the compiler refuses one per
+configuration); static timing must cut those arcs (`set_disable_timing`
+or case analysis) before A6, the GDS. The latency bound of A1 (two clocks)
+is for registered LUT4s; the actor's one clock is by construction. The
+workload is still the 19 programs: the full-protocol workload (receive
+paths, handshakes, both directions) is the next gate before promotion.
