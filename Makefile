@@ -33,7 +33,7 @@ SRAM_MODELS := \
 	test/models/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
 
 SRAM_BLACKBOX := src/RM_IHPSG13_1P_1024x8_c2_bm_bist.v
-CELL_BLACKBOX := tools/blackbox/sg13cmos5l_dlhrq_1.v
+CELL_BLACKBOX := tools/blackbox/sg13cmos5l_dlhrq_1.v tools/blackbox/sg13cmos5l_buf_1.v
 
 .PHONY: chip-synth-check help verify precommit install-hooks lint gl-local dead-check synth-check gds-config-check grid-contract-check interconnect-scaling grid-sequencer-test reorg-proto-test reorg-compiled-test reorg-contention-test pdn-def-check pdn-extract-check sim memory-test routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coder-reuse-test lane-core-test grid-stream-coder-test grid-coded-abort-test tile-circt-image-test tile-control-image-test control-fabric-image-test tile-memory-experiment tile-memory-spi-image-test tile-memory-lint tile-memory-assertion-mutation tile-memory-synth formal clean
 
@@ -77,9 +77,9 @@ install-hooks:
 
 verify: lint synth-check gds-config-check chip-synth-check grid-contract-check memory-test sim tile-memory-lint tile-memory-experiment tile-memory-spi-image-test tile-memory-assertion-mutation tile-memory-synth
 
-# The chip's synthesis checks (LibreLane's, which src/config.json turns off
-# for the actor's structural loops): no undriven or multiply driven wire,
-# and every combinational loop through a control actor's selection.
+# The chip's synthesis checks, as LibreLane runs them: no undriven or
+# multiply driven wire, and no combinational loop (the control actors'
+# loops are cut by their actor_cut buffers).
 chip-synth-check:
 	$(PYTHON) tools/check_chip_synth.py $(ROUTING_YOSYS)
 

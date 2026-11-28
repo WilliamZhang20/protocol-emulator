@@ -104,3 +104,10 @@ set_timing_derate -early 0.9500
 set_timing_derate -late 1.0500
 # Design Rules
 set_max_fanout 10.0000 [current_design]
+# The control actors' timing cuts (src/mesh.v actor_cut): an actor's output
+# is a combinational selection of its inputs, so without a cut static
+# timing chains paths through several actors and long track runs that no
+# configuration forms (0c5527c: post-CTS setup repair began at -49.7 ns WNS
+# on 654 endpoints and ran over 80 min) and breaks the structural loops at
+# arbitrary points. Paths through an actor's selection are not timed.
+set_disable_timing -from A -to X [get_cells -hierarchical *actor_cut_buf]

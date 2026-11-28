@@ -2,6 +2,10 @@
 """The chip's synthesis checks, as LibreLane's Checker.YosysSynthChecks runs
 them, with one rule of our own for combinational loops.
 
+Since each actor output passes a kept IHP buffer (src/mesh.v actor_cut), a
+cell yosys does not see through, the chip should show no loop at all; the
+rule below still names the only place one may appear.
+
 The actor chip's mesh has structural combinational loops: a control actor's
 outputs are combinational selections of its inputs (mesh_logic, ACTOR=1),
 and a route can carry an actor's output back to an actor's input. No
@@ -42,6 +46,7 @@ def main(yosys):
             break
     files = ' '.join(str(SRC / f) for f in sources)
     script = (f'read_verilog -lib {ROOT}/tools/blackbox/sg13cmos5l_dlhrq_1.v; '
+              f'read_verilog -lib {ROOT}/tools/blackbox/sg13cmos5l_buf_1.v; '
               f'read_verilog -lib {SRC}/RM_IHPSG13_1P_1024x8_c2_bm_bist.v; '
               f'read_verilog -sv -D__librelane__ {files}; '
               'hierarchy -check -top tt_um_protocol_emulator; proc; flatten; opt_clean; check')

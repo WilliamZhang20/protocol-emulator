@@ -594,7 +594,7 @@ would have failed with violations left even with more time.
 | static switches + actor mode (A2) | no context storage or transition logic |
 | merged pool of five, cell 0 switch-only (A3B) | one tile fewer, its configuration constant |
 | timer cells built without timer-mode live writes (`grid_timer` LIVE=0) | no shadow registers (the counter's limit write remains) |
-| LibreLane's synthesis-check error off; `tools/check_chip_synth.py` in its place (CI: tile experiment) | the actor's structural loops pass; an undriven or multiply driven wire, or a loop not through an actor, still fails |
+| a timing cut on each actor output (`actor_cut`: a kept IHP buffer whose arc the SDC disables) | synthesis sees no loop (LibreLane's checks stay on); static timing neither chains paths through actors nor breaks loops at random |
 | flow: no post-GRT timing repair; one antenna reroute; 24 detailed-routing iterations | ~66 min and the antenna tail back for routing |
 
 Kept, because a protocol needs it: four tracks per direction (three break
@@ -612,15 +612,21 @@ uses all eight), three logic cells, two shifters, two CRC cells.
 
 **The actor's combinational outputs.** A control actor's outputs are
 combinational selections of its inputs, so the actor chip has structural
-loops (164 in yosys `check`): an actor's output can route back to an
-actor's input. No configuration closes one (the mapper refuses it), and the
-loops are the only ones: the tracks are a DAG (their turn rule) and every
-other cell output is a register. LibreLane's synthesis check fails on any
-loop, so it is off (`ERROR_ON_SYNTH_CHECKS` 0) and
-`tools/check_chip_synth.py` replaces it: it fails on every other problem
-(an undriven wire, the class of 5dd1a72's GDS failure; checked with that
-mutation) and on any loop that does not pass through an actor's selection.
-Static timing breaks the loops itself, as for any configurable routing.
+loops (164 in yosys `check` without the cut): an actor's output can route
+back to an actor's input. No configuration closes one (the mapper refuses
+it), and they are the only ones: the tracks are a DAG (their turn rule) and
+every other cell output is a register. Each actor output now passes an
+`actor_cut`, a kept IHP buffer (`RSZ_DONT_TOUCH_RX`) whose A -> X arc both
+SDCs disable: synthesis does not see through the cell (no loop, so
+LibreLane's checks stay on; `tools/check_chip_synth.py` also checks it), and
+static timing neither chains paths through several actors and long track
+runs that no configuration forms nor breaks the loops at arbitrary points.
+Without it (0c5527c, job 140941046531) post-CTS setup repair began at
+-49.7 ns WNS on 654 endpoints and was still running 80 min later. The
+cost: a real route through an actor (a machine selecting a signal onto a
+pad or a tile) is not timed; the compiler's routes are a few track hops in
+a 20 ns clock, and per-configuration timing (case analysis per program) is
+the follow-up.
 
 Two ways to remove the loops by construction were tried and refused by
 the workload. Registering the actor's outputs (A2's selection one clock
@@ -633,14 +639,14 @@ leaving ADDRESS on it). So the actor stays combinational; a registered
 actor would need the compiler to model the extra clock in the event-timing
 contracts (section 11).
 
-**First GDS (0c5527c, job 140941046531).** Synthesis, the checks and
-placement passed (the actor loops included); clock-tree synthesis then
-hung for over 50 min on one gated latch-enable net of the configuration
-store (8 sinks in a 1 x 2 µm region): with the store's strobe a
-propagated generated clock, CTS builds a tree per enable net. Placement
-and routing now use `src/mesh_chip_pnr.sdc`, the constraints without that
-clock (the store changes only while the mesh is held, and every path out
-of it is false); signoff keeps the full `mesh_chip.sdc`.
+**First GDS (0c5527c, job 140941046531).** Synthesis, the checks,
+placement and CTS (43 s) passed; post-CTS setup repair then ran away on the
+actor paths (above). The live job log lagged by over an hour, so it first
+looked like a CTS hang; that reading led to `src/mesh_chip_pnr.sdc` (the
+constraints without the store's generated clock, for placement and
+routing; signoff keeps `mesh_chip.sdc`), which is kept: the store changes
+only while the mesh is held and every path out of it is false, so it
+needs no clock trees. Read a cancelled job's final log before diagnosing.
 
 **Tests.** Every program passes at the mesh pins on `mesh_3x5_A3B` (26 of
 26) and on A3, and the chip-pin test (`test_chip`, the chip top with every

@@ -330,7 +330,8 @@ endmodule
 // state 0 while stopped. Per state s and output k a select at
 // cfg[48+16s+4k +: 4] (0 zero, 1 one, 2-9 input 0-7): the four locals are
 // the current state's selections, combinational (as a contexted switch's
-// sinks): the compiler refuses a configuration that closes a loop. These
+// sinks), each through an actor_cut (a timing cut, below): the compiler
+// refuses a configuration that closes a loop. These
 // are the mesh's only combinational paths through a cell (the tracks are a
 // DAG by their turn rule, every other local is a register), so the chip's
 // structural loops all pass through an actor's selection
@@ -370,11 +371,31 @@ module mesh_logic #(parameter ACTOR=0)(input wire clk, rst_n, run, input wire [3
     genvar j;
     for(j=0;j<4;j=j+1) begin: out
       wire [3:0] s=outs[4*j+:4];
-      assign o[j] = s < 4'd10 && pick[s];
+      // The timing cut: static timing does not pass through an actor's
+      // selection (mesh_chip*.sdc), so it neither chains paths through
+      // several actors and long track runs no configuration forms nor
+      // breaks the structural loops at arbitrary points.
+      actor_cut cut(.a(s < 4'd10 && pick[s]), .x(o[j]));
     end
     assign loc = cfg[343] ? o : q[3:0];
   end else begin: plain
     assign loc = q[3:0];
   end
+endmodule
+// An actor output's timing cut: an IHP buffer kept through synthesis and
+// placement (config.json RSZ_DONT_TOUCH_RX), whose A -> X arc static timing
+// disables (mesh_chip.sdc, mesh_chip_pnr.sdc). Every structural loop of the
+// actor chip passes through one (tools/check_chip_synth.py), so timing sees
+// none, and no path chains through actors. The real routes through an actor
+// (a machine selecting a signal onto a pad or a tile) are then not timed:
+// they are a few track hops within a 20 ns clock (the compiler's routes are
+// at most 4 hops); per-configuration timing is the follow-up
+// (ACTOR_FABRIC.md section 13).
+module actor_cut(input wire a, output wire x);
+`ifdef SYNTHESIS
+  (* keep *) sg13cmos5l_buf_1 actor_cut_buf(.A(a), .X(x));
+`else
+  assign x = a;
+`endif
 endmodule
 `default_nettype wire

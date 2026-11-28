@@ -29,6 +29,8 @@
   "// PNR_SDC_FILE": "The base constraints plus the configuration store's latch enables as a generated clock (mesh_chip.sdc).",
   "// PNR_SDC_FILE mesh_chip_pnr.sdc": "Placement and routing use the constraints without the store's generated clock: with it, CTS builds a tree per gated latch-enable net and hung on one for over 50 min (0c5527c). Signoff keeps the full constraints.",
   "PNR_SDC_FILE": "dir::mesh_chip_pnr.sdc",
+  "// RSZ_DONT_TOUCH_RX": "The control actors' timing-cut buffers (src/mesh.v actor_cut): the SDC disables their A -> X arcs, so the resizer must not remove or replace them.",
+  "RSZ_DONT_TOUCH_RX": "actor_cut_buf",
   "SIGNOFF_SDC_FILE": "dir::mesh_chip.sdc",
 
   "// MESH_REGIONS": "Step 7: one placement region per mesh cell (odb_mesh_regions.py). false = the unconstrained comparison run. Off for the logic-cell chips' first runs: the constrained run 9f0f9c8 (run 46019229385) passed global placement and failed detailed placement (DPL-0017), and odb_mesh_regions.py is sized for a 3 x 5 of the old mix.",
@@ -70,8 +72,8 @@
   "DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
   "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
 
-  "// ERROR_ON_SYNTH_CHECKS": "Off for the actor chip: its control actors' outputs are combinational selections of their inputs (mesh_logic ACTOR=1), so the mesh has structural loops that no configuration closes (the compiler refuses one). Yosys reports them as check problems. tools/check_chip_synth.py (make chip-synth-check, in the tile experiment workflow) replaces this check: it still fails on any undriven or multiply driven wire, and on any loop that does not pass through an actor's selection. Registering the actor outputs instead breaks wire-timed programs (ACTOR_FABRIC.md section 13).",
-  "ERROR_ON_SYNTH_CHECKS": 0,
+  "// ERROR_ON_SYNTH_CHECKS": "On. The control actors' outputs are combinational selections of their inputs, so the actor chip has structural loops through them; each actor output passes a kept IHP buffer (src/mesh.v actor_cut), a cell synthesis does not see through, so the checks see no loop (and static timing disables the buffer's arc, mesh_chip*.sdc). tools/check_chip_synth.py (make chip-synth-check) also checks it locally and in the tile experiment workflow.",
+  "ERROR_ON_SYNTH_CHECKS": 1,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,
