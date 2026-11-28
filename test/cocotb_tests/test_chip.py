@@ -173,6 +173,21 @@ class ChipPort:
             if await self.read(CTL + 0x0E) == hi:
                 return hi << 8 | lo
 
+    async def packet_head(self):
+        """(end, err) of the oldest received packet (mesh_host register 07,
+        1E/1F), or None."""
+        st = await self.read(CTL + 0x07)
+        if st & 0x40:
+            raise Failure('more than four received packets waited for the host (descriptor overflow)')
+        if not st & 0x07:
+            return None
+        lo = await self.read(CTL + 0x1E)
+        hi = await self.read(CTL + 0x1F)
+        return hi << 8 | lo, st >> 7
+
+    async def packet_pop(self):
+        await self.write(CTL + 0x07, 0)
+
     async def flag(self, index):
         return await self.read(CTL + 0x10 + index // 8) >> index % 8 & 1
 

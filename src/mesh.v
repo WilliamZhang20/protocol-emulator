@@ -25,8 +25,9 @@
 //           sinks: 0 pad A value 1 pad A enable 2 pad B value 3 pad B enable
 //   timer   locals: 0 tick 1 level 2 rise 3 fall   sinks: 0 start 1 stop 2 aux
 //   shifter locals: 0 word 1 stop 2 out 3 active
-//           sinks: 0 start 1 shift 2 sample 3 abort 4 in
-//           lines: 1 start, 2 shift, 3 abort, 4 sample; level 33 in
+//           sinks: 0 start 1 shift 2 sample 3 abort 4 in 5 end
+//           lines: 1 start, 2 shift, 3 abort, 4 sample; levels 33 in,
+//           34 end (the burst-end level, fabric_shifter register 4)
 //   crc     locals: 0 ok, and at the word port 1 reader data available,
 //           2 compare-tap match, 3 mismatch
 //           sinks: 0 init 1 absorb 2 emit 3 data 4 level (gate) 5 word gate
@@ -136,6 +137,9 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   wire [7:0] oe[0:N-1], ov[0:N-1];
   // Shifter FIFO ports, CRC links and the word network's bit pins.
   wire [7:0] rx_byte[0:N-1]; wire [N-1:0] rx_req, rx_grant, tx_req, tx_grant, held_grant;
+  // A received byte's FIFO tags (fabric_shifter rx_eop / rx_err): the word
+  // network carries them in bits 8 (eop) and 9 (err) to the writer.
+  wire [N-1:0] rx_eop, rx_err;
   wire [N-1:0] l_absorb, l_bit, l_emit, tail;
   // Each CRC cell's link {select, linked} (its shape register, crc register 6
   // bits [7:6]): linked 1, select 0 west / 1 east.
@@ -213,8 +217,8 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0;
     end else if(kind(c)==SHIFTER) begin: sh
-      wire word, stop, out, active; wire [4:0] nc; wire [15:0] rxd, st;
-      wire [63:0] lines={30'b0,sinks[c][4],1'b0,27'b0,sinks[c][2],sinks[c][3],sinks[c][1],sinks[c][0],1'b0}; // 1 start 2 shift 3 abort 4 sample, 33 in
+      wire word, stop, out, active; wire [2:0] nc; wire [15:0] rxd, st;
+      wire [63:0] lines={29'b0,sinks[c][5],sinks[c][4],1'b0,27'b0,sinks[c][2],sinks[c][3],sinks[c][1],sinks[c][0],1'b0}; // 1 start 2 shift 3 abort 4 sample, 33 in, 34 end (burst-end level)
       // The CRC linked to it: the one east of it with link 0 (west), or the
       // one west of it with link 1 (east); a shifter between two CRCs
       // takes the tail only from the one whose link register names it.
@@ -235,9 +239,9 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       assign held_grant[c]= tx_cell!=c && tx_req[c] && full;
       fabric_shifter t(.clk(clk),.rst_n(rst_n),.enable(run),.cfg_we((!loaded && load<6) || (loaded && pw)),
         .cfg_addr(loaded ? param_addr : sh_addr),.cfg_data(loaded ? param_data : tw[load]),.cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.pulls(nc[0]),
-        .tx_request(tx_req[c]),.tx_grant(tx_grant[c]),.tx_data(tx_cell==c ? wn_tx[7:0] : held),.tx_eop(1'b0),.tx_err(1'b0),
-        .rx_request(rx_req[c]),.rx_grant(rx_grant[c]),.crc_in(crc_in),.rx_byte(rx_byte[c]),.rx_eop(nc[1]),
-        .rx_err(nc[2]),.out(out),.active(active),.word_pulse(word),.stop_pulse(stop),.rx_data(rxd),
+        .tx_request(tx_req[c]),.tx_grant(tx_grant[c]),.tx_data(tx_cell==c ? wn_tx[7:0] : held),.tx_eop(tx_cell==c && wn_tx[8]),.tx_err(1'b0),
+        .rx_request(rx_req[c]),.rx_grant(rx_grant[c]),.crc_in(crc_in),.rx_byte(rx_byte[c]),.rx_eop(rx_eop[c]),
+        .rx_err(rx_err[c]),.out(out),.active(active),.word_pulse(word),.stop_pulse(stop),.rx_data(rxd),
         .status(st),.crc_absorb(l_absorb[c]),.crc_bit(l_bit[c]),.crc_emit(l_emit[c]));
       assign lraw={active,out,stop,word};
       assign oe[c]=0; assign ov[c]=0; assign tail[c]=0;
@@ -294,11 +298,12 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
 
   wire [7:0] wrx=rx_byte[rx_cell<N ? rx_cell : 0];
   wire wrx_v= rx_cell<N && rx_req[rx_cell<N ? rx_cell : 0];
+  wire [1:0] wrx_tag= rx_cell<N ? {rx_err[rx_cell<N ? rx_cell : 0], rx_eop[rx_cell<N ? rx_cell : 0]} : 2'b0;
   wire wtx_r= tx_cell<N && tx_req[tx_cell<N ? tx_cell : 0];
   wire wn_match, wn_ok; wire wn_st, wn_cap;
   wnet words(clk,rst_n,wc[31:0],wc[39:32],wc[47:40],wc[55:48],wc[63:56],wc[71:64],wc[87:72],wc[103:88],
     sinks[WORD_PORT][5],wn_match,wc[104],wc[108:105],tap_match,tap_mismatch,
-    rd_data,rd_valid,rd_ready, {8'd0,wrx},wrx_v,wn_rx_ready, 16'd0,1'b0,wn_st, 16'd0,1'b0,wn_cap,
+    rd_data,rd_valid,rd_ready, {6'd0,wrx_tag,wrx},wrx_v,wn_rx_ready, 16'd0,1'b0,wn_st, 16'd0,1'b0,wn_cap,
     wr_data,wr_valid,wr_ready, wn_tx,wn_txv,wtx_r, wn_ok);
 endmodule
 

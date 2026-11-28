@@ -27,6 +27,9 @@
 //     02/03 reader base [7:0]/[10:8]  04/05 reader length; write 06: start
 //     08/09 writer base               0A/0B writer length; write 0C: start
 //     0D/0E bytes written so far [7:0]/[10:8] (read)
+//     07 packets (read): [2:0] descriptors queued, [6] overflow, [7] the
+//        oldest's error bit; write: remove the oldest
+//     1E/1F the oldest packet's end in the region [7:0]/[10:8] (read)
 //     10-17 sticky flags seen[8k +: 8] (read), 4 per cell
 //     18 parameter cell, 19 parameter register, 1A/1B parameter value;
 //        writing 1B writes the parameter (mesh param port) a clock later
@@ -46,6 +49,7 @@ module mesh_host #(parameter CFG_ABITS=10, SEEN_BITS=60)(
   output wire rd_start, output reg [10:0] rd_base, rd_length, input wire rd_active, rd_done,
   output wire wr_start, output reg [10:0] wr_base, wr_length, input wire wr_active, wr_done,
   input wire [10:0] wr_count,
+  input wire [2:0] pk_count, input wire [10:0] pk_end, input wire pk_err, pk_overflow, output wire pk_pop,
   output wire [3:0] host_ev, input wire [SEEN_BITS-1:0] seen, output wire seen_clear,
   output reg param_we, output reg [3:0] param_cell, output reg [2:0] param_addr, output reg [15:0] param_data);
 
@@ -74,6 +78,7 @@ module mesh_host #(parameter CFG_ABITS=10, SEEN_BITS=60)(
   assign run_req = run && !hold;
   assign rd_start = ctl_wr && reg_a == 8'h06;
   assign wr_start = ctl_wr && reg_a == 8'h0C;
+  assign pk_pop = ctl_wr && reg_a == 8'h07;
   assign host_ev = (go && c_op == 3'd4) ? c_data[3:0] : (ctl_wr && reg_a == 8'h1C) ? c_data[3:0] : 4'd0;
   assign seen_clear = (go && c_op == 3'd5) || (ctl_wr && reg_a == 8'h1D);
 
@@ -88,6 +93,8 @@ module mesh_host #(parameter CFG_ABITS=10, SEEN_BITS=60)(
       8'h08: ctl_q = wr_base[7:0];   8'h09: ctl_q = {5'b0, wr_base[10:8]};
       8'h0A: ctl_q = wr_length[7:0]; 8'h0B: ctl_q = {5'b0, wr_length[10:8]};
       8'h0D: ctl_q = wr_count[7:0];  8'h0E: ctl_q = {5'b0, wr_count[10:8]};
+      8'h07: ctl_q = {pk_err, pk_overflow, 3'b0, pk_count};
+      8'h1E: ctl_q = pk_end[7:0];    8'h1F: ctl_q = {5'b0, pk_end[10:8]};
       8'h10: ctl_q = seen64[7:0];    8'h11: ctl_q = seen64[15:8];
       8'h12: ctl_q = seen64[23:16];  8'h13: ctl_q = seen64[31:24];
       8'h14: ctl_q = seen64[39:32];  8'h15: ctl_q = seen64[47:40];

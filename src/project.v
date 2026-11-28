@@ -39,6 +39,7 @@ module tt_um_protocol_emulator (
   wire cfg_we, cfg_clear, cfg_busy; wire [9:0] cfg_addr; wire [7:0] cfg_data; wire [CFG_BITS-1:0] cfg;
   wire mesh_hold, run_req, ready;
   wire rd_start, rd_active, rd_done, wr_start, wr_active, wr_done; wire [10:0] rd_base, rd_length, wr_base, wr_length, wr_count;
+  wire [2:0] pk_count; wire [10:0] pk_end; wire pk_err, pk_overflow, pk_pop;
   wire [3:0] host_ev; wire [4*N-1:0] seen; wire seen_clear;
   wire param_we; wire [3:0] param_cell; wire [2:0] param_addr; wire [15:0] param_data;
 
@@ -50,7 +51,8 @@ module tt_um_protocol_emulator (
     .mesh_hold(mesh_hold), .run_req(run_req), .ready(ready),
     .rd_start(rd_start), .rd_base(rd_base), .rd_length(rd_length), .rd_active(rd_active), .rd_done(rd_done),
     .wr_start(wr_start), .wr_base(wr_base), .wr_length(wr_length), .wr_active(wr_active), .wr_done(wr_done),
-    .wr_count(wr_count), .host_ev(host_ev), .seen(seen), .seen_clear(seen_clear),
+    .wr_count(wr_count), .pk_count(pk_count), .pk_end(pk_end), .pk_err(pk_err), .pk_overflow(pk_overflow),
+    .pk_pop(pk_pop), .host_ev(host_ev), .seen(seen), .seen_clear(seen_clear),
     .param_we(param_we), .param_cell(param_cell), .param_addr(param_addr), .param_data(param_data));
 
   // CFG_LATCH: the configuration store's storage (mesh_cfg LATCH).
@@ -71,7 +73,8 @@ module tt_um_protocol_emulator (
     .host_ready(mem_ready), .host_rvalid(mem_rvalid), .host_rdata(mem_rdata),
     .rd_start(rd_start), .rd_base(rd_base), .rd_length(rd_length), .rd_active(rd_active), .rd_done(rd_done),
     .wr_start(wr_start), .wr_base(wr_base), .wr_length(wr_length), .wr_active(wr_active), .wr_done(wr_done),
-    .wr_count(wr_count), .host_valid(host_valid), .host_byte(host_byte));
+    .wr_count(wr_count), .pk_count(pk_count), .pk_end(pk_end), .pk_err(pk_err), .pk_overflow(pk_overflow),
+    .pk_pop(pk_pop), .host_valid(host_valid), .host_byte(host_byte));
 
   assign uio_out = {pad_out[3], pad_out[2], pad_out[1], 4'b0, pad_out[0]};
   assign uio_oe  = {pad_oe[3],  pad_oe[2],  pad_oe[1],  4'b0, pad_oe[0]};

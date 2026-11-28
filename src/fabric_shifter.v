@@ -22,6 +22,7 @@
 //            [12:7] abort line: while it is high the tile is idle and a
 //            frame in progress is dropped without a word pulse or push
 //            (e.g. carrier loss in the middle of a word); 0 never aborts
+//            [13] end lookahead (receive bursts): see below
 //   5 coder  [2:0] stuff run N (0: no stuffing)  [3] runs of ones (else
 //            of equal bits)  [4] NRZI  [5] code the received bits (else
 //            the transmitted ones)  [6] arm at the first 0
@@ -89,6 +90,14 @@
 // same cycle the previous one ends, so streams are gapless. `word` pulses at
 // every word end; `stop` pulses when the shifter actually goes idle.
 //
+// End lookahead (burst [13], a receiving burst with auto push): a protocol
+// whose end marker follows the last word (USB's SE0, a line going idle)
+// cannot mark that word while it is received. With [13], a word that ends
+// with the burst continuing is held, not pushed: the next word's first
+// sample pushes it as is, or the burst-end level rising while it is held
+// and before that sample pushes it tagged eop and ends the frame (`stop`,
+// no word pulse; the partial word is dropped). Abort drops a held word.
+//
 // Burst mode: where a word's last data bit would end (the same shift or
 // sample event that ends a frame), the next word starts directly at its
 // first data bit, so pre, parity and post bits appear only around the
@@ -138,7 +147,7 @@ module fabric_shifter (
   /* verilator lint_on UNUSEDSIGNAL */
   wire [11:0] step;
   wire [12:0] io;
-  wire [12:0] burst;
+  wire [13:0] burst;
   wire [15:0] coder;
   wire [13:0] coder2;
   reg [15:0] rx_word;
@@ -155,6 +164,9 @@ module fabric_shifter (
   reg        burst_end_seen;
   reg        word_eop;           // the word in flight was pulled tagged eop
   reg        word_err;           // ... or tagged err: invert its parity bit
+  reg        ahead_valid;        // end lookahead: a received word held
+  reg [7:0]  ahead_byte;
+  reg        ahead_err;
 
   wire [4:0] pre_n     = {3'b0, frame[5:4]};
   wire       pre_val   = frame[6];
@@ -167,6 +179,7 @@ module fabric_shifter (
   wire       auto_pull = io[11];
   wire       auto_push = io[12];
   wire       burst_mode = burst[5];
+  wire       eop_ahead  = burst[13] && burst[5] && io[12];
   wire       abort = lines[burst[12:7]];
   wire       run   = enable && !abort;
   wire [2:0] stuff_n    = coder[2:0];
@@ -294,6 +307,10 @@ module fabric_shifter (
   wire frame_end = frame_end_raw && !tail_pending;
   wire tail_step = frame_end_raw && tail_pending && !burst_next;
   wire done = frame_end && !burst_next;
+  // End lookahead: the end level arrives while a word is held and before
+  // the next word's first sample: the held word is the last one.
+  wire ahead_end  = eop_ahead && ahead_valid && active_r && run && levels[burst[4:0]];
+  wire ahead_push = eop_ahead && ahead_valid && active_r && run && !ahead_end && sample_now;
   wire trigger = start_sel != 6'd0 ? lines[start_sel] : auto_pull;
   wire start = run && (!active_r || done) && trigger &&
                (!auto_pull || tx_grant);
@@ -329,7 +346,7 @@ module fabric_shifter (
   assign active     = active_r;
   assign pulls      = enable && auto_pull;
 
-  assign stop_pulse = done && !start;
+  assign stop_pulse = (done && !start) || ahead_end;
   // The word as of the last word pulse: latched at the word's end like its
   // status (word_bad), so a frame that restarts on the same clock (start
   // held high, back-to-back frames) cannot clear it before a controller
@@ -351,8 +368,8 @@ module fabric_shifter (
   config_bank #(.WIDTH(13)) io_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
       .ctx_next(ctx_next), .value(io), .next());
-  config_bank #(.WIDTH(13)) burst_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+  config_bank #(.WIDTH(14)) burst_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[13:0]),
       .ctx_next(ctx_next), .value(burst), .next());
   config_bank #(.WIDTH(16)) coder_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd5), .write_bank(cfg_bank), .data(cfg_data),
@@ -542,6 +559,9 @@ module fabric_shifter (
       burst_end_seen <= 1'b0;
       word_eop     <= 1'b0;
       word_err     <= 1'b0;
+      ahead_valid  <= 1'b0;
+      ahead_byte   <= 8'd0;
+      ahead_err    <= 1'b0;
     end else begin
       if (rx_grant)
         push_pending <= 1'b0;
@@ -551,7 +571,19 @@ module fabric_shifter (
         word_bad <= done && (post_bad || par_bad || stuff_err || stuff_bad || manch_err || manch_bad);
         last_word <= rx_next;
       end
-      if (word_end && auto_push) begin
+      // End lookahead: the held word goes out first (the next word's
+      // first sample, or the end level); a word that ends with the burst
+      // continuing is held instead of pushed. Words are at least two bits
+      // (the compiler's rule), so a held word's push and the next word's
+      // end never share a clock.
+      if (ahead_end || ahead_push) begin
+        if (push_pending && !rx_grant)
+          overrun <= 1'b1;
+        push_pending <= 1'b1;
+        push_byte    <= ahead_byte;
+        push_eop     <= ahead_end;
+        push_err     <= ahead_err;
+      end else if (word_end && auto_push && !(eop_ahead && burst_next)) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;
         push_pending <= 1'b1;
@@ -559,6 +591,13 @@ module fabric_shifter (
         push_byte <= rx_next[7:0];
         push_eop  <= done && burst_mode;
         push_err  <= done && (post_bad || par_bad || stuff_err || stuff_bad || manch_err || manch_bad);
+      end
+      if (ahead_end || ahead_push || abort || (start && !active_r))
+        ahead_valid <= 1'b0;
+      if (word_end && auto_push && eop_ahead && burst_next) begin
+        ahead_valid <= 1'b1;
+        ahead_byte  <= rx_next[7:0];
+        ahead_err   <= stuff_err || stuff_bad || manch_err || manch_bad;
       end
 
       if (start || burst_next) begin
@@ -595,7 +634,7 @@ module fabric_shifter (
           else if (!at_last)
             index <= index + 5'd1;
         end
-        if (done || abort)
+        if (done || abort || ahead_end)
           active_r <= 1'b0;
       end
     end

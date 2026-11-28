@@ -73,6 +73,8 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
   always @(*) if (rst_n && cfg_we && cfg_addr != 3'd0)
     assume(!active && !(run_m && trigger && (!io_s[11] || tx_grant)));
   always @(*) if (rst_n && cfg_we) assume(cfg_addr <= 3'd4);
+  // End lookahead (burst [13]) is proved separately (fabric_shifter_ahead_properties.sv).
+  always @(*) if (rst_n && cfg_we && cfg_addr == 3'd4) assume(!cfg_data[13]);
 
   wire [4:0] len  = {1'b0, frame_s[3:0]} + 5'd1;
   wire [1:0] npre = frame_s[5:4];

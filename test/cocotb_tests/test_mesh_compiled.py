@@ -122,7 +122,7 @@ class DirectPort:
         dut.pins.value = 0xff
         for sig in (dut.host_req, dut.host_we, dut.host_addr, dut.host_wdata, dut.rd_start, dut.rd_base, dut.rd_length,
                     dut.wr_start, dut.wr_base, dut.wr_length, dut.host_ev, dut.seen_clear, dut.param_we, dut.param_cell,
-                    dut.param_addr, dut.param_data):
+                    dut.param_addr, dut.param_data, dut.pk_pop):
             sig.value = 0
         await ClockCycles(dut.clk, 4)
         await FallingEdge(dut.clk); dut.rst_n.value = 1
@@ -227,6 +227,17 @@ class DirectPort:
     async def written(self):
         return int(self.dut.wr_count.value)
 
+    async def packet_head(self):
+        """(end, err) of the oldest received packet in the region, or None."""
+        if int(self.dut.pk_overflow.value):
+            raise Failure('more than four received packets waited for the host (descriptor overflow)')
+        if not int(self.dut.pk_count.value):
+            return None
+        return int(self.dut.pk_end.value), int(self.dut.pk_err.value)
+
+    async def packet_pop(self):
+        await self._strobe(pk_pop=1)
+
     async def flag(self, index):
         return int(self.dut.seen.value) >> index & 1
 
@@ -315,7 +326,7 @@ async def run_test(dut, port, interface, plan, test, delay=0):
         # race the host link.
         staged = None
         first = test['steps'][0] if test['steps'] else None
-        if first and first['op'] == 'write' and 'stream' in first['target'] and \
+        if first and first['op'] in ('write', 'write_packet') and 'stream' in first['target'] and \
                 interface['streams'].get(first['target']['stream'], {}).get('port') == 'reader':
             for i, b in enumerate(first['bytes']):
                 await port.mem(TX_BASE + i, b)
@@ -344,15 +355,21 @@ async def run_test(dut, port, interface, plan, test, delay=0):
 
         for step in test['steps']:
             line = step['line']
-            if step['op'] == 'write' and 'stream' in step['target']:
+            # A packet write is one reader region: the reader tags its last
+            # byte eop (mesh_soc), which ends a transmitter's packet burst.
+            # It is armed, not awaited: the transmitter takes the bytes when
+            # its packet starts. A write waits for the previous one to leave.
+            if step['op'] in ('write', 'write_packet') and 'stream' in step['target']:
                 name = step['target']['stream']
                 if interface['streams'].get(name, {}).get('port') != 'reader':
                     raise Failure(f'line {line}: stream {name} is not a host -> mesh stream')
                 if step is not staged:
+                    if not await until(dut, clock_ns, port.reader_finished, timeout):
+                        raise Failure(f'line {line}: stream {name}: the previous write never left')
                     for i, b in enumerate(step['bytes']):
                         await port.mem(TX_BASE + i, b)
                     await port.send(TX_BASE, len(step['bytes']))
-                if not await until(dut, clock_ns, port.reader_finished, timeout):
+                if step['op'] == 'write' and not await until(dut, clock_ns, port.reader_finished, timeout):
                     raise Failure(f'line {line}: stream {name}: the reader never finished')
                 check_rules(line)
             elif step['op'] == 'read' and 'stream' in step['target']:
@@ -374,6 +391,27 @@ async def run_test(dut, port, interface, plan, test, delay=0):
                 consumed[name] = start + step['count']
                 if got != step['expect']:
                     raise Failure(f"line {line}: {name}.read({step['count']}) returned {fmt(got)}, expected {fmt(step['expect'])}")
+                check_rules(line)
+            elif step['op'] == 'read_packet' and 'stream' in step['target']:
+                name = step['target']['stream']
+                if interface['streams'][name]['port'] != 'writer':
+                    raise Failure(f'line {line}: packet reads come through the writer (stream {name})')
+                start = consumed.get(name, 0)
+
+                async def head():
+                    return await port.packet_head() is not None
+                if not await until(dut, clock_ns, head, timeout):
+                    raise Failure(f'line {line}: stream {name}: no packet arrived')
+                end, err = await port.packet_head()
+                async def stored():
+                    return await port.written() >= end
+                await until(dut, clock_ns, stored, timeout)
+                got = {'data': [await port.mem(RX_BASE + i) for i in range(start, end)], 'error': bool(err)}
+                await port.packet_pop()
+                consumed[name] = end
+                want = {'data': step['expect']['data'], 'error': bool(step['expect']['error'])}
+                if got != want:
+                    raise Failure(f"line {line}: {name}.read_packet() returned {fmt(got)}, expected {fmt(want)}")
                 check_rules(line)
             elif step['op'] == 'read' and 'peer' in step['target']:
                 peer = attached[step['target']['peer']]

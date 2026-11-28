@@ -289,7 +289,7 @@ configuration that closes a loop.
 | | Contexted (L3S) | A1 (LUT machines) | **A2 (actors)** |
 |---|---|---|---|
 | programs mapped (of 19) | 19 | 17 (I2C needs 6 logic cells) | **19** |
-| mesh-pin tests | all pass | I2C fast bus fails | **all pass** (Ethernet's 2nd test pending) |
+| mesh-pin tests | all pass | I2C fast bus fails | **all pass** |
 | I2C fastest SCL (clocks per period) | 10 | 16 | **10** |
 | transition / selected output | 1 clock / 0 | 3 / +1-2 | **1 / 0** |
 | I2C target tracks (wirelength) | 17 (28) | 67 (69) | **25 (25)** |
@@ -309,3 +309,63 @@ or case analysis) before A6, the GDS. The latency bound of A1 (two clocks)
 is for registered LUT4s; the actor's one clock is by construction. The
 workload is still the 19 programs: the full-protocol workload (receive
 paths, handshakes, both directions) is the next gate before promotion.
+
+## 10. The full-protocol workload: USB device, both directions (2026-11-28)
+
+The 19 programs are one demonstration per protocol, mostly one direction.
+The workload now grows function by function, each with a peer written
+from the specification that transmits and referees, compiled and
+pin-tested on the chip (L3S) and every candidate (A2).
+
+**USB low-speed device, receive** (`usb_device_rx.spt`): the host's
+tokens, data packets and handshakes, NRZI decoded and destuffed, to the
+host with their boundaries. New hardware, each a general mechanism:
+
+- shifter **end lookahead** (`fabric_shifter` burst [13], `end_follows`):
+  USB's end (SE0) comes after the last byte, so the tile holds each word
+  until the next word's first sample or the end level, which tags it the
+  packet's last. Proved for any word length 2-4 and any timing
+  (`formal/fabric_shifter` ahead_bmc/ahead_cover: every word pushed once,
+  in order, the pushed byte is the word, eop only as the frame ends).
+- the shifter's **end level as a mesh sink** (level 34).
+- **received packets to the host**: word-network bits 8/9 carry the eop
+  and err tags to the writer; `mesh_soc` queues four descriptors {err,
+  end}; host register 07 (count, overflow, error; a write pops), 1E/1F
+  (end).
+- the timer's **resync** input (grid_timer mode 3) from the compiler.
+
+**USB low-speed device, answering** (`usb_device.spt`): after a data
+packet with a good CRC16 the device sends the handshake its firmware
+armed (ACK, NAK), by itself, inside the turnaround; it answers nothing
+else. The bus sees every packet (the device's own answer comes back
+through its receiver, so the tests read the whole transaction). New:
+
+- **pins driven while a fabric level is high** (`pin dp: out = v while
+  driving`): the drive window is the fabric's, not the host's.
+- **packets out**: the reader tags a region's last byte eop and the
+  word-port transmitter takes it (`tx_eop`), so a burst ends on a packet.
+- the PID classifier is the word network's compare tap (DATA0/1: bits
+  0x77 = 0x43), read by a four-state machine; the turnaround and the EOP
+  (two bits of SE0, one of J) are a timer and two counters, no host step.
+- peer (`usb_host`): transmits SYNC, CRC5/CRC16, NRZI, stuffing and EOP;
+  decodes the chip's packets and referees its answer window (2 to
+  `timeout` bit times), its EOP, the bit grid and its release of the bus.
+
+| | Contexted (L3S) | A2 (actors) | 3 x 4 (L3) |
+|---|---|---|---|
+| usb_device_rx: maps / tracks / pins | yes / 14 / 2 of 2 | yes / 14 / 2 of 2 | yes / 14 |
+| usb_device: maps / tracks / pins | yes / 50 / 3 of 3 | yes / 52 / 3 of 3 | **no**: three timers, two cells |
+
+The machine's state gates the transmitter's start (`if link.DATA { go }
+else { 0 }`), written at the shifter: on L3S the shifter's contexts hold
+the states; a logic-cell reg reading the state does not map there (L3S's
+logic cells have one context: a proven limit of that chip, which A2's
+actor does not have). The 3 x 4 refusal is a resource limit (a receive
+bit clock, the turnaround and the transmit bit clock are three timers).
+
+Open, next: the device address (the network's one compare tap classifies
+the PID: a second tap, or the address in an actor, is a capacity
+question), IN with host-armed DATA and the ACK it expects back, a bad CRC
+(needs a peer that corrupts), and the DATA0/1 toggle. Then Ethernet
+receive (Manchester decode, preamble/SFD, CRC32 check, link pulses) and
+I2C reads.

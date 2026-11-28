@@ -13,7 +13,14 @@
 // - streams: rd_start with rd_base/rd_length sends that region through the
 //   reader (rd_active, rd_done); wr_start with wr_base/wr_length opens a
 //   receive region for the writer (wr_active, wr_done when full), and
-//   wr_count says how many bytes it has written.
+//   wr_count says how many bytes it has written;
+// - packets: each received byte tagged eop (the word network's bit 8, from
+//   the receive shifter) queues a descriptor {err (bit 9 of any byte of the
+//   packet), end: the bytes accepted into the region after it}; pk_count
+//   descriptors (at most 4; a fifth is dropped and sets pk_overflow), the
+//   oldest at pk_end/pk_err, pk_pop removes it. A region start clears them.
+//   The reader tags the last byte of each region it sends eop (bit 8): a
+//   region is one packet out.
 // The reader and writer pick their bank from their own address bit 10.
 // host_ev, seen/seen_clear and param_* pass straight to the mesh (its
 // host-sequenced steps). mesh_hold keeps the mesh alone in reset (the chip
@@ -44,6 +51,8 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   input wire rd_start, input wire [10:0] rd_base, rd_length, output wire rd_active, rd_done,
   input wire wr_start, input wire [10:0] wr_base, wr_length, output wire wr_active, wr_done,
   output wire [10:0] wr_count,
+  output wire [2:0] pk_count, output wire [10:0] pk_end, output wire pk_err, output reg pk_overflow,
+  input wire pk_pop,
   output wire [ROWS*COLS-1:0] host_valid, output wire [8*ROWS*COLS-1:0] host_byte);
   // Mesh <-> word-network endpoints.
   wire [15:0] m_rd_data, m_wr_data; wire m_rd_valid, m_rd_ready, m_wr_valid, m_wr_ready;
@@ -70,7 +79,16 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   grid_stream_reader #(.DEPTH(2)) reader(clk,rst_n,stream_en,rd_start,rd_base,rd_length,
     rq,m_ready[1],raddr,m_rvalid[1],m_rdata[15:8],r_valid,m_rd_ready && r_valid,rdq_data,
     rd_active,rd_done,r_err,r_queued,r_out);
-  assign m_rd_valid=r_valid; assign m_rd_data={8'd0,rdq_data};
+  // Packets out: the last byte of a reader region goes onto the word
+  // network tagged eop (bit 8), so a transmitter whose burst ends on a
+  // packet (fabric_shifter burst [6]) ends it there. One region is one
+  // packet.
+  reg [10:0] rd_left;
+  always @(posedge clk)
+    if(!rst_n) rd_left<=0;
+    else if(rd_start) rd_left<=rd_length;
+    else if(m_rd_valid && m_rd_ready && rd_left!=0) rd_left<=rd_left-1;
+  assign m_rd_valid=r_valid; assign m_rd_data={7'd0,rd_left==11'd1,rdq_data};
   grid_stream_writer #(.DEPTH(2)) writer(clk,rst_n,stream_en,wr_start,wr_base,wr_length,
     m_wr_valid,m_wr_ready,m_wr_data[7:0],wq,m_ready[2],waddr,wdata,wr_active,wr_done,w_err,w_queued);
   grid_stream_memory #(.USE_MACRO(USE_MACRO)) memory(clk,rst_n,mem_en,mem_off,{host_bank,host_bank,host_bank},
@@ -83,5 +101,27 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
     if(!rst_n || wr_start) written<=0;
     else if(wq && m_ready[2]) written<=written+1;
   assign wr_count=written;
+  // Packet descriptors.
+  reg [10:0] accepted; reg pk_bad;
+  reg [11:0] pk_q[0:3]; reg [1:0] pk_rd, pk_wr; reg [2:0] pk_n;
+  wire acc = m_wr_valid && m_wr_ready;
+  wire pk_in = acc && m_wr_data[8] && pk_n != 3'd4;
+  wire pk_out = pk_pop && pk_n != 3'd0;
+  always @(posedge clk)
+    if(!rst_n || wr_start) begin
+      accepted<=0; pk_bad<=0; pk_rd<=0; pk_wr<=0; pk_n<=0; pk_overflow<=0;
+    end else begin
+      if(acc) begin
+        accepted<=accepted+1;
+        pk_bad<=m_wr_data[8] ? 1'b0 : pk_bad || m_wr_data[9];
+      end
+      if(pk_in) begin pk_q[pk_wr]<={pk_bad || m_wr_data[9], accepted+11'd1}; pk_wr<=pk_wr+1; end
+      if(acc && m_wr_data[8] && pk_n == 3'd4 && !pk_out) pk_overflow<=1;
+      if(pk_out) pk_rd<=pk_rd+1;
+      pk_n<=pk_n+{2'b0,pk_in}-{2'b0,pk_out};
+    end
+  assign pk_count=pk_n;
+  // The head reads 0 while the queue is empty (its entries are not reset).
+  assign pk_end=pk_n!=3'd0 ? pk_q[pk_rd][10:0] : 11'd0; assign pk_err=pk_n!=3'd0 && pk_q[pk_rd][11];
 endmodule
 `default_nettype wire

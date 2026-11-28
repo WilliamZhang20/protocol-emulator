@@ -1,0 +1,406 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "dm": 1,
+  "dp": 0
+ },
+ "tests": [
+  {
+   "line": 94,
+   "name": "acknowledges a good data packet on its own",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      },
+      "timeout": 18
+     },
+     "kind": "usb_host",
+     "line": 95,
+     "name": "host"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      128,
+      210
+     ],
+     "line": 96,
+     "op": "write_packet",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 97,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      195,
+      1,
+      2,
+      3
+     ],
+     "line": 98,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      210
+     ],
+     "line": 99,
+     "op": "read",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       225,
+       133,
+       96
+      ],
+      "error": false
+     },
+     "line": 100,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       195,
+       1,
+       2,
+       3,
+       158,
+       158
+      ],
+      "error": false
+     },
+     "line": 101,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 104,
+   "name": "answers with whatever the firmware armed",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      },
+      "timeout": 18
+     },
+     "kind": "usb_host",
+     "line": 105,
+     "name": "host"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      128,
+      90
+     ],
+     "line": 106,
+     "op": "write_packet",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 107,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      195,
+      7
+     ],
+     "line": 108,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      90
+     ],
+     "line": 109,
+     "op": "read",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      128,
+      210
+     ],
+     "line": 110,
+     "op": "write_packet",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 111,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      195,
+      8
+     ],
+     "line": 112,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      210
+     ],
+     "line": 113,
+     "op": "read",
+     "target": {
+      "peer": "host"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 116,
+   "name": "answers only data packets: every packet on the bus, the answer included",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      },
+      "timeout": 18
+     },
+     "kind": "usb_host",
+     "line": 117,
+     "name": "host"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      128,
+      210
+     ],
+     "line": 118,
+     "op": "write_packet",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 119,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      210
+     ],
+     "line": 120,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 121,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      195,
+      66
+     ],
+     "line": 122,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       225,
+       133,
+       96
+      ],
+      "error": false
+     },
+     "line": 123,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       210
+      ],
+      "error": false
+     },
+     "line": 124,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       225,
+       133,
+       96
+      ],
+      "error": false
+     },
+     "line": 125,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       195,
+       66,
+       192,
+       142
+      ],
+      "error": false
+     },
+     "line": 126,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      210
+     ],
+     "line": 127,
+     "op": "read",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       210
+      ],
+      "error": false
+     },
+     "line": 128,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

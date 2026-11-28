@@ -1,0 +1,245 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "dm": 1,
+  "dp": 0
+ },
+ "tests": [
+  {
+   "line": 43,
+   "name": "receives tokens, data and a handshake with their boundaries",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      }
+     },
+     "kind": "usb_host",
+     "line": 44,
+     "name": "host"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      225,
+      5,
+      1
+     ],
+     "line": 45,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       225,
+       133,
+       96
+      ],
+      "error": false
+     },
+     "line": 46,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "bytes": [
+      195,
+      1,
+      2,
+      3
+     ],
+     "line": 47,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       195,
+       1,
+       2,
+       3,
+       158,
+       158
+      ],
+      "error": false
+     },
+     "line": 48,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "bytes": [
+      210
+     ],
+     "line": 49,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       210
+      ],
+      "error": false
+     },
+     "line": 50,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 53,
+   "name": "a SETUP transaction and a stuffed data packet back to back",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      }
+     },
+     "kind": "usb_host",
+     "line": 54,
+     "name": "host"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      45,
+      0,
+      0
+     ],
+     "line": 55,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      75,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255
+     ],
+     "line": 56,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "bytes": [
+      105,
+      5,
+      1
+     ],
+     "line": 57,
+     "op": "write",
+     "target": {
+      "peer": "host"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       45,
+       0,
+       16
+      ],
+      "error": false
+     },
+     "line": 58,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       75,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255,
+       254,
+       112
+      ],
+      "error": false
+     },
+     "line": 59,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       128,
+       105,
+       133,
+       96
+      ],
+      "error": false
+     },
+     "line": 60,
+     "op": "read_packet",
+     "target": {
+      "stream": "packets"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}
