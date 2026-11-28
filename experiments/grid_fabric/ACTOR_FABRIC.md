@@ -146,3 +146,111 @@ chip, same tiles):
 So the control-actor PEs that take over the machines (at most 3 per
 program today, 2 without the replica) must cost less than ~36k against
 the current chip, ~69k against the original, to be an area win too.
+
+## 7. A1 results: machines on logic cells, static routes (2026-11-28)
+
+Compiler `83db3f4` (protocol-emulator-compiler, `Lowering.machines_to_luts`):
+on a contract with no contexted cell, every machine becomes one-hot state
+registers in logic tiles and every machine-selected signal a registered
+LUT output; all switches are single-context. Baseline: the contexted chip
+`mesh_3x5_L3S`. Mesh-pin tests (`test_mesh_compiled`), same peers.
+
+**Mapping.** On the chip's own tile mix, all switches static, 17 of 19
+programs map (SPI and SWD included); the two I2C programs need 6 logic
+cells (44 LUTs: bus 18, ack 11, 15 delay LUTs) and the chip has 3. With
+6 logic cells (three timers become logic) both I2C programs map, but the
+timer-hungry programs (UART, Ethernet, the controller programs) lose
+their timers: the timer pool, not the logic, is then short.
+
+**Pins.**
+
+| Program | Contexted (L3S) | A1 static |
+|---|---|---|
+| 15 machine-free programs | pass | pass (Ethernet: first test passed, second running) |
+| SPI | pass | pass |
+| SWD | pass | pass, after two compiler fixes (below) |
+| I2C target: address, NACK, repeated START (40 clocks/half) | pass | pass |
+| I2C target: fast bus, 10 clocks per SCL period | pass | **fail** (NACK) |
+| I2C + UART, I2C at 10 clocks per period | pass | **fail** |
+| fastest SCL that passes (sweep, hold 1) | 10 clocks per period | 16 clocks per period |
+
+**Latency (moving state does add it).** A contexted switch changes state in
+one clock and selects outputs combinationally. A registered-LUT machine:
+- SWD mode, SPI select: each state's next value reads ≤ 4 signals, so one
+  LUT per state, **one clock** (the compiler's direct path);
+- I2C bus and ack, SPI open: **3 / 3 / 2 clocks**. Proven lower bound for
+  the I2C bus: IDLE's next value depends on 7 signals, a 4-input registered
+  LUT cannot compute it in one level, so ≥ 2 clocks on any LUT encoding.
+  The third clock is the compiler's packing (heuristic, improvable);
+- every selected output: +1 clock (a register), up to +2 for a nested
+  selection (`rx.start`).
+The fast-bus failure is this latency: from SCL fall to SDA driven for ACK
+is transition (3) + output (1) + pad, longer than the 5-clock SCL low.
+
+**Closely spaced events.** The LUT machine follows its source machine
+exactly, `transition_clocks` late, whenever events are at least that far
+apart (checked cycle by cycle on random events, now in
+`test_fabric_lower`). An event within that window after a transition is
+judged against the old state: for I2C, events 2 clocks apart diverge.
+Simultaneous events resolve by row priority as before.
+
+**Compiler fixes found by A1 (compiler failures, not hardware):**
+derived registers started at 0 (SDA pulled low after reset), now at their
+reset-state value; SWD's `sample = mode ? clock.rise : clock.fall` arrived
+one clock after its `shift`, now the block's other timing inputs are delayed
+to match (latency balance, only for shift/sample/in/CRC sinks).
+
+**Routing.** Moving I2C's machines out of the switches spreads them over 6
+cells that exchange their state: tracks 17 -> 67 (wirelength 28 -> 69) for
+the I2C target, 25 -> 76 for I2C + UART. SPI 29 -> 31, SWD 18 -> 19.
+
+**What A2's control actor must provide** (measured, not assumed): one-clock
+transitions with wide event selection (I2C needs 7 signals per state), and
+same-clock output selection (SWD's sample, I2C's ACK): registered outputs
+were the open question in section 3, and they fail the fast bus. Its state
+must stay in one PE: spreading a machine over LUT cells quadruples its
+routes.
+
+## 8. Functional-locality census (2026-11-28)
+
+`locality_census.py` (compiler): every producer -> consumer pair the mesh
+carries, per program, on the chip (`mesh_3x5_L3S`), all 19 programs.
+Rate classes from the graph: `bit` (per bit or clock), `word`, `txn`.
+Critical: a bit-rate signal into a pad, a shifter's shift/sample/in, a CRC,
+or a timer/counter step.
+
+| Pair (all programs) | Programs | Pairs | Critical | Mean hops | Max hops |
+|---|---|---|---|---|---|
+| shifter -> timer (frame start/stop) | 14 | 28 | 0 (word rate) | 1.5 | 3 |
+| timer -> shifter (shift/sample tick) | 14 | 21 | 19 | 1.76 | 3 |
+| pin -> shifter | 8 | 16 | 11 | 1.62 | 3 |
+| shifter -> pad | 13 | 14 | 14 | **2.57** | 4 |
+| shifter -> logic | 2 | 8 | 0 | 1.75 | 2 |
+| logic -> pad | 2 | 6 | 6 | 1.33 | 2 |
+| timer -> logic | 2 | 6 | 0 | 2.83 | 5 |
+| timer -> counter | 4 | 4 | 4 | 2.0 | 5 |
+
+The timer <-> shifter pair dominates (49 pairs, 14 of 19 programs, most of
+the critical ones): the direct timer -> shifter tick link (A4) is supported.
+Shifter -> pad is the longest critical pair. The shifter -> CRC link already
+exists (`crc_link`) and is a hard placement rule (the shifter must sit west
+or east of its CRC).
+
+**Tile arrangements** (same tile multiset as the chip, all switches static,
+the 17 programs that map on every candidate; sums over programs):
+
+| Arrangement (rows top to bottom) | Maps | Tracks | Wirelength | Critical hops | Worst hops |
+|---|---|---|---|---|---|
+| chip: `T L I L T / S C S C I / T K L K T` | 17 | 234 | 248 | 114 | 5 |
+| `T I T I T / S C L C S / K L T L K` | 17 | 215 | 232 | 106 | 5 |
+| `T I L I T / S C T C S / T K L K L` | 17 | 214 | 229 | 103 | 5 |
+| `T I T I T / C S L S C / K L T L K` | 17 | 224 | 236 | **98** | **4** |
+| `I T L T I / C S K S C / L T K T L` | 17 | 223 | 236 | 102 | 5 |
+| layouts without a shifter beside a CRC | 15 | | | | |
+
+Rearranging is worth 8 % of tracks and up to 14 % of critical hops and does
+not change what maps: second order. The first-order limits A1 found are
+capacity and flexibility of the PEs: a machine needs one control PE, not
+six logic cells, and the timer pool runs short as soon as cells are taken
+from it (the merged timer/counter, A3). Arrangement is revisited in A5 with
+the new PE mix; the chip keeps its layout until then.
