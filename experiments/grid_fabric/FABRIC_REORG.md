@@ -1,5 +1,11 @@
 # Fabric reorganisation (2026-11-26)
 
+> **Direction (user, 2026-11-28): [ACTOR_FABRIC.md](ACTOR_FABRIC.md).** The mesh
+> evolves into a stateful dataflow CGRA: static routing, protocol state in
+> PEs (control actors) instead of contexted switches, a merged
+> timer/counter, restrained hybrid interconnect, usable capacity as the
+> metric. Where this file differs, ACTOR_FABRIC.md is the plan.
+
 **Why.** After "reconfigurable lanes" the design grew a second fabric
 beside the first. `grid_lane_core` is a controller plus its own two
 timers, coded shifter and CRC, all joined by a private 64-line crossbar.
@@ -167,6 +173,17 @@ O3. **Static/dynamic split prototype.** Store every selector once (static)
       the candidate; a program that maps on the baseline and not on the
       candidate is a cost of the split, classified proven or heuristic.
 
+   **Routing result (2026-11-27).** The 3 x 5 with SRAM1 at the right edge
+   (2b49253, run 46028259749) **routed to 0 detailed-routing violations**
+   (25,439 -> 0 in 14 iterations, 17:58-20:51; wire 2.02 m: Metal2 0.72,
+   Metal3 1.07, Metal4 0.23) and cleared the first antenna repair (49
+   violations, rerouted to 0); it was cancelled by the 6 h CI limit during
+   the second antenna reroute (3 violations). Global-route overflow 19. The
+   time went to post-CTS repair (48 min) and post-GRT repair (53 min, the
+   latch paths routing steps 3-4 fix) and detailed routing (2 h 53 min).
+   The remaining blocker is run time, not routability: 3b1d1f9 carries
+   steps 1-4 and the area reduction.
+
 O4. **Local connections.** A few optional direct links between frequently
    paired resources (timer -> shifter shift/sample, shifter -> CRC as
    `crc_link` today), each a contract edge the compiler may use or ignore,
@@ -180,6 +197,29 @@ O6. **Exhaustive oracle for the mesh.** For a program and a contract,
    enumerate kind-compatible placements and route exactly (or prove that
    none routes), so a failure is classified as proven (counting or oracle)
    or heuristic. Used where its search is feasible.
+O8. **Primitive mix (user, 2026-11-27).** Investigations, nothing removed
+   until measured:
+   - *Timer/counter unification.* Ethernet takes all four timers, USB both
+     counters; a general timing/counting tile could loosen the mix. It must
+     keep zero-threshold behaviour, capture and resynchronisation; measure
+     its area against a timer plus a counter.
+   - *CRC as its own tile.* Only USB, Ethernet and the CRC trace use it,
+     one each: measure whether one assignable CRC suffices for the
+     single-protocol workload and whether placing it beside a shifter
+     reduces routing. Not evidence for folding it into the shifter (that
+     removes independent use or costs every shifter).
+   - *Coded-shifter feature cost.* USB still uses counters and 19 LUTs
+     beside a coded shifter: per feature, area and use, and whether the
+     compiler misses a built-in feature, the tile cannot expose it, or the
+     protocol needs the logic. Before any USB-specific hardware.
+   - *Logic connectivity as a resource.* USB uses 19 of 24 LUTs in all
+     three logic tiles; Ethernet one logic tile but every timer. Compare
+     balanced mixes (and small configurable timing resources) on 3 x 4
+     and 3 x 5.
+   - *Word network.* Its fixed reach lists and single source/sink may
+     limit composition (one protocol can need several streams or
+     consumers); quantify once more programs map.
+
 O7. **Report and decide.** Per candidate: which complete protocols map and
    pass at the pins, resource and configuration-bit use, area (local
    yosys with the CI liberty), timing, and physical routing for the
