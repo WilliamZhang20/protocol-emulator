@@ -648,6 +648,19 @@ routing; signoff keeps `mesh_chip.sdc`), which is kept: the store changes
 only while the mesh is held and every path out of it is false, so it
 needs no clock trees. Read a cancelled job's final log before diagnosing.
 
+**Second GDS (b06ffd1, job 140980597047): physically through.** With the
+actor cuts, post-CTS setup repair took a minute, detailed routing 80 min
+to 0 violations (L3S, 3b1d1f9: 3 h 06 to 5), and signoff had no setup
+violations; KLayout DRC and LVS passed (antenna: 1 net reported, not an
+error). The run failed only on hold at signoff: 4,169 paths, every one a
+clk -> cfg_strobe path from the store's `a_q` (enable gates, -23 ns),
+`d_q` (latch D, -2.8 ns) or `clr_q` (latch reset, -1.8 ns), checked by
+the old hold multicycle against the closing edge itself. By the store's
+busy protocol none of them can change near a strobe edge (`a_q`/`d_q`
+two clocks after the latches close at the earliest; a clear never on a
+write's edge), so `mesh_chip.sdc` now makes clk -> cfg_strobe a hold
+false path, with the argument written beside it.
+
 **Tests.** Every program passes at the mesh pins on `mesh_3x5_A3B` (26 of
 26) and on A3, and the chip-pin test (`test_chip`, the chip top with every
 A3B program) runs in the pre-commit hook.

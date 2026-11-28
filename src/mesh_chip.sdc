@@ -130,7 +130,21 @@ set_false_path -from [get_clocks {cfg_strobe}] -to [get_clocks {clk}]
 # own clk edge (clock 1), so by default OpenSTA assumes d_q launched at
 # clock 1, one period late: post-route setup repair then worked on ~4,230
 # latch D pins at +0.79 ns real slack (run 46054082523). Setup multicycle 2
-# is the real launch; hold multicycle 2 with it keeps the hold check one
-# edge before the default, as above.
+# is the real launch.
 set_multicycle_path -setup 2 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
-set_multicycle_path -hold 2 -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
+# Hold: no clk-launched signal into the store's latches or enable gates
+# can change near a strobe edge, by construction (src/mesh_cfg.v):
+#   - a_q (the enable decode, gating checks) and d_q (latch D) load only
+#     when !busy, and busy = staged | strobe | settle, so after a write
+#     staged at clock 0 (strobe falls, latches close, at clock 2) they
+#     change at clock 4 at the earliest;
+#   - clr_q (latch RESET_B, removal) is a control write, a different host
+#     command from a configuration write (mesh_host issues one per `go`),
+#     so its release never shares the clk edge a strobe falls on.
+# The hold multicycle above this one (b06ffd1 and before) paired each of
+# them with the closing edge itself: signoff reported 4,169 hold
+# violations, -23 ns on the enable gates (the gating check off by a
+# strobe period), -2.8 ns on latch D, -1.8 ns on RESET_B, every one a
+# clk -> cfg_strobe path from a_q, d_q or clr_q (run of job 140980597047;
+# placement, routing, setup, DRC and LVS passed).
+set_false_path -hold -from [get_clocks {clk}] -to [get_clocks {cfg_strobe}]
