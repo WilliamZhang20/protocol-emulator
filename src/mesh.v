@@ -207,14 +207,14 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       wire ea=run && fa[0] && sinks[c][1] && (fa[4] || !va), eb=run && fb[0] && sinks[c][3] && (fb[4] || !vb);
       assign oe[c]=(ea ? 8'd1<<fa[3:1] : 8'd0) | (eb ? 8'd1<<fb[3:1] : 8'd0);
       assign ov[c]=(ea && fa[4] && va ? 8'd1<<fa[3:1] : 8'd0) | (eb && fb[4] && vb ? 8'd1<<fb[3:1] : 8'd0);
-      assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==TIMER) begin: tm
       wire tick, running, configured, level, rise, fall; wire [15:0] cap;
       grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],1'b0,16'd0,16'd0,tile[47:32],tile[63:48],
         sinks[c][0],sinks[c][1],sinks[c][2],tick,running,configured,level,rise,fall,cap);
       assign lraw={fall,rise,level,tick};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==SHIFTER) begin: sh
       wire word, stop, out, active; wire [2:0] nc; wire [15:0] rxd, st;
@@ -255,14 +255,14 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tw[load][12:0]),
         .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
       assign lraw={2'b0,hit,ge};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==LOGIC_K) begin: lg
       wire [3:0] lo;
       mesh_logic #(.ACTOR(ACTOR)) t(.clk(clk),.rst_n(rst_n),.run(run),.cfg({cc[TRANS_LSB+:56],cc[TRACK_LSB+48+:144],tile}),
         .in({xk,sinks[c]}),.hw(param_we && param_cell==c),.hdata(param_data[3:0]),.hmask(param_data[7:4]),.loc(lo));
       assign lraw=lo;
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else begin: cr
       wire ok, out, tl; wire [31:0] value;
@@ -277,7 +277,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       // serial out when bit 10 of the shape word (crc register 6; fabric_crc
       // keeps bits 9:0) selects it.
       assign lraw= c==WORD_PORT ? {tap_mismatch,tap_match,tile[16*6+10] ? out : rd_valid,ok} : {2'b0,out,ok};
-      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0;
     end
     // A shifter's FIFOs connect to the word network if it is the

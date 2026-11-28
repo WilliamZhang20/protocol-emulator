@@ -4,6 +4,12 @@ on:
   push:
   workflow_dispatch:
 
+# A GDS build takes hours: a newer push to the same branch supersedes an
+# older build still running, so CI always reports on the latest version.
+concurrency:
+  group: gds-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gds:
     runs-on: ubuntu-24.04
