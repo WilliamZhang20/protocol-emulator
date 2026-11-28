@@ -1,0 +1,569 @@
+{
+ "calls": {
+  "channel": 0,
+  "fails": [],
+  "functions": {
+   "scan8": {
+    "id": 1,
+    "params": [
+     {
+      "max": 255,
+      "min": 0,
+      "name": "tms",
+      "type": "int"
+     },
+     {
+      "max": 255,
+      "min": 0,
+      "name": "tdi",
+      "type": "int"
+     }
+    ],
+    "result": "replies",
+    "sends": [
+     {
+      "value": {
+       "param": "tms"
+      }
+     },
+     {
+      "value": {
+       "param": "tdi"
+      }
+     }
+    ]
+   },
+   "step": {
+    "id": 0,
+    "params": [
+     {
+      "max": 1,
+      "min": 0,
+      "name": "tms",
+      "type": "int"
+     },
+     {
+      "max": 1,
+      "min": 0,
+      "name": "tdi",
+      "type": "int"
+     }
+    ],
+    "result": "replies",
+    "sends": [
+     {
+      "value": {
+       "param": "tms"
+      }
+     },
+     {
+      "value": {
+       "param": "tdi"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "tck": 0,
+  "tdi": 2,
+  "tdo": 3,
+  "tms": 1
+ },
+ "tests": [
+  {
+   "line": 33,
+   "name": "reset and read a 32-bit IDCODE",
+   "peers": [
+    {
+     "args": {
+      "tck": {
+       "pin": 0
+      },
+      "tdi": {
+       "pin": 2
+      },
+      "tdo": {
+       "pin": 3
+      },
+      "tms": {
+       "pin": 1
+      }
+     },
+     "kind": "jtag_tap",
+     "line": 34,
+     "name": "tap"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 35,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 36,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 37,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 38,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 39,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 40,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 41,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 42,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 43,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "expect": [
+      119
+     ],
+     "function": "scan8",
+     "line": 44,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "expect": [
+      4
+     ],
+     "function": "scan8",
+     "line": 45,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "expect": [
+      160
+     ],
+     "function": "scan8",
+     "line": 46,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 128
+     },
+     "expect": [
+      27
+     ],
+     "function": "scan8",
+     "line": 47,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 48,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 49,
+     "op": "call"
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 52,
+   "name": "select IR and write and read the user DR",
+   "peers": [
+    {
+     "args": {
+      "tck": {
+       "pin": 0
+      },
+      "tdi": {
+       "pin": 2
+      },
+      "tdo": {
+       "pin": 3
+      },
+      "tms": {
+       "pin": 1
+      }
+     },
+     "kind": "jtag_tap",
+     "line": 53,
+     "name": "tap"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 54,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 55,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 56,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 57,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 58,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 59,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 60,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 61,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 62,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 63,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "expect": [
+      1
+     ],
+     "function": "step",
+     "line": 64,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 1,
+      "tms": 0
+     },
+     "expect": [
+      0
+     ],
+     "function": "step",
+     "line": 65,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 66,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 1,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 67,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 68,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 69,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 70,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 71,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 72,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 90,
+      "tms": 128
+     },
+     "expect": [
+      0
+     ],
+     "function": "scan8",
+     "line": 73,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 74,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 75,
+     "op": "call"
+    },
+    {
+     "count": 1,
+     "expect": [
+      90
+     ],
+     "line": 76,
+     "op": "read",
+     "target": {
+      "peer": "tap"
+     }
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 77,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 78,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 79,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 195,
+      "tms": 128
+     },
+     "expect": [
+      90
+     ],
+     "function": "scan8",
+     "line": 80,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 1
+     },
+     "function": "step",
+     "line": 81,
+     "op": "call"
+    },
+    {
+     "args": {
+      "tdi": 0,
+      "tms": 0
+     },
+     "function": "step",
+     "line": 82,
+     "op": "call"
+    },
+    {
+     "count": 1,
+     "expect": [
+      195
+     ],
+     "line": 83,
+     "op": "read",
+     "target": {
+      "peer": "tap"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

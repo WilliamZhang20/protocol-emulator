@@ -36,7 +36,7 @@ fabric_edge_TASKS := bmc prove cover
 byte_tile_TASKS := roundtrip checksum cover_roundtrip cover_checksum
 controller_TASKS := bmc cover
 lane_controller_TASKS := prove cover
-grid_timer_TASKS := prove cover
+grid_timer_TASKS := prove cover counter_prove counter_cover
 grid_lane_core_TASKS := prove cover
 fabric_core_TASKS := bmc cover
 

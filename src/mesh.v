@@ -211,9 +211,13 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==TIMER) begin: tm
       wire tick, running, configured, level, rise, fall; wire [15:0] cap;
-      grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],1'b0,16'd0,16'd0,tile[47:32],tile[63:48],
+      // A host write of register 0 while running is the counter's limit
+      // (the counter function, mode bit 2 = tile[34]; ACTOR_FABRIC.md A3).
+      wire lw=loaded && param_we && param_cell==c && param_addr==3'd0;
+      grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],lw,param_data,16'd1,tile[47:32],tile[63:48],
         sinks[c][0],sinks[c][1],sinks[c][2],tick,running,configured,level,rise,fall,cap);
-      assign lraw={fall,rise,level,tick};
+      // As a counter its locals are fabric_counter's: at_least (level), reached (tick).
+      assign lraw= tile[34] ? {2'b0,tick,level} : {fall,rise,level,tick};
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==SHIFTER) begin: sh

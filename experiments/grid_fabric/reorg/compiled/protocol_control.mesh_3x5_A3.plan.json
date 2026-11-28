@@ -1,0 +1,55 @@
+{
+ "calls": {
+  "channel": 0,
+  "fails": [],
+  "functions": {
+   "wait_for_high": {
+    "id": 0,
+    "params": [],
+    "result": null,
+    "sends": []
+   },
+   "wait_for_low": {
+    "id": 1,
+    "params": [],
+    "result": null,
+    "sends": []
+   }
+  }
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {},
+ "tests": [
+  {
+   "line": 26,
+   "name": "actor takes the high transition",
+   "peers": [],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {},
+     "function": "wait_for_high",
+     "line": 27,
+     "op": "call"
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 30,
+   "name": "actor takes the low transition",
+   "peers": [],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {},
+     "function": "wait_for_low",
+     "line": 31,
+     "op": "call"
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

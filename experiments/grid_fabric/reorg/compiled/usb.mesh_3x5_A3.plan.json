@@ -1,0 +1,160 @@
+{
+ "calls": {
+  "channel": 1,
+  "fails": [],
+  "functions": {
+   "transmit": {
+    "id": 0,
+    "params": [
+     {
+      "name": "packet",
+      "type": "bytes",
+      "via": 0
+     }
+    ],
+    "result": null,
+    "sends": []
+   }
+  }
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "dm": 1,
+  "dp": 0
+ },
+ "tests": [
+  {
+   "line": 64,
+   "name": "sends a data packet",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      }
+     },
+     "kind": "usb_host",
+     "line": 65,
+     "name": "host_port"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {
+      "packet": [
+       128,
+       195,
+       1,
+       255,
+       255,
+       128,
+       126,
+       63
+      ]
+     },
+     "function": "transmit",
+     "line": 66,
+     "op": "call"
+    },
+    {
+     "count": 7,
+     "expect": [
+      195,
+      1,
+      255,
+      255,
+      128,
+      126,
+      63
+     ],
+     "line": 67,
+     "op": "read",
+     "target": {
+      "peer": "host_port"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 70,
+   "name": "sends packets back to back",
+   "peers": [
+    {
+     "args": {
+      "bit": 33,
+      "dm": {
+       "pin": 1
+      },
+      "dp": {
+       "pin": 0
+      }
+     },
+     "kind": "usb_host",
+     "line": 71,
+     "name": "host_port"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {
+      "packet": [
+       128,
+       195,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255,
+       255
+      ]
+     },
+     "function": "transmit",
+     "line": 72,
+     "op": "call"
+    },
+    {
+     "args": {
+      "packet": [
+       128,
+       195
+      ]
+     },
+     "function": "transmit",
+     "line": 73,
+     "op": "call"
+    },
+    {
+     "count": 10,
+     "expect": [
+      195,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      255,
+      195
+     ],
+     "line": 74,
+     "op": "read",
+     "target": {
+      "peer": "host_port"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

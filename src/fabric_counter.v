@@ -28,6 +28,10 @@ module fabric_counter (
     output wire        ge,
     output wire        hit,
     output wire [7:0]  count
+`ifdef FORMAL
+    // Internal state for formal correspondence proofs.
+    , output wire [26:0] f_state
+`endif
 );
   wire [7:0]  match;
   wire [12:0] step;
@@ -40,6 +44,9 @@ module fabric_counter (
   wire step_now  = lines[step[5:0]];
   wire data      = lines[{1'b1, step[10:6]}];
   wire clear_now = lines[{1'b0, clear}];
+`ifdef FORMAL
+  assign f_state = {match, step, clear, last};
+`endif
   wire [7:0] inc = value == 8'hff ? value : value + 8'd1;
 
   reg [7:0] next;

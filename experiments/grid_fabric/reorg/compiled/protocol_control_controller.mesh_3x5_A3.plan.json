@@ -1,0 +1,60 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "rx": 1,
+  "tx": 0
+ },
+ "tests": [
+  {
+   "line": 39,
+   "name": "controller backend advances protocol and starts the shifter",
+   "peers": [
+    {
+     "args": {
+      "bit": 64,
+      "from_chip": {
+       "pin": 0
+      },
+      "to_chip": {
+       "pin": 1
+      }
+     },
+     "kind": "uart_device",
+     "line": 40,
+     "name": "terminal"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      165
+     ],
+     "line": 41,
+     "op": "write",
+     "target": {
+      "stream": "send"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      165
+     ],
+     "line": 42,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

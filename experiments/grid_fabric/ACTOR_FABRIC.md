@@ -518,3 +518,55 @@ and the actor candidate, now over the I2C target in both directions, the
 USB device and Ethernet receive: pin timing, missed or simultaneous
 events, buffers, routing and physical area, not only whether the graph
 maps.
+
+## 12. A3: the merged timer/counter PE (2026-11-28)
+
+One PE kind times and counts. `grid_timer` gains a counter function (mode
+bit 2): `first` is the limit and the count runs down from it in the timer's
+own `remaining` register (remaining = limit - count, saturating at 0).
+`level` is count >= limit and `tick` the reached pulse; mode[1:0] is the step
+rule (every step, runs of ones, runs of zeros, runs of equal bits). The
+counter's step, data and clear arrive on the timer's start, stop and aux
+sinks, the same sink numbers as the counter cell, and in counter mode the
+mesh presents the locals in the counter cell's order, so the compiler's
+counter ports are unchanged. A host limit write (register 0 while running)
+is the timer's live write; it sets the limit and restarts the count, as the
+counter's contract allows (rewritten while idle).
+
+**Proof.** `formal/grid_timer/grid_timer_counter` proves the merged cell's
+counter function equal to `fabric_counter` as the mesh sees it (the reached
+pulse registered at the cell boundary, REG=1), clock for clock: every step
+rule, any 8-bit limit, any input sequence, enable dropping and returning,
+and host limit writes at count 0 (k-induction, with the state
+correspondence as invariants). A mutant of the equal-bits restart fails it.
+The timer's own proof is unchanged (its harness now fixes mode bit 2 to 0),
+and so is `fabric_counter`'s.
+
+**Area** (CI IHP liberty, local yosys, per cell):
+
+| Cell | Area (µm²) |
+|---|---|
+| timer (`grid_timer`, before) | 16,601 |
+| counter (`fabric_counter`) | 7,943 |
+| merged timer/counter | 19,273 (+2,672, +16% over the timer) |
+
+A variant that reuses the unused `period` register as limit - 1 for the
+equal-bits restart saves 476 µm² (2.5%) but ties the cell's behaviour to
+the compiler's encoding; not taken.
+
+**Mapping and pins.** `mesh_3x5_A3` is A2 with the two counter cells as
+merged cells (a pool of six). It compiles the same 27 programs as A2 (the
+same two hardware refusals), and every committed program passes at the
+pins on it (26 of 26, `ethernet_tx_coded` included), including every program with counters (`usb`,
+`usb_device`, `usb_device_in`, `spi`). The compiler's change is the pool
+(a counter takes a timer cell; one tile per cell), the counter's
+encoding as timer mode bit 2, and host steps keyed by the block's kind,
+not the cell's.
+
+**What the merge buys.** Six merged cells cost more than four timers and
+two counters (115.6k against 82.3k µm²). The pool's peak demand on the
+workload is five (the USB device's answers: three timers and two counters;
+Ethernet's transmitter takes four timers), so a pool of five should carry
+every program and free a cell (checked in A5). That freed slot (a new cell kind or a
+rearrangement for flexibility) is A5's question, decided by the workload
+sweep; A3 shows the pool is interchangeable.

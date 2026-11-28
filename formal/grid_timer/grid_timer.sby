@@ -1,22 +1,44 @@
 [tasks]
 prove
 cover
+counter_prove
+counter_cover
 
 [options]
 prove: mode prove
 prove: depth 6
 cover: mode cover
 cover: depth 20
+counter_prove: mode prove
+counter_prove: depth 8
+counter_cover: mode cover
+counter_cover: depth 16
 
 [engines]
-prove: smtbmc boolector
-cover: smtbmc boolector
+smtbmc boolector
 
 [script]
-read -formal -sv grid_timer.v
-read -formal -sv grid_timer_properties.sv
-prep -top grid_timer_properties
+prove: read -formal -sv grid_timer.v
+prove: read -formal -sv grid_timer_properties.sv
+prove: prep -top grid_timer_properties
+cover: read -formal -sv grid_timer.v
+cover: read -formal -sv grid_timer_properties.sv
+cover: prep -top grid_timer_properties
+# The counter function (mode bit 2, ACTOR_FABRIC.md A3) against fabric_counter.
+counter_prove: read -formal -sv config_bank.v
+counter_prove: read -formal -sv fabric_counter.v
+counter_prove: read -formal -sv grid_timer.v
+counter_prove: read -formal -sv grid_timer_counter_properties.sv
+counter_prove: prep -top grid_timer_counter_properties
+counter_cover: read -formal -sv config_bank.v
+counter_cover: read -formal -sv fabric_counter.v
+counter_cover: read -formal -sv grid_timer.v
+counter_cover: read -formal -sv grid_timer_counter_properties.sv
+counter_cover: prep -top grid_timer_counter_properties
 
 [files]
 ../../src/grid_timer.v
+../../src/config_bank.v
+../../src/fabric_counter.v
 grid_timer_properties.sv
+grid_timer_counter_properties.sv

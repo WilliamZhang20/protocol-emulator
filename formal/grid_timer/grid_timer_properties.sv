@@ -15,6 +15,7 @@ module grid_timer_properties (input wire clk);
   (* anyseq *) reg arm, cfg_we, live_we, start, stop, aux;
   (* anyseq *) reg [W-1:0] cfg_first, cfg_period, live_first, live_period;
   (* anyconst *) reg [15:0] mode;
+  always @(*) assume (mode[2] == 0);   // the timer functions (the counter: grid_timer_counter_properties.sv)
   (* anyconst *) reg [W-1:0] phase;
   wire tick, running, configured, level, rise, fall;
   wire [W-1:0] captured;

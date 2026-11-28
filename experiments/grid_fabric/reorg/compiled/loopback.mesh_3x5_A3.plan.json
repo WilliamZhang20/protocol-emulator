@@ -1,0 +1,58 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "in_wire": 1,
+  "out_wire": 0
+ },
+ "tests": [
+  {
+   "line": 31,
+   "name": "bytes come back",
+   "peers": [],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      104,
+      101,
+      108,
+      108,
+      111
+     ],
+     "line": 33,
+     "op": "write",
+     "target": {
+      "stream": "send"
+     }
+    },
+    {
+     "count": 5,
+     "expect": [
+      104,
+      101,
+      108,
+      108,
+      111
+     ],
+     "line": 34,
+     "op": "read",
+     "target": {
+      "stream": "recv"
+     }
+    }
+   ],
+   "wires": [
+    [
+     0,
+     1
+    ]
+   ]
+  }
+ ]
+}
