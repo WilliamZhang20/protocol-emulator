@@ -357,8 +357,10 @@ async def run_test(dut, port, interface, plan, test, delay=0):
             line = step['line']
             # A packet write is one reader region: the reader tags its last
             # byte eop (mesh_soc), which ends a transmitter's packet burst.
-            # It is armed, not awaited: the transmitter takes the bytes when
-            # its packet starts. A write waits for the previous one to leave.
+            # Writes are armed, not awaited (the source's model: a stream
+            # queues): a transmitter takes the bytes when its frames start
+            # (an armed answer, an I2C read). A write waits for the previous
+            # one to leave.
             if step['op'] in ('write', 'write_packet') and 'stream' in step['target']:
                 name = step['target']['stream']
                 if interface['streams'].get(name, {}).get('port') != 'reader':
@@ -369,8 +371,6 @@ async def run_test(dut, port, interface, plan, test, delay=0):
                     for i, b in enumerate(step['bytes']):
                         await port.mem(TX_BASE + i, b)
                     await port.send(TX_BASE, len(step['bytes']))
-                if step['op'] == 'write' and not await until(dut, clock_ns, port.reader_finished, timeout):
-                    raise Failure(f'line {line}: stream {name}: the reader never finished')
                 check_rules(line)
             elif step['op'] == 'read' and 'stream' in step['target']:
                 name = step['target']['stream']
@@ -411,7 +411,8 @@ async def run_test(dut, port, interface, plan, test, delay=0):
                 consumed[name] = end
                 want = {'data': step['expect']['data'], 'error': bool(step['expect']['error'])}
                 if got != want:
-                    raise Failure(f"line {line}: {name}.read_packet() returned {fmt(got)}, expected {fmt(want)}")
+                    raise Failure(f"line {line}: {name}.read_packet() returned {fmt(got['data'])} error {got['error']:d}, "
+                                  f"expected {fmt(want['data'])} error {want['error']:d}")
                 check_rules(line)
             elif step['op'] == 'read' and 'peer' in step['target']:
                 peer = attached[step['target']['peer']]

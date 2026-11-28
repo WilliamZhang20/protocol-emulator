@@ -166,7 +166,7 @@ their timers: the timer pool, not the logic, is then short.
 
 | Program | Contexted (L3S) | A1 static |
 |---|---|---|
-| 15 machine-free programs | pass | pass (Ethernet: first test passed, second running) |
+| 15 machine-free programs | pass | pass (Ethernet: both tests) |
 | SPI | pass | pass |
 | SWD | pass | pass, after two compiler fixes (below) |
 | I2C target: address, NACK, repeated START (40 clocks/half) | pass | pass |
@@ -310,7 +310,7 @@ is for registered LUT4s; the actor's one clock is by construction. The
 workload is still the 19 programs: the full-protocol workload (receive
 paths, handshakes, both directions) is the next gate before promotion.
 
-## 10. The full-protocol workload: USB device, both directions (2026-11-28)
+## 10. The full-protocol workload: USB, Ethernet and I2C, both directions (2026-11-28)
 
 The 19 programs are one demonstration per protocol, mostly one direction.
 The workload now grows function by function, each with a peer written
@@ -354,7 +354,10 @@ through its receiver, so the tests read the whole transaction). New:
 | | Contexted (L3S) | A2 (actors) | 3 x 4 (L3) |
 |---|---|---|---|
 | usb_device_rx: maps / tracks / pins | yes / 14 / 2 of 2 | yes / 14 / 2 of 2 | yes / 14 |
-| usb_device: maps / tracks / pins | yes / 50 / 3 of 3 | yes / 52 / 3 of 3 | **no**: three timers, two cells |
+| usb_device (OUT + handshake): maps / tracks / pins | yes / 51 / 3 of 3 | yes / 52 / 3 of 3 | **no**: three timers, two cells |
+| usb_device_in (IN + data + CRC16): maps / tracks / pins | yes / 53 / 2 of 2 | yes / 45 / 2 of 2 | **no**: three timers |
+| ethernet_rx (frames, FCS check): maps / tracks / pins | yes / 14 / 3 of 3 | yes / 14 / 3 of 3 | yes / 13 |
+| i2c_target_rw (writes and reads): maps / tracks / pins | yes / 31 / 4 of 4 | yes / 41 / 4 of 4 | yes / 26 |
 
 The machine's state gates the transmitter's start (`if link.DATA { go }
 else { 0 }`), written at the shifter: on L3S the shifter's contexts hold
@@ -363,9 +366,124 @@ logic cells have one context: a proven limit of that chip, which A2's
 actor does not have). The 3 x 4 refusal is a resource limit (a receive
 bit clock, the turnaround and the transmit bit clock are three timers).
 
-Open, next: the device address (the network's one compare tap classifies
-the PID: a second tap, or the address in an actor, is a capacity
-question), IN with host-armed DATA and the ACK it expects back, a bad CRC
-(needs a peer that corrupts), and the DATA0/1 toggle. Then Ethernet
-receive (Manchester decode, preamble/SFD, CRC32 check, link pulses) and
-I2C reads.
+**USB IN** (`usb_device_in.spt`): after an IN token the device sends
+the armed data packet itself; the transmitter appends the CRC16 from a
+linked CRC cell (`crc_tail_bits`), and its own packet comes back through
+the receiver with the CRC bytes, a check of what went on the bus. The
+transmitter starts on the transmit bit clock's first tick, so its first
+bit is on the grid by construction.
+
+**Ethernet receive** (`ethernet_rx.spt`, 10BASE-T at 40 MHz, four clocks a
+bit): every rise of the line is on the half-bit grid, so a half-bit timer
+resynchronised on rises samples the middle of each half; the SFD is the
+first pair of rises one bit apart (the preamble's come two apart); the
+end of frame is TP_IDL's Manchester code violation. New, each general:
+
+- **a resync never removes a due tick** (`grid_timer` mode 3): an edge
+  arriving as a tick was due used to reload the count and drop that tick
+  (a lost sample per rise on a 2-clock half-bit grid); the tick now
+  happens and the edge moves the next one. Formal reference model updated
+  (prove and cover pass).
+- **a Manchester code violation ends a lookahead burst** (`fabric_shifter`
+  burst [13] with Manchester receive): the bit after the last byte, with
+  equal halves, ends the frame like the end level and is neither data nor
+  given to the CRC link (formal: the lookahead harness runs Manchester
+  too, with a cover of a violation-ended packet).
+- **a received packet tagged with the CRC check** (`check_crc`, shifter io
+  [13]; the mesh wires a linked CRC cell's `ok` back to its shifter): the
+  eop byte is tagged err when the FCS is wrong.
+- peer `ethernet_station`: preamble, SFD, frame, FCS, Manchester, TP_IDL,
+  the inter-frame gap; optionally a wrong FCS.
+
+**I2C target, both directions** (`i2c_target_rw.spt`): writes as before;
+a read (R/W 1) is acknowledged and the host-armed bytes go out MSB first,
+each bit changing after SCL falls, with the ninth (acknowledge) bit
+released for the controller. The direction is a register (SDA at the
+address's eighth rise) and a set/clear `reading`; on the contexted chip
+these must not read machine states (a logic cell there has one context),
+and on A2 the bus actor reads at most eight inputs, so the formulation
+keeps registers on pins and events only. It fits one logic cell after a
+compiler fix: a LUT now reads `sda.fall && scl` as the I/O cell's
+qualified edge (one input, as the machines do), not two. Peer: the I2C
+controller reads (ACK each byte, NAK the last) and referees the target's
+bits.
+
+**Compiler determinism.** The router's search tree was a set; its order
+follows string hashing, which differs per process, and ties in the search
+followed it, so `usb_device` on L3S routed three ways depending on the
+process. The tree keeps insertion order now; every committed program is
+unchanged except that one.
+
+**Bench.** Stream writes are armed, not awaited (a stream queues, as in
+the source's model): a transmitter takes the bytes when its frames start
+(an armed USB answer, an I2C read). A write waits for the previous one to
+leave.
+
+Open, next: the USB device address (one compare tap; a second tap or the
+address in an actor is a capacity question), NAK when nothing is armed,
+DATA0/1 toggling, a bad-CRC peer for USB; Ethernet link pulses (NLP)
+received and the frame-to-host with TX on one chip (full duplex); I2C clock
+stretching; then UART/SPI/PS2/JTAG/SWD's missing directions.
+
+## 11. Two communication contracts (north star for A2 and the compiler)
+
+```text
+WIRE-TIMED CONTROL                          ELASTIC DATA
+pin edge -> event -> control actor -> ACK   SRAM -> FIFO -> shifter
+            bounded response                         valid / ready
+```
+
+**Events** (wire-timed): the architecture and compiler state when an event
+occurs (which clock after the pin edge), how simultaneous events resolve
+(row priority in an actor, the timer's tick-versus-resync rule), whether a
+pulse can be missed (a pulse is one clock; a consumer that samples it
+through a register sees it one clock later, never twice), and the maximum
+response time. **Streams** (elastic): queues and backpressure are fine
+inside the chip, provided an externally timed sender or receiver never
+overruns the buffering; the compiler must check that bound, since a wire
+peer does not wait.
+
+What the full-protocol workload (section 10) already shows against this:
+
+- *Event timing is where the bugs were.* The USB answer's first bit, the
+  I2C read's first byte and the Ethernet resync each failed by one clock:
+  a registered signal arriving after the machine had moved, a start one
+  clock before the shift grid, a resync that swallowed a due tick. The
+  fixes that held were by construction (start on the bit clock's own
+  tick; a resync never removes a due tick; gate with the state the
+  register's delay implies), and each needs to become a compiler-checked
+  rule, not a source-level comment: per event, the clock it lands on
+  relative to the pin, and per consumer the state it is read in.
+- *Elastic obligations are real.* The received-packet descriptor FIFO is
+  four deep and overflows if the host does not pop (a USB transaction is
+  up to five packets with the device's echo); the shifter's single held
+  word is the only buffer between a 10 Mb/s line and the word network.
+  The compiler should derive the worst-case occupancy from the protocol
+  rate and the host's service bound and refuse a mapping that can overrun.
+- *Temporal reuse must be proved safe, not assumed.* An I2C target
+  receiving a byte also watches for START/STOP; the USB device's receiver
+  hears its own answer while the transmitter runs. "One protocol" is not
+  "one operation at a time": any reuse of a PE or a route across states
+  needs a check that the operations are never needed together and that
+  the switch meets the protocol deadline (the contexted chip's context
+  switch is exactly such a reuse, checked today only by tests).
+
+Operators, from the workloads, before any new primitive: **event
+capture** (I/O qualified edges, the shifter's word/stop), **condition and
+branch** (actor rows; LUTs), **merge** (actor output selection), **bounded
+repeat and count** (timers, counters, the shifter's frame and burst), and
+**termination** (end level, end lookahead, Manchester violation, eop tag).
+Each is implemented today by the actor, the timer/counter or the word
+network; a dedicated primitive is added only when mappings and
+area/timing comparisons justify it. Related work to borrow ideas from,
+not designs: Triggered Instructions (events, predicates, several
+eligible actions; without an instruction PE), Marionette (whether control
+needs its own plane), Ripple and RipTide (queues, steer/merge, ordering
+across branches and loops; our wire side cannot back-pressure), RMT
+(match-action patterns, not its table scale).
+
+The decisive comparison stays the same program on the contexted baseline
+and the actor candidate, now over the I2C target in both directions, the
+USB device and Ethernet receive: pin timing, missed or simultaneous
+events, buffers, routing and physical area, not only whether the graph
+maps.

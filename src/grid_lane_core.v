@@ -207,7 +207,7 @@ module grid_lane_core(
     .tx_request(c_tx_request),.tx_grant(c_tx_grant),.tx_data(rd_data),.tx_eop(1'b0),.tx_err(1'b0),
     .rx_request(c_rx_request),.rx_grant(c_rx_grant),.crc_in(crc_tail),.rx_byte(c_rx_byte),
     .rx_eop(c_rx_eop),.rx_err(c_rx_err),.out(c_out),.active(c_active),.word_pulse(c_word),.stop_pulse(c_stop),
-    .rx_data(c_rx_data),.status(c_status),.crc_absorb(c_absorb),.crc_bit(c_bit),.crc_emit(c_emit));
+    .rx_data(c_rx_data),.status(c_status),.crc_absorb(c_absorb),.crc_bit(c_bit),.crc_emit(c_emit),.crc_ok(1'b1));
   assign c_bad=c_status[6];
   fabric_crc crc_tile(.clk(clk),.rst_n(rst_n),.enable(arm && configured),
     .cfg_we(cfg_we && cfg_addr>=6'd17 && cfg_addr<=6'd24),.cfg_addr(cfg_addr[2:0]-3'd1),.cfg_data(cfg_data),

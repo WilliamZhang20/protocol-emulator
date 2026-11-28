@@ -14,7 +14,7 @@ A peer class takes (bus, dut, name, **args) and provides:
 
 import inspect
 
-from peers.ethernet import EthernetLink
+from peers.ethernet import EthernetLink, EthernetStation
 
 from peers.ps2 import Ps2Keyboard
 
@@ -28,7 +28,7 @@ from peers.spi import SpiDevice
 from peers.uart import UartDevice
 from peers.usb import UsbHost
 
-KINDS = {"ethernet_link": EthernetLink, "ps2_keyboard": Ps2Keyboard, "swd_target": SwdTarget, "jtag_tap": JtagTap, "i2c_target": I2cTarget, "i2c_controller": I2cController, "spi_device": SpiDevice, "uart_device": UartDevice, "usb_host": UsbHost}
+KINDS = {"ethernet_link": EthernetLink, "ethernet_station": EthernetStation, "ps2_keyboard": Ps2Keyboard, "swd_target": SwdTarget, "jtag_tap": JtagTap, "i2c_target": I2cTarget, "i2c_controller": I2cController, "spi_device": SpiDevice, "uart_device": UartDevice, "usb_host": UsbHost}
 
 
 def attach(spec, bus, dut):

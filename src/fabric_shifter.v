@@ -17,6 +17,9 @@
 //   2 step   [5:0] shift line  [11:6] sample line
 //   3 io     [5:0] start line  [10:6] input level (signal space 32-63)
 //            [11] auto pull TX FIFO  [12] auto push RX FIFO
+//            [13] CRC tag: with end lookahead, the eop byte is tagged err
+//            when the linked CRC fails its check (crc_ok low; Ethernet's
+//            FCS, taken as the end is seen, after the frame's last bit)
 //   4 burst  [4:0] burst-end level (signal space 32-63)  [5] burst mode
 //            [6] a pulled byte tagged eop also ends the burst
 //            [12:7] abort line: while it is high the tile is idle and a
@@ -97,6 +100,10 @@
 // sample pushes it as is, or the burst-end level rising while it is held
 // and before that sample pushes it tagged eop and ends the frame (`stop`,
 // no word pulse; the partial word is dropped). Abort drops a held word.
+// With Manchester receive the next word's first bit is complete at its
+// second half; a code violation there (equal halves: the line stopped
+// changing, 10BASE-T's end of frame) ends the burst like the end level,
+// and that bit is neither data nor given to the CRC link.
 //
 // Burst mode: where a word's last data bit would end (the same shift or
 // sample event that ends a frame), the next word starts directly at its
@@ -136,7 +143,8 @@ module fabric_shifter (
     output wire [15:0] status,
     output wire        crc_absorb,  // CRC link, registered: absorb crc_bit
     output wire        crc_bit,
-    output wire        crc_emit     //   ... or shift out one bit
+    output wire        crc_emit,    //   ... or shift out one bit
+    input  wire        crc_ok       // the linked CRC tile's check (receive tag)
 );
   reg [15:0] tx_word;
   // Each frame bit is read through one view only: the boundary fields and
@@ -146,7 +154,7 @@ module fabric_shifter (
   wire [15:0] frame, frame_next;
   /* verilator lint_on UNUSEDSIGNAL */
   wire [11:0] step;
-  wire [12:0] io;
+  wire [13:0] io;
   wire [13:0] burst;
   wire [15:0] coder;
   wire [13:0] coder2;
@@ -276,6 +284,7 @@ module fabric_shifter (
   wire [3:0] data_pos = msb_first ? (frame[3:0] - data_pos_raw) : data_pos_raw;
 
   wire [31:0] levels = lines[63:32];
+  wire in_line = levels[io[10:6]];
   wire shift_line = active_r && lines[step[5:0]];
   // Manchester: the first half-bit tick of a bit only flips the line.
   wire half_tick  = manch && shift_line && !lead_wait && !mid;
@@ -309,12 +318,12 @@ module fabric_shifter (
   wire done = frame_end && !burst_next;
   // End lookahead: the end level arrives while a word is held and before
   // the next word's first sample: the held word is the last one.
-  wire ahead_end  = eop_ahead && ahead_valid && active_r && run && levels[burst[4:0]];
+  wire ahead_viol = manch_rx && sample_now && first_half == in_line;
+  wire ahead_end  = eop_ahead && ahead_valid && active_r && run && (levels[burst[4:0]] || ahead_viol);
   wire ahead_push = eop_ahead && ahead_valid && active_r && run && !ahead_end && sample_now;
   wire trigger = start_sel != 6'd0 ? lines[start_sel] : auto_pull;
   wire start = run && (!active_r || done) && trigger &&
                (!auto_pull || tx_grant);
-  wire in_line = levels[io[10:6]];
   // The received bit: NRZI-decoded (1 when the line kept its level) or as is.
   wire in_bit = nrzi_rx ? (in_line == prev_in) : in_line;
   wire [15:0] data_bit_mask = 16'd1 << data_pos;
@@ -365,8 +374,8 @@ module fabric_shifter (
   config_bank #(.WIDTH(12)) step_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd2), .write_bank(cfg_bank), .data(cfg_data[11:0]),
       .ctx_next(ctx_next), .value(step), .next());
-  config_bank #(.WIDTH(13)) io_r (.clk(clk), .rst_n(rst_n),
-      .we(cfg_we && cfg_addr == 3'd3), .write_bank(cfg_bank), .data(cfg_data[12:0]),
+  config_bank #(.WIDTH(14)) io_r (.clk(clk), .rst_n(rst_n),
+      .we(cfg_we && cfg_addr == 3'd3), .write_bank(cfg_bank), .data(cfg_data[13:0]),
       .ctx_next(ctx_next), .value(io), .next());
   config_bank #(.WIDTH(14)) burst_r (.clk(clk), .rst_n(rst_n),
       .we(cfg_we && cfg_addr == 3'd4), .write_bank(cfg_bank), .data(cfg_data[13:0]),
@@ -441,7 +450,7 @@ module fabric_shifter (
                     start      ? pre_n == 5'd0 :
                     burst_next ? 1'b1 :
                     next_index >= pre_n && next_index < data_end;
-  wire crc_frame_bit = (coder_rx ? sample_now :
+  wire crc_frame_bit = (coder_rx ? sample_now && !ahead_end :
                         (present_data && !stuff_tx && !tail_step)) &&
                        (!link_data_only || coded_data);
   wire word_end = done || burst_next;
@@ -582,7 +591,7 @@ module fabric_shifter (
         push_pending <= 1'b1;
         push_byte    <= ahead_byte;
         push_eop     <= ahead_end;
-        push_err     <= ahead_err;
+        push_err     <= ahead_err || (ahead_end && io[13] && !crc_ok);
       end else if (word_end && auto_push && !(eop_ahead && burst_next)) begin
         if (push_pending && !rx_grant)
           overrun <= 1'b1;

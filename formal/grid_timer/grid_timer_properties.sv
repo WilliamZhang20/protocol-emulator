@@ -64,7 +64,13 @@ module grid_timer_properties (input wire clk);
           run <= 1;
           if (take_shadow) begin rem <= nf; f <= nf; p <= np; pend <= 0; end else rem <= f;
         end
-      end else if (fn == 3 && aux) rem <= rs1;
+      end else if (fn == 3 && aux) begin
+        rem <= rs1;
+        if (rem == 1) begin   // a due tick still happens
+          t <= 1; lv <= !lv; if (lv) fl <= 1; else r <= 1;
+          if (take_shadow) begin f <= nf; p <= np; pend <= 0; end
+        end
+      end
       else if (advance) begin
         if (rem == 1) begin
           t <= 1; lv <= !lv; if (lv) fl <= 1; else r <= 1;

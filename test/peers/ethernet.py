@@ -5,7 +5,7 @@ check preamble, CRC32 via zlib, link-pulse timing and frame-end idle. This
 is not an analog PHY model or collision/auto-negotiation implementation.
 """
 import zlib
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import FallingEdge, RisingEdge
 from cocotb.utils import get_sim_time
 
 
@@ -86,3 +86,56 @@ class EthernetLink:
                 if len(states) > 60000:
                     self.problems.append("transmitter never returned to idle")
                     return
+
+
+class EthernetStation:
+    """A 10BASE-T station that sends frames to the chip, at 40 MHz (four
+    clocks a bit). `write(frame)` queues a frame (destination address to
+    the end of the data): the station sends the preamble (seven 0x55), the
+    SFD (0xD5), the frame and its FCS (CRC32, zlib's, least significant
+    byte first), Manchester coded (IEEE 802.3: a 1 is low then high), then
+    TP_IDL (high for 2.5 bit times) and idle, with the inter-frame gap
+    (96 bit times) before the next. The pair is (positive, negative): high
+    is (1, 0), low (0, 1), idle (0, 0); the station always drives it.
+    `bad_fcs` sends every frame with its FCS inverted (a receiver must
+    flag it). The chip may not drive the pair."""
+
+    def __init__(self, bus, dut, name, positive, negative, bad_fcs=0):
+        self.bus, self.dut, self.name = bus, dut, name
+        self.positive, self.negative = positive, negative
+        self.bad_fcs = bad_fcs
+        self.received, self.problems, self.outbox = [], [], []
+
+    def tasks(self):
+        return [self._send()]
+
+    def write(self, data):
+        frame = bytes(data)
+        fcs = zlib.crc32(frame) ^ (0xFFFFFFFF if self.bad_fcs else 0)
+        self.outbox.append(bytes([0x55] * 7 + [0xD5]) + frame + fcs.to_bytes(4, "little"))
+
+    def _line(self, state):
+        self.bus.drive[(self.positive, self.name)], self.bus.drive[(self.negative, self.name)] = state
+
+    async def _hold(self, state, clocks):
+        self._line(state)
+        for _ in range(clocks):
+            await FallingEdge(self.dut.clk)
+            if self.bus.chip_driven(self.positive) or self.bus.chip_driven(self.negative):
+                self.problems.append("the chip drove the receive pair")
+
+    async def _send(self):
+        high, low, idle = (1, 0), (0, 1), (0, 0)
+        self._line(idle)
+        while True:
+            if not self.outbox:
+                await FallingEdge(self.dut.clk)
+                continue
+            wire = self.outbox.pop(0)
+            for byte in wire:
+                for i in range(8):
+                    bit = byte >> i & 1
+                    await self._hold(low if bit else high, 2)
+                    await self._hold(high if bit else low, 2)
+            await self._hold(high, 10)          # TP_IDL
+            await self._hold(idle, 96 * 4)      # inter-frame gap

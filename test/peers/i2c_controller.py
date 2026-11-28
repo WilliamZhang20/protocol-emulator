@@ -11,13 +11,21 @@ per byte sent: 0 for ACK, 1 for NAK. After a NAK the rest of that message
 is not sent and the controller ends with a STOP (or a repeated START into
 the next queued message).
 
+A read (the address byte's R/W bit 1): the message's other bytes only
+count the bytes to read (their values are not sent). The controller
+releases SDA and clocks each byte in from the target, MSB first, then
+acknowledges it, except the last, which it NAKs (the I2C rule that ends a
+read); `received` gets the address's acknowledge, then each byte read.
+
 Timing, in clock cycles: SCL is low for `half` and high for `half`; SDA
 changes `hold` cycles after SCL falls (so it is set up `half - hold` before
 SCL rises). A target holding SCL low stretches the low phase.
 
 As a referee it fails the test when the target pulls SDA low while SCL is
-high in a bit the controller sends (anything but an acknowledge), or when
-SDA changes while SCL is high during an acknowledge bit.
+high in a bit the controller sends (anything but an acknowledge), when SDA
+changes while SCL is high during an acknowledge bit or a bit the target
+sends, or when the target holds SDA low in the controller's acknowledge of
+a byte read.
 """
 
 from cocotb.triggers import ClockCycles, RisingEdge
@@ -32,6 +40,7 @@ class I2cController:
         self.queue, self.received, self.problems = [], [], []
         self.sda_out, self.scl_out = 1, 1
         self.checking_ack = False
+        self.acking = False
 
     def tasks(self):
         return [self._run(), self._referee()]
@@ -101,6 +110,12 @@ class I2cController:
             await self._start()
             while True:
                 message = self.queue.pop(0)
+                if message and message[0] & 1:
+                    await self._read(message)
+                    if not self.queue:
+                        break
+                    await self._start()
+                    continue
                 for byte in message:
                     for k in range(7, -1, -1):
                         await self._bit(byte >> k & 1)
@@ -115,6 +130,27 @@ class I2cController:
                 await self._start()       # repeated START into the next message
             await self._stop()
 
+    async def _read(self, message):
+        for k in range(7, -1, -1):
+            await self._bit(message[0] >> k & 1)
+        self.checking_ack = True
+        ack = await self._bit(1)
+        self.checking_ack = False
+        self.received.append(ack)
+        if ack:
+            return
+        count = len(message) - 1
+        for i in range(count):
+            self.checking_ack = True          # the target sends: SDA steady while SCL is high
+            byte = 0
+            for _ in range(8):
+                byte = byte << 1 | await self._bit(1)
+            self.checking_ack = False
+            self.received.append(byte)
+            self.acking = True
+            await self._bit(1 if i == count - 1 else 0)   # ACK, or NAK for the last
+            self.acking = False
+
     async def _referee(self):
         prev_scl, prev_sda = 1, 1
         while True:
@@ -125,5 +161,6 @@ class I2cController:
                     if sda != prev_sda:
                         self.problems.append("SDA changed while SCL was high during an acknowledge")
                 elif sda == 0 and self.sda_out == 1:
-                    self.problems.append("the target pulled SDA low while SCL was high outside an acknowledge")
+                    self.problems.append("the target pulled SDA low while SCL was high outside an acknowledge"
+                                         + (" (in the controller's acknowledge of a byte read)" if self.acking else ""))
             prev_scl, prev_sda = scl, sda

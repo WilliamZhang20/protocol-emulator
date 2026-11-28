@@ -22,6 +22,7 @@
 //              tick that sampled its bit (a slow sender), so the target is
 //              phase + period, the next bit's sample, not a second sample
 //              of the same bit. The result saturates at the counter's top.
+//              A tick due on that clock still happens.
 // mode[7:2] are reserved and must be zero.
 module grid_timer #(parameter W=16)(
     input wire clk, rst_n, arm, cfg_we,
@@ -79,8 +80,17 @@ module grid_timer #(parameter W=16)(
           remaining <= (pending && !live_we) ? next_first : first;
           if (pending && !live_we) begin first <= next_first; period <= next_period; pending <= 0; end
         end else if (running) begin
-          if (fn == 2'd3 && aux) remaining <= resync_to;
-          else if (step) begin
+          if (fn == 2'd3 && aux) begin
+            remaining <= resync_to;
+            // A tick due on this clock still happens: the edge moves the
+            // next tick, it never removes a due one (a half-bit grid whose
+            // edges land as a tick is due: Manchester).
+            if (remaining == 1) begin
+              tick <= 1; level <= !level;
+              if (level) fall <= 1; else rise <= 1;
+              if (pending && !live_we) begin first <= next_first; period <= next_period; pending <= 0; end
+            end
+          end else if (step) begin
             if (remaining == 1) begin
               tick <= 1; level <= !level;
               if (level) fall <= 1; else rise <= 1;

@@ -25,7 +25,7 @@ module stream_coder_probe(
     reader_active,reader_done,reader_error,queued,outstanding);
   fabric_shifter coder(clk,rst_n,enable && running,shift_cfg_we,shift_cfg_addr,shift_cfg_data,
     2'b11,1'b0,lines,pulls,request,grant,reader_data,left==1,1'b0,rx_request,1'b0,crc_tail,
-    rx_byte,rx_eop,rx_err,serial,coder_active,word,stop,rx_data,status,crc_absorb,crc_bit,crc_emit);
+    rx_byte,rx_eop,rx_err,serial,coder_active,word,stop,rx_data,status,crc_absorb,crc_bit,crc_emit,1'b1);
   fabric_crc crc(clk,rst_n,enable && running,crc_cfg_we,crc_cfg_addr,crc_cfg_data,
     lines,{1'b0,crc_absorb},{1'b0,crc_bit},{1'b0,crc_emit},crc_out,crc_tail,crc_ok,crc_value);
   always @(posedge clk) begin

@@ -25,7 +25,7 @@ module coder_loopback_tb;
       .tx_request(t_txreq), .tx_grant(1'b0), .tx_data(8'd0), .tx_eop(1'b0), .tx_err(1'b0),
       .rx_request(t_rxreq), .rx_grant(1'b1), .crc_in(1'b0), .rx_byte(t_byte), .rx_eop(t_eop), .rx_err(t_err),
       .out(tx_out), .active(t_active), .word_pulse(t_word), .stop_pulse(t_stop), .rx_data(t_data),
-      .status(t_status), .crc_absorb(t_abs), .crc_bit(t_bit), .crc_emit(t_emit));
+      .status(t_status), .crc_absorb(t_abs), .crc_bit(t_bit), .crc_emit(t_emit), .crc_ok(1'b1));
   wire r_pulls, r_txreq, r_rxreq, r_eop, r_err, r_out, r_active, r_word, r_stop, r_abs, r_bit, r_emit;
   wire [7:0] r_byte; wire [15:0] r_data, r_status;
   fabric_shifter rx(.clk(clk), .rst_n(rst_n), .enable(1'b1), .cfg_we(cfg_we && to_rx), .cfg_addr(cfg_addr),
@@ -33,7 +33,7 @@ module coder_loopback_tb;
       .tx_request(r_txreq), .tx_grant(1'b0), .tx_data(8'd0), .tx_eop(1'b0), .tx_err(1'b0),
       .rx_request(r_rxreq), .rx_grant(1'b1), .crc_in(1'b0), .rx_byte(r_byte), .rx_eop(r_eop), .rx_err(r_err),
       .out(r_out), .active(r_active), .word_pulse(r_word), .stop_pulse(r_stop), .rx_data(r_data),
-      .status(r_status), .crc_absorb(r_abs), .crc_bit(r_bit), .crc_emit(r_emit));
+      .status(r_status), .crc_absorb(r_abs), .crc_bit(r_bit), .crc_emit(r_emit), .crc_ok(1'b1));
 
   integer errors = 0, frames = 0, i, seen_push;
   reg got_err;

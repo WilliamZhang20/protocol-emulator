@@ -13,7 +13,7 @@ module coder_reuse_tb(
  wire absorb,bit_data,emit;
  fabric_shifter shift(clk,rst_n,enable,shift_cfg_we,shift_cfg_addr,shift_cfg_data,2'b11,1'b0,
    lines,pulls,tx_request,tx_grant,tx_data,tx_eop,1'b0,rx_request,1'b0,crc_tail,
-   rx_byte,rx_eop,rx_err,serial,active,word_pulse,stop_pulse,rx_data,status,absorb,bit_data,emit);
+   rx_byte,rx_eop,rx_err,serial,active,word_pulse,stop_pulse,rx_data,status,absorb,bit_data,emit,1'b1);
  fabric_crc crc(clk,rst_n,enable,crc_cfg_we,crc_cfg_addr,crc_cfg_data,lines,
    {1'b0,absorb},{1'b0,bit_data},{1'b0,emit},crc_out,crc_tail,crc_ok,crc_value);
 endmodule

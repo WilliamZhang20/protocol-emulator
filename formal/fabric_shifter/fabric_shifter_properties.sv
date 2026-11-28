@@ -61,7 +61,7 @@ module fabric_shifter_properties (input wire clk);   // one solver step = one cl
       .tx_request(tx_request), .tx_grant(tx_grant), .tx_data(tx_data),
       .tx_eop(tx_eop), .tx_err(tx_err),
       .rx_request(rx_request), .rx_grant(rx_grant), .rx_byte(rx_byte),
-      .rx_eop(rx_eop), .rx_err(rx_err), .crc_in(crc_in),
+      .rx_eop(rx_eop), .rx_err(rx_err), .crc_ok(1'b1), .crc_in(crc_in),
       .out(out), .active(active), .word_pulse(word_pulse),
       .stop_pulse(stop_pulse), .rx_data(rx_data), .status(status),
       .crc_absorb(crc_absorb), .crc_bit(crc_bit), .crc_emit(crc_emit)

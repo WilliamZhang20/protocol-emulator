@@ -12,6 +12,9 @@
 //    its last word ends (the end level seen during it; a new frame may
 //    start on that clock) or after the lookahead stop (the end level after
 //    it), with no word outstanding: it is the packet's last byte.
+// The same with Manchester receive (`manch`: the sample line ticks every
+// half bit), where a code violation on the next word's first bit is the
+// end as well as the end level.
 // The harness reads only the tile's ports.
 module fabric_shifter_ahead_properties (input wire clk);   // one solver step = one clock cycle
   reg [3:0] t = 4'd0;
@@ -19,6 +22,7 @@ module fabric_shifter_ahead_properties (input wire clk);   // one solver step = 
   wire rst_n = t >= 4'd2;
 
   (* anyconst *) reg [3:0] len_m1;
+  (* anyconst *) reg manch;
   always @(*) assume(len_m1 >= 4'd1 && len_m1 <= 4'd3);   // lookahead needs words of two bits or more
 
   (* anyseq *) reg start_l, tick, din, end_l;
@@ -27,7 +31,7 @@ module fabric_shifter_ahead_properties (input wire clk);   // one solver step = 
   reg [2:0]  cfg_addr;
   reg [15:0] cfg_data;
   always @(*) begin
-    cfg_we = rst_n && t <= 4'd5;
+    cfg_we = rst_n && t <= 4'd6;
     cfg_addr = 3'd0;
     cfg_data = 16'd0;
     case (t)
@@ -35,10 +39,11 @@ module fabric_shifter_ahead_properties (input wire clk);   // one solver step = 
       4'd3: begin cfg_addr = 3'd2; cfg_data = 16'd2 | (16'd2 << 6); end          // shift and sample: line 2
       4'd4: begin cfg_addr = 3'd3; cfg_data = 16'd1 | (16'd1 << 6) | (16'd1 << 12); end  // start line 1, in level 33, auto push
       4'd5: begin cfg_addr = 3'd4; cfg_data = 16'd2 | (16'd1 << 5) | (16'd1 << 13); end  // end level 34, burst, lookahead
+      4'd6: begin cfg_addr = 3'd5; cfg_data = manch ? (16'd1 << 15) | (16'd1 << 5) : 16'd0; end  // Manchester receive
       default: ;
     endcase
   end
-  wire enable = t >= 4'd6;
+  wire enable = t >= 4'd7;
   wire [63:0] lines = {29'd0, end_l, din, 2'b0, 28'd0, enable && tick, enable && start_l, 1'b0};   // levels 33 din, 34 end
 
   wire tx_request, rx_request, out, active, word_pulse, stop_pulse, pulls;
@@ -55,7 +60,7 @@ module fabric_shifter_ahead_properties (input wire clk);   // one solver step = 
       .tx_request(tx_request), .tx_grant(1'b0), .tx_data(8'd0),
       .tx_eop(1'b0), .tx_err(1'b0),
       .rx_request(rx_request), .rx_grant(rx_request), .rx_byte(rx_byte),
-      .rx_eop(rx_eop), .rx_err(rx_err), .crc_in(1'b0),
+      .rx_eop(rx_eop), .rx_err(rx_err), .crc_in(1'b0), .crc_ok(1'b1),
       .out(out), .active(active), .word_pulse(word_pulse),
       .stop_pulse(stop_pulse), .rx_data(rx_data), .status(status),
       .crc_absorb(crc_absorb), .crc_bit(crc_bit), .crc_emit(crc_emit)
@@ -89,6 +94,10 @@ module fabric_shifter_ahead_properties (input wire clk);   // one solver step = 
   // A packet of two words or more ended by the end level after its last word.
   always @(*) if (rst_n) cover(eops == 4'd1 && words >= 4'd3 && len_m1 == 4'd1);
   always @(*) if (rst_n) cover(eops == 4'd2);
+  // Manchester: a packet ended by a code violation (the end level low).
+  reg viol_end = 1'b0;
+  always @(posedge clk) if (rst_n && manch && rx_request && rx_eop && !end_l) viol_end <= 1'b1;
+  always @(*) if (rst_n) cover(manch && viol_end && words >= 4'd2);
 endmodule
 
 `default_nettype wire

@@ -93,7 +93,7 @@ module slice_i2c_tb;
     .tx_data(8'd0),.tx_eop(1'b0),.tx_err(1'b0),.rx_request(rx_req),.rx_grant(rx_req && rx_ready),.crc_in(1'b0),
     .rx_byte(rx_byte),.rx_eop(unused_eop),.rx_err(unused_err),.out(unused_out),.active(unused_active),
     .word_pulse(c_word),.stop_pulse(c_stop),.rx_data(unused_rxd),.status(unused_st),
-    .crc_absorb(unused_ab),.crc_bit(unused_bit),.crc_emit(unused_em));
+    .crc_absorb(unused_ab),.crc_bit(unused_bit),.crc_emit(unused_em),.crc_ok(1'b1));
   // Word network: gate <- rx, writer <- gate; compare taps rx (source 2).
   wire [15:0] wr_data; wire wr_valid; wire ok, unused_match;
   wire [15:0] unused_tx; wire unused_txv, unused_rd, unused_st_r, unused_cap;
@@ -126,7 +126,7 @@ module slice_i2c_tb;
     .tx_data(8'd0),.tx_eop(1'b0),.tx_err(1'b0),.rx_request(u_req),.rx_grant(u_req),.crc_in(1'b0),
     .rx_byte(u_byte),.rx_eop(u_nc[2]),.rx_err(u_nc[3]),.out(u_nc[4]),.active(u_nc[5]),
     .word_pulse(u_word),.stop_pulse(u_stop),.rx_data(u_rxd),.status(u_st),
-    .crc_absorb(u_nc[6]),.crc_bit(u_nc[7]),.crc_emit(u_nc[8]));
+    .crc_absorb(u_nc[6]),.crc_bit(u_nc[7]),.crc_emit(u_nc[8]),.crc_ok(1'b1));
   reg [7:0] u_got[0:255]; integer u_n=0;
   always @(posedge clk) if(u_req) begin u_got[u_n]<=u_byte;u_n<=u_n+1;end
   // DRIVE clocks seen while a UART frame is in flight (the overlap tested).

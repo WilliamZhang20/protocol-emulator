@@ -184,6 +184,23 @@ O3. **Static/dynamic split prototype.** Store every selector once (static)
    The remaining blocker is run time, not routability: 3b1d1f9 carries
    steps 1-4 and the area reduction.
 
+   **3b1d1f9 (area-reduced, routing steps 1-4; job 140767140714,
+   2026-11-28): routes, still over the 6 h limit.** Detailed routing
+   started at 3 h 29 min (post-GRT repair and resizing took the time
+   before it: hold repair found 1,933 endpoints; global-route usage
+   41-44 %). First detailed route 22,765 -> 5 violations in 20 iterations
+   (3 h 06 min; the stubborn-tile passes at iterations 11, 14 and 16 took
+   49, 18 and 21 min). The antenna reroute then went 2,863 -> 7 and held
+   at 7 for twelve iterations (stubborn tiles ~10 min each); the job was
+   cancelled at 6 h in the following reroute. So the reduced chip is
+   routable to single-digit DRC like 2b49253, but the run does not fit:
+   the cost is the flow's repair passes and the stubborn-tile tail, not
+   global congestion. Next: cap detailed-routing iterations / drop the
+   second antenna reroute in CI (diodes on ports), or lower density, before
+   precheck and gl_test can run. Every later push (b0f4315, 5c0dc08,
+   29d27ca, a426fe6: docs, A2 and the USB workload, the same fabric with
+   the actor parameter off) inherits the same run time.
+
 O4. **Local connections.** A few optional direct links between frequently
    paired resources (timer -> shifter shift/sample, shifter -> CRC as
    `crc_link` today), each a contract edge the compiler may use or ignore,

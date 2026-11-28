@@ -250,7 +250,7 @@ module grid_core(
     leaf_we[8] && la[8]>=117 && la[8]<=122,la[8][2:0]-3'd4,ld[8],
     2'b11,1'b0,crc_lines,coder_pulls,packet_request,packet_grant,packet_data,packet_eop,1'b0,
     coder_rx_request,1'b0,crc_tail,coder_rx_byte,coder_rx_eop,coder_rx_err,coder_serial,
-    coder_active,coder_word,packet_stop,coder_rx_data,coder_status,coder_absorb,coder_bit,coder_emit);
+    coder_active,coder_word,packet_stop,coder_rx_data,coder_status,coder_absorb,coder_bit,coder_emit,1'b1);
   wire unused_coder=&{1'b0,coder_pulls,coder_rx_request,coder_rx_eop,coder_rx_err,coder_word,
                        coder_rx_byte,coder_rx_data,coder_status};
   // Timer inputs 0..2, shifter inputs 3..6, IO outputs 7..9, LUT inputs 10..11.
