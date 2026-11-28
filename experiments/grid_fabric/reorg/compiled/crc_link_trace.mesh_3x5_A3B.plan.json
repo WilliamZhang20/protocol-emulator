@@ -1,0 +1,36 @@
+{
+ "calls": {
+  "channel": 1,
+  "fails": [],
+  "functions": {
+   "transmit": {
+    "id": 0,
+    "params": [],
+    "result": null,
+    "sends": []
+   }
+  }
+ },
+ "clock_hz": 40000000,
+ "invariants": [],
+ "pins": {
+  "tx": 0
+ },
+ "tests": [
+  {
+   "line": 41,
+   "name": "profile direct CRC events on a complete Ethernet frame",
+   "peers": [],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {},
+     "function": "transmit",
+     "line": 42,
+     "op": "call"
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

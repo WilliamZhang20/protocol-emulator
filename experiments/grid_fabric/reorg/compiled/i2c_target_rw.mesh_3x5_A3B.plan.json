@@ -1,0 +1,363 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "scl": 0,
+  "sda": 1
+ },
+ "tests": [
+  {
+   "line": 94,
+   "name": "acknowledges its address and passes the data bytes written",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 95,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      144,
+      17,
+      34
+     ],
+     "line": 96,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      0,
+      0,
+      0
+     ],
+     "line": 97,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      17,
+      34
+     ],
+     "line": 98,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 101,
+   "name": "sends the armed bytes to a read",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 102,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      165,
+      60,
+      129
+     ],
+     "line": 103,
+     "op": "write",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      145,
+      0,
+      0,
+      0
+     ],
+     "line": 104,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 4,
+     "expect": [
+      0,
+      165,
+      60,
+      129
+     ],
+     "line": 105,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 108,
+   "name": "a register read: write the register number, repeated START, read",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 109,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      90,
+      255
+     ],
+     "line": 110,
+     "op": "write",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      7
+     ],
+     "line": 111,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      145,
+      0,
+      0
+     ],
+     "line": 112,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 5,
+     "expect": [
+      0,
+      0,
+      0,
+      90,
+      255
+     ],
+     "line": 113,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      7
+     ],
+     "line": 114,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      66
+     ],
+     "line": 115,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      0,
+      0
+     ],
+     "line": 116,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      66
+     ],
+     "line": 117,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 120,
+   "name": "another address is answered neither way",
+   "peers": [
+    {
+     "args": {
+      "half": 40,
+      "hold": 10,
+      "scl": {
+       "pin": 0
+      },
+      "sda": {
+       "pin": 1
+      }
+     },
+     "kind": "i2c_controller",
+     "line": 121,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      147,
+      0
+     ],
+     "line": 122,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      1
+     ],
+     "line": 123,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      146,
+      51
+     ],
+     "line": 124,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      1
+     ],
+     "line": 125,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      144,
+      68
+     ],
+     "line": 126,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      0,
+      0
+     ],
+     "line": 127,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      68
+     ],
+     "line": 128,
+     "op": "read",
+     "target": {
+      "stream": "data"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

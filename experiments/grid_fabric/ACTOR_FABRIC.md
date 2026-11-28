@@ -570,3 +570,69 @@ Ethernet's transmitter takes four timers), so a pool of five should carry
 every program and free a cell (checked in A5). That freed slot (a new cell kind or a
 rearrangement for flexibility) is A5's question, decided by the workload
 sweep; A3 shows the pool is interchangeable.
+
+## 13. The actor chip's physical baseline (2026-11-28)
+
+The chip (`src/project.v`) is now the actor fabric, contract `mesh_3x5_A3B`:
+every switch static, the logic cells with the control-actor mode, the
+merged timer/counter pool cut to five (the workload's peak: the USB
+device's answers), and cell 0 switch-only (`NONE`: no tile, its switch
+still routes; every program maps with any one of the six pool cells
+removed). Before more architecture, a GDS that passes.
+
+**Why the last chip never finished.** 3b1d1f9 (`mesh_3x5_L3S`, job
+140767140714) routed but ran out of the 6 h CI limit: post-global-route
+timing repair 66 min, detailed routing 3 h 06 min (22,765 -> 5 violations
+over 20 iterations, three stubborn-tile passes of 49, 18 and 21 min), then
+the antenna reroutes held at 7 violations until the job was cancelled. It
+would have failed with violations left even with more time.
+
+**What changes** (each keeps every protocol runnable):
+
+| Change | Effect |
+|---|---|
+| static switches + actor mode (A2) | no context storage or transition logic |
+| merged pool of five, cell 0 switch-only (A3B) | one tile fewer, its configuration constant |
+| timer cells built without timer-mode live writes (`grid_timer` LIVE=0) | no shadow registers (the counter's limit write remains) |
+| LibreLane's synthesis-check error off; `tools/check_chip_synth.py` in its place (CI: tile experiment) | the actor's structural loops pass; an undriven or multiply driven wire, or a loop not through an actor, still fails |
+| flow: no post-GRT timing repair; one antenna reroute; 24 detailed-routing iterations | ~66 min and the antenna tail back for routing |
+
+Kept, because a protocol needs it: four tracks per direction (three break
+the I2C target and I2C + UART mappings), eight LUTs per logic cell (USB
+uses all eight), three logic cells, two shifters, two CRC cells.
+
+**Area** (whole chip, local yosys, CI IHP liberty, same RTL otherwise):
+
+| Chip | Area (µm²) | Configuration latches |
+|---|---|---|
+| contexted `mesh_3x5_L3S` (the previous chip) | 406,649 | 3,578 |
+| A2 (static, actors; timer + counter cells) | 380,699 | 2,838 |
+| A3 (merged pool of six) | 406,558 | 2,879 |
+| **A3B (the chip)** | **377,842 (-7.1 %)** | **2,781 (-22 %)** |
+
+**The actor's combinational outputs.** A control actor's outputs are
+combinational selections of its inputs, so the actor chip has structural
+loops (164 in yosys `check`): an actor's output can route back to an
+actor's input. No configuration closes one (the mapper refuses it), and the
+loops are the only ones: the tracks are a DAG (their turn rule) and every
+other cell output is a register. LibreLane's synthesis check fails on any
+loop, so it is off (`ERROR_ON_SYNTH_CHECKS` 0) and
+`tools/check_chip_synth.py` replaces it: it fails on every other problem
+(an undriven wire, the class of 5dd1a72's GDS failure; checked with that
+mutation) and on any loop that does not pass through an actor's selection.
+Static timing breaks the loops itself, as for any configurable routing.
+
+Two ways to remove the loops by construction were tried and refused by
+the workload. Registering the actor's outputs (A2's selection one clock
+later) broke the I2C target, I2C + UART, SWD and the USB device's answers
+at the pins: they rely on a machine-selected signal arriving on the same
+clock as the direct paths. Computing the register from the next state (to
+keep a state's constants on time) also lost a passed-through pulse on the
+clock its state changes (the I2C bus machine passes `addressed.match` while
+leaving ADDRESS on it). So the actor stays combinational; a registered
+actor would need the compiler to model the extra clock in the event-timing
+contracts (section 11).
+
+**Tests.** Every program passes at the mesh pins on `mesh_3x5_A3B` (26 of
+26) and on A3, and the chip-pin test (`test_chip`, the chip top with every
+A3B program) runs in the pre-commit hook.

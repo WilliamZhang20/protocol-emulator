@@ -1,0 +1,252 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "psclk": 0,
+  "psdata": 1
+ },
+ "tests": [
+  {
+   "line": 55,
+   "name": "scan codes still arrive",
+   "peers": [
+    {
+     "args": {
+      "clk": {
+       "pin": 0
+      },
+      "data": {
+       "pin": 1
+      },
+      "half": 2000
+     },
+     "kind": "ps2_keyboard",
+     "line": 56,
+     "name": "keyboard"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      28,
+      240,
+      28
+     ],
+     "line": 57,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      28,
+      240,
+      28
+     ],
+     "line": 58,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 61,
+   "name": "sends a command and gets the keyboard's acknowledge",
+   "peers": [
+    {
+     "args": {
+      "clk": {
+       "pin": 0
+      },
+      "data": {
+       "pin": 1
+      },
+      "half": 2000
+     },
+     "kind": "ps2_keyboard",
+     "line": 62,
+     "name": "keyboard"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      237
+     ],
+     "line": 63,
+     "op": "write",
+     "target": {
+      "stream": "commands"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      237
+     ],
+     "line": 64,
+     "op": "read",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      250
+     ],
+     "line": 65,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    },
+    {
+     "bytes": [
+      7
+     ],
+     "line": 66,
+     "op": "write",
+     "target": {
+      "stream": "commands"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      7
+     ],
+     "line": 67,
+     "op": "read",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      250
+     ],
+     "line": 68,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 71,
+   "name": "commands between scan codes",
+   "peers": [
+    {
+     "args": {
+      "clk": {
+       "pin": 0
+      },
+      "data": {
+       "pin": 1
+      },
+      "half": 1500
+     },
+     "kind": "ps2_keyboard",
+     "line": 72,
+     "name": "keyboard"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      90
+     ],
+     "line": 73,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      90
+     ],
+     "line": 74,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    },
+    {
+     "bytes": [
+      255
+     ],
+     "line": 75,
+     "op": "write",
+     "target": {
+      "stream": "commands"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      255
+     ],
+     "line": 76,
+     "op": "read",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 1,
+     "expect": [
+      250
+     ],
+     "line": 77,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    },
+    {
+     "bytes": [
+      0,
+      170
+     ],
+     "line": 78,
+     "op": "write",
+     "target": {
+      "peer": "keyboard"
+     }
+    },
+    {
+     "count": 2,
+     "expect": [
+      0,
+      170
+     ],
+     "line": 79,
+     "op": "read",
+     "target": {
+      "stream": "scan_codes"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

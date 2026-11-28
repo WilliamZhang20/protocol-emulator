@@ -99,6 +99,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter [ROWS*COLS-1:0] LOGIC=0,
+  parameter [ROWS*COLS-1:0] NONE=0, // switch-only cells: no tile, no locals, no sinks (the switch still routes)
   parameter DSLOTS=0,      // ctx_switch static/dynamic split (0: every selector per context)
   parameter [3:0] CTX_TRACKS=4'b1111, // with DSLOTS=0: tracks held per context (the fixed split)
   parameter REG=1,
@@ -119,8 +120,8 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   output wire [8*ROWS*COLS-1:0] host_byte);
   localparam N=ROWS*COLS, TRACK_LSB=0, SINK_LSB=192, TRANS_LSB=312, TILE_LSB=368;
   localparam WNET_LSB=N*CELL_BITS;
-  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4, LOGIC_K=5;
-  function integer kind(input integer c); kind = LOGIC[c] ? LOGIC_K : CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]}; endfunction
+  localparam IO=0, TIMER=1, SHIFTER=2, CRC=3, COUNTER=4, LOGIC_K=5, NONE_K=6;
+  function integer kind(input integer c); kind = NONE[c] ? NONE_K : LOGIC[c] ? LOGIC_K : CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]}; endfunction
   function integer contexts(input integer c); contexts = CTX4[c] && !LOGIC[c] ? 4 : 1; endfunction
 
   // Configuration load: shifter registers 1..6 and CRC registers 0..7
@@ -214,7 +215,7 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
       // A host write of register 0 while running is the counter's limit
       // (the counter function, mode bit 2 = tile[34]; ACTOR_FABRIC.md A3).
       wire lw=loaded && param_we && param_cell==c && param_addr==3'd0;
-      grid_timer t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],lw,param_data,16'd1,tile[47:32],tile[63:48],
+      grid_timer #(.LIVE(0)) t(clk,rst_n,run,!loaded,tile[15:0],tile[31:16],lw,param_data,16'd1,tile[47:32],tile[63:48],
         sinks[c][0],sinks[c][1],sinks[c][2],tick,running,configured,level,rise,fall,cap);
       // As a counter its locals are fabric_counter's: at_least (level), reached (tick).
       assign lraw= tile[34] ? {2'b0,tick,level} : {fall,rise,level,tick};
@@ -259,6 +260,11 @@ module mesh #(parameter ROWS=3, COLS=5, WORD_PORT=6,
         .cfg_addr(loaded ? param_addr[1:0] : load[1:0]),.cfg_data(loaded ? param_data[12:0] : tw[load][12:0]),
         .cfg_bank(2'b11),.ctx_next(1'b0),.lines(lines),.ge(ge),.hit(hit),.count(count));
       assign lraw={2'b0,hit,ge};
+      assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
+      assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
+    end else if(kind(c)==NONE_K) begin: nn
+      // A switch-only cell: nothing local.
+      assign lraw=4'b0;
       assign oe[c]=0; assign ov[c]=0; assign rx_req[c]=0; assign rx_byte[c]=0; assign rx_eop[c]=0; assign rx_err[c]=0; assign tx_req[c]=0; assign held_grant[c]=0;
       assign l_absorb[c]=0; assign l_bit[c]=0; assign l_emit[c]=0; assign tail[c]=0; assign cok[c]=0;
     end else if(kind(c)==LOGIC_K) begin: lg
@@ -324,7 +330,13 @@ endmodule
 // state 0 while stopped. Per state s and output k a select at
 // cfg[48+16s+4k +: 4] (0 zero, 1 one, 2-9 input 0-7): the four locals are
 // the current state's selections, combinational (as a contexted switch's
-// sinks): the compiler refuses a configuration that closes a loop.
+// sinks): the compiler refuses a configuration that closes a loop. These
+// are the mesh's only combinational paths through a cell (the tracks are a
+// DAG by their turn rule, every other local is a register), so the chip's
+// structural loops all pass through an actor's selection
+// (tools/check_chip_synth.py checks it). Registering them instead (one
+// clock later) breaks wire-timed programs: I2C target, SWD, the USB
+// device's answers (ACTOR_FABRIC.md section 13).
 module mesh_logic #(parameter ACTOR=0)(input wire clk, rst_n, run, input wire [343:0] cfg, input wire [7:0] in,
   input wire hw, input wire [3:0] hdata, hmask, output wire [3:0] loc);
   reg [7:0] q;
@@ -346,7 +358,6 @@ module mesh_logic #(parameter ACTOR=0)(input wire clk, rst_n, run, input wire [3
   if(ACTOR) begin: actor
     reg [1:0] st;
     wire [11:0] rows = st==2'd0 ? cfg[0+:12] : st==2'd1 ? cfg[12+:12] : st==2'd2 ? cfg[24+:12] : cfg[36+:12];
-    wire [15:0] outs = st==2'd0 ? cfg[48+:16] : st==2'd1 ? cfg[64+:16] : st==2'd2 ? cfg[80+:16] : cfg[96+:16];
     wire [9:0] pick={in,1'b1,1'b0};          // 0 zero, 1 one, 2-9 input 0-7
     wire [8:0] ev={in,1'b0};                 // 0 none, 1-8 input 0-7
     wire ea = rows[3:0] < 4'd9 && ev[rows[3:0]], eb = rows[9:6] < 4'd9 && ev[rows[9:6]];
@@ -354,6 +365,7 @@ module mesh_logic #(parameter ACTOR=0)(input wire clk, rst_n, run, input wire [3
       if(!rst_n || !run || !cfg[343]) st<=0;
       else if(ea) st<=rows[5:4];
       else if(eb) st<=rows[11:10];
+    wire [15:0] outs = st==2'd0 ? cfg[48+:16] : st==2'd1 ? cfg[64+:16] : st==2'd2 ? cfg[80+:16] : cfg[96+:16];
     wire [3:0] o;
     genvar j;
     for(j=0;j<4;j=j+1) begin: out

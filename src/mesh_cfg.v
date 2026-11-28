@@ -30,6 +30,7 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter [ROWS*COLS-1:0] LOGIC=0,
+  parameter [ROWS*COLS-1:0] NONE=0,   // switch-only cells: tracks only
   parameter ACTOR=0,        // logic cells with the control-actor mode: sinks 6-7 stored (mesh.v)
   parameter DSLOTS=0,       // ctx_switch split: a contexted cell stores context 0 and DSLOTS slots
   parameter [3:0] CTX_TRACKS=4'b1111, // with DSLOTS=0: tracks stored per context
@@ -53,7 +54,8 @@ module mesh_cfg #(parameter ROWS=3, COLS=5,
         c = i / CELL_BITS; o = i % CELL_BITS;
         k = LOGIC[c] ? 5 : CNT[c] ? COUNTER : {30'd0, KINDS[2*c+:2]};
         width = k==IO ? 52 : k==TIMER ? 64 : k==SHIFTER ? 96 : k==CRC ? 128 : k==COUNTER ? 48 : 144;
-        if(LOGIC[c])     used = o < 192 || o - 192 < (ACTOR ? 40 : 30) || o >= 312; // a logic cell's LUTs use the
+        if(NONE[c])      used = o < 48;                            // a switch-only cell: context 0's tracks
+        else if(LOGIC[c]) used = o < 192 || o - 192 < (ACTOR ? 40 : 30) || o >= 312; // a logic cell's LUTs use the
                                                                     // tracks of contexts 1-3 and transitions
         else if(o < 192) used = o < 48 || (CTX4[c] && (DSLOTS == 0 ? CTX_TRACKS[(o % 12) / 3] : o - 48 < 20*DSLOTS)); // tracks: 48 bits per context (CTX_TRACKS), or slots
         else if(o < 312) used = (CTX4[c] && DSLOTS == 0) || o - 192 < 30; // sinks: 30 bits per context, or context 0

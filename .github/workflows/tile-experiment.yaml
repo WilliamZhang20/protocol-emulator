@@ -11,6 +11,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y verilator yosys
       - name: Test and synthesize routing experiments
-        run: make grid-contract-check routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coded-abort-test ROUTING_YOSYS=yosys
+        run: make chip-synth-check grid-contract-check routing-experiment tile-spi-experiment tile-route-latency-probe tile-shift-pair-experiment tile-fabric-v2-experiment grid-fabric-experiment grid-stream-test grid-coded-abort-test ROUTING_YOSYS=yosys
       - name: Lint, test, and synthesize memory experiment
         run: make tile-memory-lint tile-memory-experiment tile-memory-spi-image-test tile-memory-assertion-mutation tile-memory-synth ROUTING_YOSYS=yosys

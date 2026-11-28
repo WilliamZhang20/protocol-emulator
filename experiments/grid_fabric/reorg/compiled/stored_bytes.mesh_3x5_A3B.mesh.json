@@ -1,0 +1,73 @@
+{
+ "contract": "mesh_3x5_A3B",
+ "params": {
+  "ROWS": 3,
+  "COLS": 5,
+  "WORD_PORT": 6,
+  "KINDS": "30'd357808453",
+  "CTX4": "15'd0",
+  "NONE": "15'd1",
+  "LOGIC": "15'd4106",
+  "ACTOR": 1
+ },
+ "streams": {},
+ "clock_hz": 50000000,
+ "functions": {
+  "send": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "send",
+     "bytes": [
+      0,
+      255,
+      85,
+      165,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  "send_again": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "send",
+     "bytes": [
+      0,
+      255,
+      85,
+      165,
+      1,
+      2,
+      3,
+      4
+     ]
+    }
+   ]
+  },
+  "single": {
+   "args": {},
+   "steps": [
+    {
+     "op": "clear"
+    },
+    {
+     "op": "send",
+     "bytes": [
+      165
+     ]
+    }
+   ]
+  }
+ }
+}

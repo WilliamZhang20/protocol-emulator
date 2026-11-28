@@ -38,7 +38,9 @@
 // A live write sets the limit and restarts the count (zero allowed). The
 // limit may be zero; `period` and `phase` are unused; rise and fall stay 0.
 // mode[7:3] are reserved and must be zero.
-module grid_timer #(parameter W=16)(
+// LIVE = 0: no live writes in timer mode (the shadow registers are not
+// built); the counter's live limit write still works.
+module grid_timer #(parameter W=16, parameter LIVE=1)(
     input wire clk, rst_n, arm, cfg_we,
     input wire [W-1:0] cfg_first, cfg_period,
     input wire live_we, input wire [W-1:0] live_first, live_period,
@@ -119,7 +121,7 @@ module grid_timer #(parameter W=16)(
           valid <= (cfg_first != 0 && cfg_period != 0);
         end
       end else begin
-        if (live_we && live_first != 0 && live_period != 0) begin
+        if (LIVE && live_we && live_first != 0 && live_period != 0) begin
           next_first <= live_first; next_period <= live_period; pending <= 1;
         end
         if (stop) begin

@@ -47,10 +47,14 @@
   "//": "corner, but these let the resizer also close the slow corner (1.08 V, 125 C),",
   "//": "which otherwise lost about 0.5 ns to routing after the post-CTS repair.",
   "PL_RESIZER_SETUP_SLACK_MARGIN": 1.5,
-  "RUN_POST_GRT_RESIZER_TIMING": 1,
+  "// RUN_POST_GRT_RESIZER_TIMING": "Off for the actor chip's physical baseline (ACTOR_FABRIC.md section 13): on 3b1d1f9 (job 140767140714) this pass took 66 min of the 6 h CI limit, for slow-corner margin; signoff gates the typical corner, where post-CTS setup had positive slack. Re-enable once the run fits.",
+  "RUN_POST_GRT_RESIZER_TIMING": 0,
 
   "// DRT_OPT_ITERS": "Fail fast when detailed routing cannot converge. Good runs (d628e18 and earlier) finish detailed routing with 0 violations by iteration 2-3; every run since 7193f31 sat at ~540 violations through iteration 55 and hit the 6 h CI limit with no artifacts. 20 iterations ends a non-converging run in about 2 h with its logs and reports.",
-  "DRT_OPT_ITERS": 20,
+  "// DRT_OPT_ITERS 24": "3b1d1f9 reached 5 violations at iteration 20 (then ran out of time in the antenna reroute); the time saved above buys a few more iterations, still failing fast on a non-converging route.",
+  "DRT_OPT_ITERS": 24,
+  "// DRT_ANTENNA_REPAIR_ITERS": "One antenna reroute, not the default three: on 3b1d1f9 the reroutes after the first held at 7 violations for 70 min (stubborn tiles) and the job hit the 6 h limit. Diode insertion and the global-route antenna repair run before it.",
+  "DRT_ANTENNA_REPAIR_ITERS": 1,
   "// GRT_RESIZER_SETUP_SLACK_MARGIN": "1.5 ns, as after placement. 5 ns (be33e80) targeted the pre-mesh chip's pin-to-shifter path. On the mesh chip run 46028259749 (2b49253) met setup with +0.79 ns real slack after CTS, yet post-GRT repair chased the 5 ns margin on 4,258 endpoints for over 1.3 h, upsizing ~2,500 cells on an already congested die right before detailed routing.",
   "GRT_RESIZER_SETUP_SLACK_MARGIN": 1.5,
 
@@ -64,6 +68,9 @@
   "GRT_DESIGN_REPAIR_MAX_CAP_PCT": 25,
   "DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
   "GRT_DESIGN_REPAIR_MAX_WIRE_LENGTH": 400,
+
+  "// ERROR_ON_SYNTH_CHECKS": "Off for the actor chip: its control actors' outputs are combinational selections of their inputs (mesh_logic ACTOR=1), so the mesh has structural loops that no configuration closes (the compiler refuses one). Yosys reports them as check problems. tools/check_chip_synth.py (make chip-synth-check, in the tile experiment workflow) replaces this check: it still fails on any undriven or multiply driven wire, and on any loop that does not pass through an actor's selection. Registering the actor outputs instead breaks wire-timed programs (ACTOR_FABRIC.md section 13).",
+  "ERROR_ON_SYNTH_CHECKS": 0,
 
   "//": "RUN_LINTER, LINTER_INCLUDE_PDK_MODELS - Disabling the linter is not recommended!",
   "RUN_LINTER": 1,

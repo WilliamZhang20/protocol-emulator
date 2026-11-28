@@ -111,9 +111,12 @@ module timer_tb;
     while (!tick && t0 < 50) begin @(negedge clk); #1; t0 = t0 + 1; end
     if (t0 != 6) begin fail("live period not applied"); $display("  next tick after %0d", t0 + 1); end
 
-    // Reserved mode bits make the tile unconfigured.
-    configure(5, 5, 16'h0004, 0); #1;
+    // Reserved mode bits (7:3) make the tile unconfigured; bit 2 is the
+    // counter function (ACTOR_FABRIC.md A3), configured with any limit.
+    configure(5, 5, 16'h0008, 0); #1;
     if (configured) fail("reserved mode bits accepted");
+    configure(5, 5, 16'h0004, 0); #1;
+    if (!configured) fail("counter function not configured");
 
     if (errors == 0) $display("grid_timer tile test: PASS");
     else $fatal(1, "grid_timer tile test: %0d FAIL", errors);

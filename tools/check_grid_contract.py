@@ -314,9 +314,15 @@ def check_timers(contract, modules):
     timer = modules['grid_timer']
     assert len(timer['ports']['mode']['bits']) == 16
     text = (ROOT / 'src/grid_timer.v').read_text()
-    assert f"wire [1:0] fn = mode[{fields['function'][0]}:{fields['function'][1]}];" in text
+    # grid_timer's mode bit 2 is the counter function (ACTOR_FABRIC.md A3),
+    # the lowest of the grid's reserved bits: the grid contract keeps it
+    # reserved, and grid_core refuses a mode with it set (timer_mode_ok
+    # below), so the grid's timers stay timers.
+    reserved_hi, reserved_lo = fields['reserved']
+    assert f"wire counter = mode[{reserved_lo}];" in text
+    assert f"wire [1:0] fn = counter ? 2'd0 : mode[{fields['function'][0]}:{fields['function'][1]}];" in text
     assert f"wire [7:0] limit = mode[{fields['resync_limit'][0]}:{fields['resync_limit'][1]}];" in text
-    assert f"assign configured = valid && mode[{fields['reserved'][0]}:{fields['reserved'][1]}] == 0;" in text
+    assert f"assign configured = (valid || counter) && mode[{reserved_hi}:{reserved_lo + 1}] == 0;" in text
     for name, code in cfg['timer_functions'].items():
         assert re.search(r'//\s+%d %s\b' % (code, name), text), name
     core_text = (ROOT / 'src/grid_core.v').read_text()

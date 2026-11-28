@@ -1,0 +1,123 @@
+{
+ "calls": {
+  "channel": 1,
+  "fails": [],
+  "functions": {
+   "send": {
+    "id": 0,
+    "params": [],
+    "result": null,
+    "sends": []
+   },
+   "send_again": {
+    "id": 1,
+    "params": [],
+    "result": null,
+    "sends": []
+   },
+   "single": {
+    "id": 2,
+    "params": [],
+    "result": null,
+    "sends": []
+   }
+  }
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "tx": 0,
+  "unused_rx": 1
+ },
+ "tests": [
+  {
+   "line": 11,
+   "name": "stored bytes stream through FIFO backpressure and can be replayed",
+   "peers": [
+    {
+     "args": {
+      "bit": 64,
+      "from_chip": {
+       "pin": 0
+      },
+      "to_chip": {
+       "pin": 1
+      }
+     },
+     "kind": "uart_device",
+     "line": 12,
+     "name": "terminal"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "args": {},
+     "function": "send",
+     "line": 13,
+     "op": "call"
+    },
+    {
+     "count": 8,
+     "expect": [
+      0,
+      255,
+      85,
+      165,
+      1,
+      2,
+      3,
+      4
+     ],
+     "line": 14,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    },
+    {
+     "args": {},
+     "function": "send_again",
+     "line": 15,
+     "op": "call"
+    },
+    {
+     "count": 8,
+     "expect": [
+      0,
+      255,
+      85,
+      165,
+      1,
+      2,
+      3,
+      4
+     ],
+     "line": 16,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    },
+    {
+     "args": {},
+     "function": "single",
+     "line": 17,
+     "op": "call"
+    },
+    {
+     "count": 1,
+     "expect": [
+      165
+     ],
+     "line": 18,
+     "op": "read",
+     "target": {
+      "peer": "terminal"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

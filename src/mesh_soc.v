@@ -30,6 +30,7 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   parameter [ROWS*COLS-1:0] CTX4=15'd10570,
   parameter [ROWS*COLS-1:0] CNT=0,
   parameter [ROWS*COLS-1:0] LOGIC=0,
+  parameter [ROWS*COLS-1:0] NONE=0,   // switch-only cells (mesh.v)
   parameter DSLOTS=0,          // ctx_switch static/dynamic split (mesh.v)
   parameter [3:0] CTX_TRACKS=4'b1111, // with DSLOTS=0: tracks held per context (mesh.v)
   parameter REG=1,             // registered-routing study point (mesh.v; 1 is the mesh)
@@ -56,7 +57,7 @@ module mesh_soc #(parameter ROWS=3, COLS=5, WORD_PORT=6,
   output wire [ROWS*COLS-1:0] host_valid, output wire [8*ROWS*COLS-1:0] host_byte);
   // Mesh <-> word-network endpoints.
   wire [15:0] m_rd_data, m_wr_data; wire m_rd_valid, m_rd_ready, m_wr_valid, m_wr_ready;
-  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4),.CNT(CNT),.LOGIC(LOGIC),.DSLOTS(DSLOTS),.CTX_TRACKS(CTX_TRACKS),.REG(REG),.ACTOR(ACTOR)) fabric(
+  mesh #(.ROWS(ROWS),.COLS(COLS),.WORD_PORT(WORD_PORT),.KINDS(KINDS),.CTX4(CTX4),.CNT(CNT),.LOGIC(LOGIC),.NONE(NONE),.DSLOTS(DSLOTS),.CTX_TRACKS(CTX_TRACKS),.REG(REG),.ACTOR(ACTOR)) fabric(
     clk,rst_n && !mesh_hold,run_req,host_ev,seen,seen_clear,param_we,param_cell,param_addr,param_data,cfg,pins,pad_oe,pad_out,ready,m_rd_data,m_rd_valid,m_rd_ready,
     m_wr_data,m_wr_valid,m_wr_ready,host_valid,host_byte);
 
