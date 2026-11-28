@@ -1,0 +1,201 @@
+{
+ "calls": {
+  "channel": null,
+  "fails": [],
+  "functions": {}
+ },
+ "clock_hz": 50000000,
+ "invariants": [],
+ "pins": {
+  "cs": 0,
+  "miso": 3,
+  "mosi": 2,
+  "sck": 1
+ },
+ "tests": [
+  {
+   "line": 41,
+   "name": "answers a command with the armed bytes",
+   "peers": [
+    {
+     "args": {
+      "cs": {
+       "pin": 0
+      },
+      "half": 10,
+      "miso": {
+       "pin": 3
+      },
+      "mosi": {
+       "pin": 2
+      },
+      "sck": {
+       "pin": 1
+      }
+     },
+     "kind": "spi_controller",
+     "line": 42,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      194,
+      32,
+      24
+     ],
+     "line": 43,
+     "op": "write",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      159,
+      0,
+      0
+     ],
+     "line": 44,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      194,
+      32,
+      24
+     ],
+     "line": 45,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       159,
+       0,
+       0
+      ],
+      "error": false
+     },
+     "line": 46,
+     "op": "read_packet",
+     "target": {
+      "stream": "frames"
+     }
+    }
+   ],
+   "wires": []
+  },
+  {
+   "line": 49,
+   "name": "transactions back to back, each its own packet",
+   "peers": [
+    {
+     "args": {
+      "cs": {
+       "pin": 0
+      },
+      "half": 10,
+      "miso": {
+       "pin": 3
+      },
+      "mosi": {
+       "pin": 2
+      },
+      "sck": {
+       "pin": 1
+      }
+     },
+     "kind": "spi_controller",
+     "line": 50,
+     "name": "ctl"
+    }
+   ],
+   "step_timeout_cycles": null,
+   "steps": [
+    {
+     "bytes": [
+      17,
+      34
+     ],
+     "line": 51,
+     "op": "write",
+     "target": {
+      "stream": "reply"
+     }
+    },
+    {
+     "bytes": [
+      1,
+      2
+     ],
+     "line": 52,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "bytes": [
+      165
+     ],
+     "line": 53,
+     "op": "write",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "count": 3,
+     "expect": [
+      17,
+      34,
+      255
+     ],
+     "line": 54,
+     "op": "read",
+     "target": {
+      "peer": "ctl"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       1,
+       2
+      ],
+      "error": false
+     },
+     "line": 55,
+     "op": "read_packet",
+     "target": {
+      "stream": "frames"
+     }
+    },
+    {
+     "expect": {
+      "data": [
+       165
+      ],
+      "error": false
+     },
+     "line": 56,
+     "op": "read_packet",
+     "target": {
+      "stream": "frames"
+     }
+    }
+   ],
+   "wires": []
+  }
+ ]
+}

@@ -358,6 +358,8 @@ through its receiver, so the tests read the whole transaction). New:
 | usb_device_in (IN + data + CRC16): maps / tracks / pins | yes / 53 / 2 of 2 | yes / 45 / 2 of 2 | **no**: three timers |
 | ethernet_rx (frames, FCS check): maps / tracks / pins | yes / 14 / 3 of 3 | yes / 14 / 3 of 3 | yes / 13 |
 | i2c_target_rw (writes and reads): maps / tracks / pins | yes / 31 / 4 of 4 | yes / 41 / 4 of 4 | yes / 26 |
+| spi_target (MOSI in, MISO out): maps / tracks / pins | yes / 19 / 2 of 2 | yes / 19 / 2 of 2 | yes / 17 |
+| ps2_host (scan codes + host commands): maps / tracks / pins | yes / 18 / 3 of 3 | yes / 17 / 3 of 3 | yes / 17 |
 
 The machine's state gates the transmitter's start (`if link.DATA { go }
 else { 0 }`), written at the shifter: on L3S the shifter's contexts hold
@@ -407,6 +409,35 @@ compiler fix: a LUT now reads `sda.fall && scl` as the I/O cell's
 qualified edge (one input, as the machines do), not two. Peer: the I2C
 controller reads (ACK each byte, NAK the last) and referees the target's
 bits.
+
+**SPI target** (`spi_target.spt`, mode 0): MOSI bytes to the host as
+packets, one per CS-low transaction (the burst ends on CS rising, with
+end lookahead); MISO sends host-armed bytes, changing after SCK falls,
+and is driven only while CS is low (`pin miso: out = tx.out while
+selected`). Peer `spi_controller`: exchanges bytes and referees MISO (not
+driven while CS is high, driven while it is low, never changing while
+SCK is high; half a SCK phase allowed for the CS synchroniser).
+
+**PS/2 host commands** (`ps2_host.spt`): scan codes in as before, and
+host commands out (set LEDs, reset): the request to send holds CLK low
+with the start bit on DATA, the keyboard clocks the frame in and
+acknowledges, then answers 0xFA as a scan code. Two event-timing bugs,
+both about where a CLK-low interval begins, fixed by construction:
+
+- the frame first counted the fabric's own CLK fall as the inhibit
+  began; a command armed as a scan code ends starts while the keyboard
+  still holds CLK low from the stop bit, so that fall never happens and
+  the frame was one bit off. The command shifter now ignores CLK falls
+  while inhibiting (`shift: if rts.INHIBIT { 0 } else { psclk.fall }`),
+  so the frame does not depend on whether such a fall occurs;
+- the keyboard times the 100 us from when it lets go of CLK, which can
+  be up to its longest low half period (50 us) after the inhibit begins;
+  the inhibit is 150 us. (Section 11's event contract: when an event's
+  interval starts depends on another driver of the wire.)
+
+The peer `ps2_keyboard` now counts only the host's own hold of CLK and
+latches each release, so a request that begins while it finishes a frame
+is seen (it used to miss it, or count it short).
 
 **Compiler determinism.** The router's search tree was a set; its order
 follows string hashing, which differs per process, and ties in the search
