@@ -633,6 +633,15 @@ leaving ADDRESS on it). So the actor stays combinational; a registered
 actor would need the compiler to model the extra clock in the event-timing
 contracts (section 11).
 
+**First GDS (0c5527c, job 140941046531).** Synthesis, the checks and
+placement passed (the actor loops included); clock-tree synthesis then
+hung for over 50 min on one gated latch-enable net of the configuration
+store (8 sinks in a 1 x 2 µm region): with the store's strobe a
+propagated generated clock, CTS builds a tree per enable net. Placement
+and routing now use `src/mesh_chip_pnr.sdc`, the constraints without that
+clock (the store changes only while the mesh is held, and every path out
+of it is false); signoff keeps the full `mesh_chip.sdc`.
+
 **Tests.** Every program passes at the mesh pins on `mesh_3x5_A3B` (26 of
 26) and on A3, and the chip-pin test (`test_chip`, the chip top with every
 A3B program) runs in the pre-commit hook.
